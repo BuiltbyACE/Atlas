@@ -67,19 +67,3 @@ func TestUnknownRouteReturnsProblem(t *testing.T) {
 	}
 }
 
-func TestDevRoutesAreLocalOnly(t *testing.T) {
-	// In production the dev endpoint must not exist.
-	prodRec := httptest.NewRecorder()
-	testRouter(config.EnvProduction).ServeHTTP(prodRec, httptest.NewRequest(http.MethodPost, "/api/v1/dev/hello", nil))
-	if prodRec.Code != http.StatusNotFound {
-		t.Fatalf("production /dev/hello status = %d, want 404", prodRec.Code)
-	}
-
-	// Locally it exists (it will fail later on the missing DB pool, but it is
-	// routed — 404 would mean the guard is wrong).
-	localRec := httptest.NewRecorder()
-	testRouter(config.EnvLocal).ServeHTTP(localRec, httptest.NewRequest(http.MethodPost, "/api/v1/dev/hello", nil))
-	if localRec.Code == http.StatusNotFound {
-		t.Fatal("local /dev/hello returned 404, want it to be routed")
-	}
-}

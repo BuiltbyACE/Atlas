@@ -56,12 +56,6 @@ func NewRouter(d Deps) http.Handler {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			_, _ = w.Write([]byte(`{"service":"atlas-api","version":"` + d.Version + `"}`))
 		})
-
-		// Development-only routes. Guarded by ATLAS_ENV=local so they can never
-		// be reached in staging or production (§2.10, §13).
-		if d.Cfg.IsLocal() {
-			mountDevRoutes(r, d)
-		}
 	})
 
 	return r

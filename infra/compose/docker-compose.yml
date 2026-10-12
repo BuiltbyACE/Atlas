@@ -68,6 +68,14 @@ services:
     volumes:
       - storagedata:/data
       - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      # The master's cluster status is the cheapest real readiness signal: it
+      # answers only once master + volume are up. Busybox wget ships in the image.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9333/cluster/status || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
 
   mailpit:
     image: axllent/mailpit:latest
@@ -79,6 +87,13 @@ services:
     ports:
       - "1025:1025"   # SMTP
       - "8025:8025"   # web UI
+    healthcheck:
+      # Mailpit exposes its own info endpoint over the same HTTP port as the UI.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8025/api/v1/info || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
 
   # Optional local edge. Start with:  docker compose --profile edge up -d
   # Proxies to the host-run services, mimicking the production routing.

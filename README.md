@@ -54,11 +54,13 @@ atlas/
 
 ```powershell
 Copy-Item .env.example .env      # first time only
-task up                          # start Postgres, SeaweedFS, Mailpit (+ edge)
-task migrate                     # apply database migrations
-task api:run                     # Go API on :8080   (separate terminal)
-task orch:serve                  # Elixir orchestrator (separate terminal)
-task web:dev                     # Next.js on :3000  (separate terminal)
+task up                          # start Postgres, SeaweedFS, Mailpit (waits until healthy)
+task migrate                     # Go migrations (goose)
+task orch:migrate                # orchestrator migrations (Ecto)
+task seed                        # roles + permission catalogue (§3.2, §6.2)
+task api:run                     # Go API on :8080            (separate terminal)
+task orch:serve                  # Elixir orchestrator :4000  (separate terminal)
+task web:dev                     # Next.js on :3000           (separate terminal)
 ```
 
 Then check health:
@@ -68,28 +70,48 @@ curl http://localhost:8080/api/v1/health
 curl http://localhost:8080/api/v1/health/ready
 ```
 
-Run `task` (no arguments) to list every available task.
+Run `task` (no arguments) to list every task. The full local-development guide —
+ports, startup order, reset and troubleshooting — is in
+[`docs/runbooks/local-development.md`](docs/runbooks/local-development.md).
 
-## Phase 0 acceptance ("hello event")
+## Foundation (Phase 1)
 
-Phase 0 is done when a `core.system.hello.v1` event, written by Go **inside a transaction**, is consumed by Elixir and delivered to the browser as a **live signal** — and CI blocks on failing tests. See `docs/ATLAS.md` §17 and Appendix A.
+The foundation is built before any business module. `docs/ATLAS.md` §6 is the
+source of truth: *"The foundation is Phase 1. Every later module depends on it."*
 
-**Status: DONE.** Demonstrate it end to end:
+**In place now**
+
+- **Event spine** (§7.1): `outbox.events` + a NOTIFY trigger. Go writes inside a
+  transaction; Elixir consumes and signals the browser.
+- **Database foundation** (§10.1, §10.3): `people` (departments, persons),
+  `core` (user accounts, sessions, roles, permissions, role grants, service
+  identities, approvals, settings, sequences, notifications, files) and the
+  append-only `audit.events`. Invariants live in the database — UUIDv7 keys,
+  `citext`, `updated_at` triggers, an append-only audit trigger, and
+  human-reference sequences (`core.next_reference` → `LEAD-2026-0042`).
+- **Least-privilege DB roles** (§10.1, §13.3): `atlas_migrator`, `atlas_api`,
+  `atlas_worker`, `atlas_orchestrator`, `atlas_readonly`.
+- **Configuration seed** (`task seed`): the §3.2 roles and the §6.2 permission
+  catalogue, written idempotently. No mock business records and no people.
+
+**Next pillars:** the Go API skeleton (route-permission declarations, idempotency
+keys, ETag/If-Match, cursor pagination) and authentication (login, TOTP, opaque
+sessions, Ed25519 realtime tokens + JWKS).
+
+### Event-spine smoke test
+
+`core.system.hello.v1` is no longer a demo endpoint; it is an operator canary for
+the event spine:
 
 ```powershell
-task up && task migrate
-task api:run      # Go API on :8080
-task orch:serve   # Elixir orchestrator on :4000
-curl -X POST http://localhost:8080/api/v1/dev/hello -H "content-type: application/json" -d "{\"message\":\"hi\"}"
-# 202 { ..., "seq": N, "note": "written to outbox; ..." }
+task smoke:event
+# → {"event_id":"…","type":"core.system.hello.v1","seq":N}
 ```
 
-The orchestrator consumes the event, advances `orchestrator.consumer_cursors`, records idempotency in `orchestrator.processed_events` and broadcasts a `signal` on `user:demo` / `exec:dashboard`. Watch it live in a browser at `http://localhost:4000/dev/hello`, or play the browser role headlessly:
-
-```powershell
-node apps/web/scripts/e2e-realtime.cjs
-# connecting … joined user:demo ✓ → POST … -> 202 → SIGNAL on user:demo ✓
-```
+Go writes it inside a transaction, the orchestrator consumes it, advances
+`orchestrator.consumer_cursors`, records idempotency in
+`orchestrator.processed_events` and broadcasts a `signal` on `user:{id}` /
+`exec:dashboard`.
 
 ## Working agreement
 
@@ -101,4 +123,7 @@ node apps/web/scripts/e2e-realtime.cjs
 
 ## Status
 
-Phase 0 — Groundwork. See `docs/ATLAS.md` §17 for phase exit criteria and `docs/adr/` for the decisions taken so far.
+Phase 1 — foundation. The event spine, database foundation and configuration
+seed are in place; the Go API skeleton and authentication come next. See
+`docs/ATLAS.md` §17 for phase exit criteria, `docs/ATLAS.md` §6 for the
+foundation, and `docs/adr/` for the decisions taken so far.

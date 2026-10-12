@@ -2,9 +2,9 @@ defmodule AtlasOrchestrator.Router do
   @moduledoc """
   The orchestrator's small HTTP surface.
 
-  Deliberately minimal: health for operators, and a local-only demo page that
-  proves the Phase 0 acceptance path (Appendix A). Nothing here is business API
-  — that is Go's job (ADR-002).
+  Deliberately minimal: health for operators. Nothing here is business API —
+  that is Go's job (ADR-002). The Phase 0 hello demo page was removed once the
+  event spine was proven; the orchestrator now exposes only operational probes.
   """
   use Plug.Router
 
@@ -25,16 +25,6 @@ defmodule AtlasOrchestrator.Router do
     end
   end
 
-  get "/dev/hello" do
-    if local?() do
-      conn
-      |> put_resp_content_type("text/html")
-      |> send_resp(200, AtlasOrchestrator.DevPage.html())
-    else
-      send_resp(conn, 404, "not found")
-    end
-  end
-
   match _ do
     send_resp(conn, 404, "not found")
   end
@@ -45,8 +35,6 @@ defmodule AtlasOrchestrator.Router do
   rescue
     e -> {:error, e}
   end
-
-  defp local?, do: Application.get_env(:atlas_orchestrator, :env) in [:dev, :test]
 
   defp send_json(conn, status, body) do
     conn

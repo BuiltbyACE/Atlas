@@ -12,6 +12,7 @@
 //	atlas-cli migrate version       print the current schema version
 //	atlas-cli migrate create <name> scaffold a new empty migration
 //	atlas-cli outbox hello [msg]    write a core.system.hello.v1 event
+//	atlas-cli seed                  write the role/permission catalogue (§3.2, §6.2)
 //	atlas-cli version               print the build version
 package main
 
@@ -34,6 +35,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
 	"github.com/safaristack/atlas/apps/api/internal/platform/logging"
+	"github.com/safaristack/atlas/apps/api/internal/seed"
 )
 
 var version = "dev"
@@ -63,6 +65,8 @@ func run(args []string) error {
 		return runMigrate(args[1:])
 	case "outbox":
 		return runOutbox(args[1:])
+	case "seed":
+		return runSeed()
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -77,6 +81,7 @@ func usage() {
 
   migrate up | down | status | version | create <name>
   outbox hello [message]
+  seed
   version
 `)
 }
@@ -214,5 +219,37 @@ func runOutbox(args []string) error {
 		"seq":      seq,
 	}, "", "  ")
 	fmt.Println(string(out))
+	return nil
+}
+
+// ── seed ────────────────────────────────────────────────────
+
+func runSeed() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	logger := logging.New(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	pool, err := database.Connect(ctx, cfg.DatabaseURL, logger)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	report, err := seed.Run(ctx, pool)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("seed complete",
+		slog.Int("roles", report.Roles),
+		slog.Int("permissions", report.Permissions),
+		slog.Int("role_permissions", report.RolePermissions),
+		slog.Int("settings_added", report.SettingsAdded),
+	)
 	return nil
 }

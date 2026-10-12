@@ -51,41 +51,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthReport"
-  /api/v1/dev/hello:
-    post:
-      summary: Phase 0 demo event (local only)
-      description: |
-        Writes a `core.system.hello.v1` event to the transactional outbox
-        (docs/ATLAS.md §7.1, Appendix A). Available only when ATLAS_ENV=local;
-        returns 404 otherwise.
-      operationId: postDevHello
-      tags: [dev]
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/HelloRequest"
-      responses:
-        "202":
-          description: Event written to the outbox; the orchestrator is notified.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HelloResponse"
-        "400":
-          description: Invalid JSON body.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-        "404":
-          description: Not running in local mode, or route does not exist.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-
 components:
   schemas:
     Check:
@@ -130,18 +95,6 @@ components:
         errors:
           type: array
           items: { $ref: "#/components/schemas/FieldError" }
-    HelloRequest:
-      type: object
-      properties:
-        message: { type: string, maxLength: 500 }
-    HelloResponse:
-      type: object
-      required: [event_id, type, seq]
-      properties:
-        event_id: { type: string, format: uuid }
-        type: { type: string }
-        seq: { type: integer, format: int64 }
-        note: { type: string }
   securitySchemes:
     bearerAuth:
       type: http
@@ -153,5 +106,3 @@ security: []
 tags:
   - name: system
     description: Health and platform routes.
-  - name: dev
-    description: Local-development-only routes, never enabled outside ATLAS_ENV=local.
