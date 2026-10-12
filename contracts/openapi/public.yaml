@@ -25,6 +25,20 @@ tags:
   - name: auth
 
 paths:
+  /api/v1/:
+    get:
+      summary: Service name and version
+      description: A small identity response used by operators and the edge.
+      operationId: getServiceInfo
+      tags: [system]
+      responses:
+        "200":
+          description: The service identity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceInfo"
+
   /api/v1/health:
     get:
       summary: Liveness probe
@@ -336,6 +350,13 @@ components:
             $ref: "#/components/schemas/Problem"
 
   schemas:
+    ServiceInfo:
+      type: object
+      required: [service, version]
+      properties:
+        service: { type: string }
+        version: { type: string }
+
     Check:
       type: object
       required: [name, status]
