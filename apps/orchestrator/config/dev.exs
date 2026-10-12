@@ -10,8 +10,12 @@ config :atlas_orchestrator, AtlasOrchestrator.Endpoint,
 
 config :atlas_orchestrator, AtlasOrchestrator.Repo, show_sensitive_data_on_connection_error: true
 
-# Local realtime tokens are signed with a shared secret rather than verified
-# against Go's JWKS, which arrives with authentication in Phase 1 (ADR-008).
-config :atlas_orchestrator, :realtime, secret: "local-dev-realtime-secret-not-for-anywhere-else"
+# Realtime tokens are signed by Go and verified against its JWKS (ADR-008).
+# The URL is where atlas-api publishes the public key set; it is reachable
+# inside the local network but 404s on the public edge.
+config :atlas_orchestrator, :realtime,
+  jwks_url: System.get_env("ATLAS_JWKS_URL", "http://localhost:8080/internal/v1/.well-known/jwks.json"),
+  issuer: "atlas",
+  audience: "atlas-realtime"
 
 config :logger, level: :debug

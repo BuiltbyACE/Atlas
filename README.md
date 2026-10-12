@@ -93,10 +93,18 @@ source of truth: *"The foundation is Phase 1. Every later module depends on it."
   `atlas_worker`, `atlas_orchestrator`, `atlas_readonly`.
 - **Configuration seed** (`task seed`): the §3.2 roles and the §6.2 permission
   catalogue, written idempotently. No mock business records and no people.
+- **Go API skeleton** (§11): every route is declared in a routing registry with
+  its method, pattern, access level and required permission; a test walks the
+  mounted router and fails the build if a route is missing from the registry or
+  names a permission the seed does not contain. `httpx` supplies RFC 9457
+  problem responses, cursor pagination, ETags and concurrency control.
+- **Authentication** (§6.1, ADR-008): sign in with an email address or an E.164
+  phone number plus an argon2id password; TOTP MFA for privileged roles; opaque
+  sessions stored only as a hash, with idle and absolute expiry; and 5-minute
+  Ed25519 realtime tokens whose JWKS the orchestrator fetches and verifies.
 
-**Next pillars:** the Go API skeleton (route-permission declarations, idempotency
-keys, ETag/If-Match, cursor pagination) and authentication (login, TOTP, opaque
-sessions, Ed25519 realtime tokens + JWKS).
+**Next pillars:** idempotency keys and rate limiting on the write path, then the
+governed domain modules.
 
 ### Event-spine smoke test
 
@@ -123,7 +131,8 @@ Go writes it inside a transaction, the orchestrator consumes it, advances
 
 ## Status
 
-Phase 1 — foundation. The event spine, database foundation and configuration
-seed are in place; the Go API skeleton and authentication come next. See
+Phase 1 — foundation. The event spine, database foundation, configuration seed,
+Go API skeleton and authentication are in place; idempotency keys and rate
+limiting on the write path, then the governed modules, come next. See
 `docs/ATLAS.md` §17 for phase exit criteria, `docs/ATLAS.md` §6 for the
 foundation, and `docs/adr/` for the decisions taken so far.

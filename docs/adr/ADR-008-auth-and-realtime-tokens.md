@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | Proposed |
+| **Status** | Accepted |
 | **Date** | 2026-10-11 |
 | **Deciders** | Internal & Technical CEO, Commercial CEO |
-| **Phase** | Phase 0 |
+| **Phase** | Phase 0 (decision) · Phase 1 (implemented) |
 | **Supersedes / Superseded by** | — |
 
 ## Context
@@ -45,3 +45,19 @@
 - `docs/ATLAS.md` §5.7
 - `docs/ATLAS.md` §13.1
 - `docs/ATLAS.md` §21 (D3)
+- `contracts/openapi/public.yaml`, `contracts/openapi/internal.yaml`
+- `apps/api/internal/auth`, `apps/api/internal/platform/ed25519jwt`
+- `apps/orchestrator/lib/atlas_orchestrator/auth/{token,jwks}.ex`
+
+## Implementation notes (Phase 1)
+
+- Go issues and signs; **Elixir only verifies**. The orchestrator holds no
+  signing key. It fetches `/internal/v1/.well-known/jwks.json` through
+  `AtlasOrchestrator.Auth.JWKS`, caches it and refreshes on a timer; a failed
+  refresh keeps the previous key set. See `docs/runbooks/local-development.md`.
+- The login identifier is an email address or an E.164 phone number. A bare
+  local number is normalised with the default country code (currently `+254`,
+  pending D1/D2); `ParseIdentifier` owns that rule.
+- Local development generates ephemeral Ed25519 and AES-256 keys at boot when
+  `ATLAS_REALTIME_PRIVATE_KEY` / `ATLAS_ENCRYPTION_KEY` are empty. Run
+  `atlas-cli keygen` to mint stable ones for `.env`.

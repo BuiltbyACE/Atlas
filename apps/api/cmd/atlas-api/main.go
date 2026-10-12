@@ -7,15 +7,21 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/safaristack/atlas/apps/api/internal/auth"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
+	"github.com/safaristack/atlas/apps/api/internal/platform/ed25519jwt"
 	"github.com/safaristack/atlas/apps/api/internal/platform/httpserver"
 	"github.com/safaristack/atlas/apps/api/internal/platform/logging"
 	"github.com/safaristack/atlas/apps/api/internal/platform/telemetry"
@@ -62,11 +68,17 @@ func run() error {
 	}
 	defer pool.Close()
 
+	authService, err := newAuthService(cfg, logger, pool)
+	if err != nil {
+		return err
+	}
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:     cfg,
 		Logger:  logger,
 		DB:      pool,
 		Version: version,
+		Auth:    authService,
 	})
 
 	srv := &http.Server{
@@ -108,4 +120,64 @@ func defaultServiceName(name string) {
 	if os.Getenv("ATLAS_SERVICE_NAME") == "" {
 		_ = os.Setenv("ATLAS_SERVICE_NAME", name)
 	}
+}
+
+// newAuthService assembles the sign-in, session and realtime-token machinery.
+func newAuthService(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) (*auth.Service, error) {
+	key, err := signingKey(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+	sealer, err := secretSealer(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	return auth.NewService(auth.NewPGStore(pool), sealer, key, auth.ServiceConfig{
+		SessionCookieName:    cfg.SessionCookieName,
+		SessionIdleTimeout:   cfg.SessionIdleTimeout,
+		SessionAbsoluteTTL:   cfg.SessionAbsoluteTTL,
+		MFAIssuer:            cfg.MFAIssuer,
+		MFAChallengeAudience: "atlas-mfa",
+		MFAChallengeTTL:      5 * time.Minute,
+		RealtimeIssuer:       cfg.RealtimeIssuer,
+		RealtimeAudience:     cfg.RealtimeAudience,
+		RealtimeTTL:          cfg.RealtimeTokenTTL,
+		ServiceAudience:      cfg.ServiceAudience,
+		LoginMaxFailures:     5,
+		LoginWindow:          15 * time.Minute,
+	}, logger), nil
+}
+
+// signingKey parses the configured Ed25519 key, or generates an ephemeral one
+// in local development so a checkout runs without extra setup. The public half
+// is published as JWKS either way.
+func signingKey(cfg *config.Config, logger *slog.Logger) (*ed25519jwt.Key, error) {
+	if material := strings.TrimSpace(cfg.RealtimePrivateKey); material != "" {
+		priv, err := ed25519jwt.ParsePrivateKey(material)
+		if err != nil {
+			return nil, fmt.Errorf("ATLAS_REALTIME_PRIVATE_KEY: %w", err)
+		}
+		return ed25519jwt.FromPrivateKey(priv), nil
+	}
+	logger.Warn("ATLAS_REALTIME_PRIVATE_KEY is empty; generated an ephemeral key (local development only)")
+	return ed25519jwt.Generate()
+}
+
+// secretSealer builds the AES-GCM sealer for short-lived secrets.
+func secretSealer(cfg *config.Config, logger *slog.Logger) (*auth.Sealer, error) {
+	if material := strings.TrimSpace(cfg.EncryptionKey); material != "" {
+		sealer, err := auth.NewSealer(material)
+		if err != nil {
+			return nil, fmt.Errorf("ATLAS_ENCRYPTION_KEY: %w", err)
+		}
+		return sealer, nil
+	}
+
+	generated, err := auth.GenerateEncryptionKey()
+	if err != nil {
+		return nil, err
+	}
+	logger.Warn("ATLAS_ENCRYPTION_KEY is empty; generated an ephemeral key (local development only; MFA secrets will not survive a restart)")
+	return auth.NewSealer(generated)
 }

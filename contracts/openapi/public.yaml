@@ -7,6 +7,10 @@ info:
     for public routes; the TypeScript client is generated from it. Governed
     Go modules under the `crm`, `contracts`, `work`, `finance`, `people` and
     `systems` domains are added in later phases.
+
+    Section §6.1 identity: a user signs in with an email address or an E.164
+    phone number plus a password; accounts that require multi-factor
+    authentication complete the sign-in with a TOTP or recovery code.
   contact:
     name: SafariStack
   license:
@@ -15,6 +19,10 @@ info:
 servers:
   - url: http://localhost:8080
     description: Local development (Caddy proxies /api to this service)
+
+tags:
+  - name: system
+  - name: auth
 
 paths:
   /api/v1/health:
@@ -30,6 +38,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthReport"
+
   /api/v1/health/ready:
     get:
       summary: Readiness probe
@@ -51,7 +60,281 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthReport"
+
+  /api/v1/auth/login:
+    post:
+      summary: Sign in
+      description: |
+        Accepts an email address or an E.164 phone number and a password. When
+        the account requires MFA the response carries a short-lived challenge
+        token instead of a session; otherwise a session cookie is set.
+      operationId: login
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Signed in, or an MFA challenge is required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/Problem"
+
+  /api/v1/auth/mfa/verify:
+    post:
+      summary: Complete sign-in with a second factor
+      operationId: verifyMfa
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MfaCodeRequest"
+      responses:
+        "200":
+          description: Signed in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          $ref: "#/components/responses/Problem"
+
+  /api/v1/auth/mfa/enroll:
+    post:
+      summary: Begin MFA enrolment
+      description: Returns a new TOTP secret and its `otpauth://` provisioning URI.
+      operationId: enrollMfa
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MfaTokenRequest"
+      responses:
+        "200":
+          description: Secret generated; confirm with `/mfa/activate`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MfaEnrollResponse"
+        "401":
+          $ref: "#/components/responses/Problem"
+
+  /api/v1/auth/mfa/activate:
+    post:
+      summary: Confirm MFA enrolment
+      description: Verifies the first TOTP code, activates MFA and returns recovery codes.
+      operationId: activateMfa
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MfaCodeRequest"
+      responses:
+        "201":
+          description: MFA active; a session cookie is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MfaActivateResponse"
+        "401":
+          $ref: "#/components/responses/Problem"
+
+  /api/v1/auth/logout:
+    post:
+      summary: Sign out
+      description: Revokes the current session and clears the cookie.
+      operationId: logout
+      tags: [auth]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Signed out.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "401":
+          $ref: "#/components/responses/Problem"
+
+  /api/v1/auth/me:
+    get:
+      summary: The current principal
+      operationId: getMe
+      tags: [auth]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: The authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Problem"
+
+  /api/v1/auth/sessions:
+    get:
+      summary: List active sessions
+      operationId: listSessions
+      tags: [auth]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: The caller's sessions, most recently seen first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Problem"
+
+  /api/v1/auth/sessions/{id}:
+    delete:
+      summary: Revoke one of the caller's sessions
+      operationId: revokeSession
+      tags: [auth]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Session revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "404":
+          $ref: "#/components/responses/Problem"
+
+  /api/v1/auth/sessions/revoke-all:
+    post:
+      summary: Revoke every session for the caller
+      operationId: revokeAllSessions
+      tags: [auth]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Sessions revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked: { type: integer, format: int64 }
+
+  /api/v1/auth/realtime-token:
+    post:
+      summary: Mint a short-lived realtime token
+      description: |
+        Returns a five-minute Ed25519 token for the `/socket` connection. The
+        orchestrator verifies it against this service's JWKS (ADR-008).
+      operationId: createRealtimeToken
+      tags: [auth]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: A realtime token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealtimeToken"
+        "401":
+          $ref: "#/components/responses/Problem"
+
+  /api/v1/auth/invites:
+    post:
+      summary: Invite a person
+      description: Requires the `core.user.manage` permission (§6.2).
+      operationId: createInvite
+      tags: [auth]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InviteRequest"
+      responses:
+        "201":
+          description: Invitation created; the token is returned once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InviteResponse"
+        "403":
+          $ref: "#/components/responses/Problem"
+
+  /api/v1/auth/invites/accept:
+    post:
+      summary: Accept an invitation
+      description: Sets the password and creates the person and account behind an invite.
+      operationId: acceptInvite
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptInviteRequest"
+      responses:
+        "201":
+          description: Account created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/Problem"
+
 components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: atlas_session
+      description: |
+        Opaque session token issued by `/auth/login`. The cookie is HttpOnly and
+        SameSite=Lax; the raw token is stored only as a SHA-256 hash.
+
+  responses:
+    Problem:
+      description: An RFC 9457 problem detail.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
   schemas:
     Check:
       type: object
@@ -63,6 +346,7 @@ components:
           enum: [up, down, skipped]
         detail: { type: string }
         latency_ms: { type: integer, format: int64 }
+
     HealthReport:
       type: object
       required: [status]
@@ -71,6 +355,7 @@ components:
         checks:
           type: array
           items: { $ref: "#/components/schemas/Check" }
+
     FieldError:
       type: object
       required: [field, code]
@@ -78,6 +363,7 @@ components:
         field: { type: string }
         code: { type: string }
         detail: { type: string }
+
     Problem:
       type: object
       description: RFC 9457 problem detail with Atlas extensions (§11).
@@ -90,19 +376,130 @@ components:
         instance: { type: string }
         code:
           type: string
-          description: Stable machine-readable error code.
-        request_id: { type: string }
+          description: Stable machine-readable code, e.g. UNAUTHENTICATED.
         errors:
           type: array
           items: { $ref: "#/components/schemas/FieldError" }
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: Session cookie with an HttpOnly bearer token (Phase 1).
 
-security: []
-tags:
-  - name: system
-    description: Health and platform routes.
+    StatusResponse:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string }
+
+    User:
+      type: object
+      required: [id, email, name, subject, roles]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        name: { type: string }
+        subject: { type: string }
+        person_id: { type: string, format: uuid }
+        roles:
+          type: array
+          items: { type: string }
+
+    LoginRequest:
+      type: object
+      required: [identifier, password]
+      properties:
+        identifier:
+          type: string
+          description: An email address or an E.164 phone number.
+        password: { type: string }
+
+    LoginResponse:
+      type: object
+      properties:
+        requires_mfa: { type: boolean }
+        enrollment_required: { type: boolean }
+        mfa_token: { type: string }
+        user: { $ref: "#/components/schemas/User" }
+
+    MfaTokenRequest:
+      type: object
+      required: [mfa_token]
+      properties:
+        mfa_token: { type: string }
+
+    MfaCodeRequest:
+      type: object
+      required: [mfa_token, code]
+      properties:
+        mfa_token: { type: string }
+        code:
+          type: string
+          description: A six-digit TOTP code or a single-use recovery code.
+
+    MfaEnrollResponse:
+      type: object
+      required: [secret, otpauth_url]
+      properties:
+        secret: { type: string }
+        otpauth_url: { type: string }
+
+    MfaActivateResponse:
+      type: object
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          items: { type: string }
+
+    Session:
+      type: object
+      required: [id, current, created_at, last_seen_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        current: { type: boolean }
+        ip: { type: string }
+        user_agent: { type: string }
+        created_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+
+    RealtimeToken:
+      type: object
+      required: [token, expires_at]
+      properties:
+        token: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    GrantSpec:
+      type: object
+      required: [role_key, scope_type]
+      properties:
+        role_key: { type: string }
+        scope_type: { type: string, enum: [global, department, unit, project] }
+        scope_id: { type: string, format: uuid }
+
+    InviteRequest:
+      type: object
+      required: [email, role_grants]
+      properties:
+        email: { type: string, format: email }
+        full_name: { type: string }
+        employment_type:
+          type: string
+          enum: [full_time, part_time, contractor, intern, external]
+        role_grants:
+          type: array
+          items: { $ref: "#/components/schemas/GrantSpec" }
+        ttl_hours: { type: integer }
+
+    InviteResponse:
+      type: object
+      required: [token, email, expires_at]
+      properties:
+        token: { type: string }
+        email: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    AcceptInviteRequest:
+      type: object
+      required: [token, password]
+      properties:
+        token: { type: string }
+        full_name: { type: string }
+        password: { type: string, minLength: 12 }

@@ -3,21 +3,40 @@ info:
   title: Atlas — Core API (internal)
   version: 0.1.0
   description: |
-    Service-to-service contract between the Elixir orchestrator and the Go core
-    (docs/ATLAS.md §4.1). These routes are never exposed publicly — Caddy
-    returns 404 for /internal/* (docs/reference/../caddy/Caddyfile).
+    Service-to-service routes (docs/ATLAS.md §11). Caddy returns 404 for
+    `/internal/*`, so nothing here is reachable from outside the deployment.
 
-    Phase 0 defines no internal routes yet; authentication/authorization
-    endpoints land in Phase 1 (ADR-008). The document exists so the boundary is
-    explicit and the surface stays intentionally small.
+    The first internal route is the JWKS document the orchestrator fetches to
+    verify short-lived realtime tokens (ADR-008). Service-to-service commands
+    carrying a `svc:` token are added alongside the governed modules.
   contact:
     name: SafariStack
+  license:
+    name: Proprietary
 
 servers:
   - url: http://localhost:8080
-    description: Local development
+    description: Local development (reachable only inside the compose network)
 
-paths: {}
+tags:
+  - name: internal
+
+paths:
+  /internal/v1/.well-known/jwks.json:
+    get:
+      summary: The public key set for realtime token verification
+      description: |
+        Returns the RFC 8037 JWKS for the current Ed25519 signing key. Cached by
+        the orchestrator and refreshed on a timer.
+      operationId: getJwks
+      tags: [internal]
+      responses:
+        "200":
+          description: The key set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Jwks"
 
 components:
   securitySchemes:
@@ -25,4 +44,28 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Service identity token for svc:orchestrator (Phase 1).
+      description: Service identity token for svc:orchestrator (ADR-008).
+
+  schemas:
+    Jwks:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/Jwk"
+
+    Jwk:
+      type: object
+      required: [kty, crv, x, kid, alg, use]
+      properties:
+        kty: { type: string, enum: [OKP] }
+        crv: { type: string, enum: [Ed25519] }
+        x: { type: string, description: base64url public key }
+        kid: { type: string }
+        alg: { type: string, enum: [EdDSA] }
+        use: { type: string, enum: [sig] }
+        key_ops:
+          type: array
+          items: { type: string }

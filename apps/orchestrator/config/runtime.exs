@@ -29,10 +29,17 @@ if config_env() == :prod do
       port: String.to_integer(System.get_env("PORT") || "4000")
     ]
 
-  # In production realtime tokens are verified against Go's JWKS (ADR-008).
-  if jwks = System.get_env("ATLAS_REALTIME_JWKS") do
-    config :atlas_orchestrator, :realtime, jwks: jwks, issuer: System.get_env("ATLAS_REALTIME_ISSUER")
-  end
+  # In production realtime tokens are verified against Go's JWKS (ADR-008). A
+  # static document may be injected instead of a URL, for example when keys are
+  # shipped by the secret manager rather than fetched.
+  jwks_url =
+    System.get_env("ATLAS_JWKS_URL") ||
+      raise "ATLAS_JWKS_URL is not set (the Go JWKS endpoint for realtime tokens)."
+
+  config :atlas_orchestrator, :realtime,
+    jwks_url: jwks_url,
+    issuer: System.get_env("ATLAS_REALTIME_ISSUER", "atlas"),
+    audience: System.get_env("ATLAS_REALTIME_AUDIENCE", "atlas-realtime")
 
   config :logger, level: :info
 end

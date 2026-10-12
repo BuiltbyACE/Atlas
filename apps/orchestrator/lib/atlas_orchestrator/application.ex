@@ -42,12 +42,26 @@ defmodule AtlasOrchestrator.Application do
     if Application.get_env(:atlas_orchestrator, :env, :dev) == :test do
       []
     else
-      [
-        {Oban, Application.fetch_env!(:atlas_orchestrator, Oban)},
-        AtlasOrchestrator.Endpoint,
-        AtlasOrchestrator.Outbox.Consumer,
-        AtlasOrchestrator.Outbox.Listener
-      ]
+      jwks_children() ++
+        [
+          {Oban, Application.fetch_env!(:atlas_orchestrator, Oban)},
+          AtlasOrchestrator.Endpoint,
+          AtlasOrchestrator.Outbox.Consumer,
+          AtlasOrchestrator.Outbox.Listener
+        ]
+    end
+  end
+
+  # The JWKS cache is started only when Go's endpoint is configured; without it
+  # realtime verification has no key source, so sockets would be rejected and
+  # there is no point holding an empty cache.
+  defp jwks_children do
+    case Application.get_env(:atlas_orchestrator, :realtime, [])[:jwks_url] do
+      url when is_binary(url) and url != "" ->
+        [{AtlasOrchestrator.Auth.JWKS, url: url}]
+
+      _ ->
+        []
     end
   end
 end

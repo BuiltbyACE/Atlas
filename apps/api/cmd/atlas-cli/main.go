@@ -13,12 +13,15 @@
 //	atlas-cli migrate create <name> scaffold a new empty migration
 //	atlas-cli outbox hello [msg]    write a core.system.hello.v1 event
 //	atlas-cli seed                  write the role/permission catalogue (§3.2, §6.2)
+//	atlas-cli keygen                print fresh local secrets (Ed25519 + AES-256)
 //	atlas-cli version               print the build version
 package main
 
 import (
 	"context"
+	"crypto/x509"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -31,9 +34,11 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/safaristack/atlas/apps/api/db/migrations"
+	"github.com/safaristack/atlas/apps/api/internal/auth"
 	"github.com/safaristack/atlas/apps/api/internal/outbox"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
+	"github.com/safaristack/atlas/apps/api/internal/platform/ed25519jwt"
 	"github.com/safaristack/atlas/apps/api/internal/platform/logging"
 	"github.com/safaristack/atlas/apps/api/internal/seed"
 )
@@ -67,6 +72,8 @@ func run(args []string) error {
 		return runOutbox(args[1:])
 	case "seed":
 		return runSeed()
+	case "keygen":
+		return runKeygen()
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -82,8 +89,34 @@ func usage() {
   migrate up | down | status | version | create <name>
   outbox hello [message]
   seed
+  keygen
   version
 `)
+}
+
+// ── keygen ──────────────────────────────────────────────────
+
+// runKeygen prints fresh local secrets: an Ed25519 key for realtime tokens and
+// an AES-256 key for encrypting short-lived secrets. Run it once and paste the
+// output into `.env`; without it the API generates ephemeral keys at boot.
+func runKeygen() error {
+	key, err := ed25519jwt.Generate()
+	if err != nil {
+		return err
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key.SigningKey())
+	if err != nil {
+		return err
+	}
+	encryptionKey, err := auth.GenerateEncryptionKey()
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("ATLAS_REALTIME_PRIVATE_KEY=%s\n", base64.StdEncoding.EncodeToString(der))
+	fmt.Printf("ATLAS_ENCRYPTION_KEY=%s\n", encryptionKey)
+	fmt.Printf("# realtime key id (public half): %s\n", key.KeyID())
+	return nil
 }
 
 // ── migrate ─────────────────────────────────────────────────

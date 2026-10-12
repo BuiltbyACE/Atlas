@@ -22,7 +22,8 @@ defmodule AtlasOrchestrator.MixProject do
   def application do
     [
       mod: {AtlasOrchestrator.Application, []},
-      extra_applications: [:logger, :runtime_tools]
+      # :inets/:ssl back the JWKS fetch from Go (ADR-008).
+      extra_applications: [:logger, :runtime_tools, :inets, :ssl]
     ]
   end
 

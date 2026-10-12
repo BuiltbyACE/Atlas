@@ -79,6 +79,36 @@ curl http://localhost:4000/health/ready         # orchestrator readiness (Repo)
 `task ps` shows container health. All three infrastructure services expose a
 Docker healthcheck.
 
+## Authentication and realtime tokens
+
+Sign-in is a session cookie (opaque token, stored hashed). Realtime tokens are
+signed by Go and verified by the orchestrator against Go's JWKS (ADR-008).
+
+Local development needs no key setup: when `ATLAS_ENCRYPTION_KEY` and
+`ATLAS_REALTIME_PRIVATE_KEY` are empty, `atlas-api` generates ephemeral keys at
+boot. To keep the same keys across restarts (for example so the orchestrator's
+cached JWKS keeps verifying), generate stable ones once:
+
+```powershell
+task keygen          # prints ATLAS_REALTIME_PRIVATE_KEY and ATLAS_ENCRYPTION_KEY
+# paste the output into .env, then restart the API
+```
+
+The orchestrator fetches keys from `ATLAS_JWKS_URL`
+(`http://localhost:8080/internal/v1/.well-known/jwks.json`), so the API must be
+running before a socket can be authenticated. The URL is served only inside the
+deployment — Caddy returns 404 for `/internal/*`.
+
+Inspect the published keys:
+
+```powershell
+curl http://localhost:8080/internal/v1/.well-known/jwks.json
+```
+
+Sign in with an email address (`ceo@safaristack.co.ke`) or an E.164 phone
+number (`+254…`). Accounts that require MFA answer with a short-lived challenge
+token instead of a session.
+
 ## Daily commands
 
 | Task | Purpose |
@@ -89,6 +119,7 @@ Docker healthcheck.
 | `task migrate` / `task migrate:status` | Go migrations. |
 | `task orch:migrate` | Orchestrator (Ecto) migrations. |
 | `task seed` | Write the role/permission catalogue (idempotent). |
+| `task keygen` | Print fresh local secrets for `.env` (Ed25519 + AES-256). |
 | `task test` | Go + Elixir tests. |
 | `task lint` | Go vet, Credo, ESLint + typecheck. |
 

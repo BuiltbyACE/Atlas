@@ -45,6 +45,33 @@ type Config struct {
 	WriteTimeout  time.Duration
 	IdleTimeout   time.Duration
 	ShutdownGrace time.Duration
+
+	// ── Authentication and sessions (§6.1) ───────────────────────
+	// SessionCookieName is the name of the opaque session cookie.
+	SessionCookieName string
+	// SessionIdleTimeout and SessionAbsoluteTTL bound a session's life: it ends
+	// after SessionIdleTimeout without use, and always after SessionAbsoluteTTL.
+	SessionIdleTimeout time.Duration
+	SessionAbsoluteTTL time.Duration
+	// MFAIssuer is the issuer shown in authenticator apps when enrolling TOTP.
+	MFAIssuer string
+	// EncryptionKey is a base64-encoded 32-byte AES key used to encrypt
+	// short-lived secrets at rest (the TOTP secret). Staging and production
+	// must supply it from the secret manager; local development generates one
+	// at boot.
+	EncryptionKey string
+
+	// ── Realtime tokens (§6.1, ADR-008) ──────────────────────────
+	// RealtimePrivateKey is a base64-encoded PKCS#8 Ed25519 private key. Go
+	// signs short-lived realtime tokens with it and publishes the public half as
+	// JWKS for Elixir to verify. When empty in local development a key is
+	// generated at boot; staging and production must supply it (secret manager).
+	RealtimePrivateKey string
+	RealtimeIssuer     string
+	RealtimeAudience   string
+	RealtimeTokenTTL   time.Duration
+	// ServiceAudience is the `aud` expected on service-to-service tokens (§6.1).
+	ServiceAudience string
 }
 
 // Load reads configuration from the process environment, applying defaults.
@@ -63,6 +90,18 @@ func Load() (*Config, error) {
 		WriteTimeout:  duration("ATLAS_HTTP_WRITE_TIMEOUT", 30*time.Second),
 		IdleTimeout:   duration("ATLAS_HTTP_IDLE_TIMEOUT", 60*time.Second),
 		ShutdownGrace: duration("ATLAS_SHUTDOWN_GRACE", 20*time.Second),
+
+		SessionCookieName:  get("ATLAS_SESSION_COOKIE", "atlas_session"),
+		SessionIdleTimeout: duration("ATLAS_SESSION_IDLE_TIMEOUT", 12*time.Hour),
+		SessionAbsoluteTTL: duration("ATLAS_SESSION_ABSOLUTE_TTL", 7*24*time.Hour),
+		MFAIssuer:          get("ATLAS_MFA_ISSUER", "SafariStack Atlas"),
+		EncryptionKey:      get("ATLAS_ENCRYPTION_KEY", ""),
+
+		RealtimePrivateKey: get("ATLAS_REALTIME_PRIVATE_KEY", ""),
+		RealtimeIssuer:     get("ATLAS_REALTIME_ISSUER", "atlas"),
+		RealtimeAudience:   get("ATLAS_REALTIME_AUDIENCE", "atlas-realtime"),
+		RealtimeTokenTTL:   duration("ATLAS_REALTIME_TOKEN_TTL", 5*time.Minute),
+		ServiceAudience:    get("ATLAS_SERVICE_AUDIENCE", "atlas-internal"),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -106,6 +145,21 @@ func (c *Config) Validate() error {
 
 	if c.Env == EnvProduction && c.LogFormat != "json" {
 		return fmt.Errorf("ATLAS_LOG_FORMAT must be json in production")
+	}
+
+	if c.SessionAbsoluteTTL <= 0 {
+		return fmt.Errorf("ATLAS_SESSION_ABSOLUTE_TTL must be positive")
+	}
+	if c.SessionIdleTimeout <= 0 || c.SessionIdleTimeout > c.SessionAbsoluteTTL {
+		return fmt.Errorf("ATLAS_SESSION_IDLE_TIMEOUT must be positive and no greater than the absolute lifetime")
+	}
+
+	if c.Env == EnvProduction && c.RealtimePrivateKey == "" {
+		return fmt.Errorf("ATLAS_REALTIME_PRIVATE_KEY is required outside local development (Ed25519, base64 PKCS#8)")
+	}
+
+	if c.Env == EnvProduction && c.EncryptionKey == "" {
+		return fmt.Errorf("ATLAS_ENCRYPTION_KEY is required outside local development (base64, 32 bytes)")
 	}
 
 	return nil

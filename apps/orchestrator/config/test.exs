@@ -2,7 +2,9 @@ import Config
 
 config :atlas_orchestrator, AtlasOrchestrator.Endpoint, server: false
 
-config :atlas_orchestrator, :realtime, secret: "test-realtime-secret"
+# Realtime tokens are verified against a static key set injected by each test
+# (see AtlasOrchestrator.Auth.TokenTest); no fetch happens in the suite.
+config :atlas_orchestrator, :realtime, jwks: nil
 
 config :logger, level: :warning
 

@@ -16,18 +16,23 @@ const ProblemContentType = "application/problem+json"
 // Stable error codes. Clients switch on these values, so they are part of the
 // API contract: add new ones freely, never rename an existing one silently.
 const (
-	CodeValidationFailed      = "VALIDATION_FAILED"
-	CodeUnauthenticated       = "UNAUTHENTICATED"
-	CodeForbidden             = "FORBIDDEN"
-	CodeNotFound              = "NOT_FOUND"
-	CodeMethodNotAllowed      = "METHOD_NOT_ALLOWED"
-	CodeConflict              = "CONFLICT"
-	CodePreconditionFailed    = "PRECONDITION_FAILED"
-	CodeRateLimited           = "RATE_LIMITED"
-	CodeInternal              = "INTERNAL_ERROR"
-	CodeUnavailable           = "SERVICE_UNAVAILABLE"
-	CodeApprovalLimitExceeded = "APPROVAL_LIMIT_EXCEEDED"
-	CodeTaskEvidenceRequired  = "TASK_EVIDENCE_REQUIRED"
+	CodeValidationFailed       = "VALIDATION_FAILED"
+	CodeUnauthenticated        = "UNAUTHENTICATED"
+	CodeForbidden              = "FORBIDDEN"
+	CodeNotFound               = "NOT_FOUND"
+	CodeMethodNotAllowed       = "METHOD_NOT_ALLOWED"
+	CodeConflict               = "CONFLICT"
+	CodePreconditionFailed     = "PRECONDITION_FAILED"
+	CodeRateLimited            = "RATE_LIMITED"
+	CodeInternal               = "INTERNAL_ERROR"
+	CodeUnavailable            = "SERVICE_UNAVAILABLE"
+	CodeApprovalLimitExceeded  = "APPROVAL_LIMIT_EXCEEDED"
+	CodeTaskEvidenceRequired   = "TASK_EVIDENCE_REQUIRED"
+	CodeSeparationOfDuties     = "SEPARATION_OF_DUTIES"
+	CodePreconditionRequired   = "PRECONDITION_REQUIRED"
+	CodeIdempotencyKeyRequired = "IDEMPOTENCY_KEY_REQUIRED"
+	CodeIdempotencyConflict    = "IDEMPOTENCY_CONFLICT"
+	CodeMFARequired            = "MFA_REQUIRED"
 )
 
 // FieldError describes a single validation failure.
@@ -119,6 +124,20 @@ func Unauthenticated(detail string) Problem {
 
 func Forbidden(detail string) Problem {
 	return New(http.StatusForbidden, CodeForbidden, detail)
+}
+
+// Conflict creates a 409 with an explicit code, so idempotency and separation
+// of duties conflicts stay distinguishable from a generic conflict.
+func ConflictWith(code, detail string) Problem {
+	return New(http.StatusConflict, code, detail)
+}
+
+func PreconditionRequired(detail string) Problem {
+	return New(http.StatusPreconditionRequired, CodePreconditionRequired, detail)
+}
+
+func PreconditionFailed(detail string) Problem {
+	return New(http.StatusPreconditionFailed, CodePreconditionFailed, detail)
 }
 
 func NotFound(detail string) Problem {

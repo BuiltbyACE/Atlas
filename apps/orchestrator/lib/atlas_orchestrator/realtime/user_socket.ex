@@ -36,5 +36,11 @@ defmodule AtlasOrchestrator.Realtime.UserSocket do
   @impl true
   def id(socket), do: "user_socket:#{socket.assigns.user_id}"
 
-  defp user_id_from(claims), do: claims["sub"] || claims["user_id"]
+  # Go sets `sub` to "user:<uuid>"; the socket and channels key on the bare id.
+  defp user_id_from(claims) do
+    case claims["sub"] || claims["user_id"] do
+      "user:" <> id -> id
+      id -> id
+    end
+  end
 end

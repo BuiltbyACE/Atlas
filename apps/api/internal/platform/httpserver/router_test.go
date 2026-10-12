@@ -66,4 +66,3 @@ func TestUnknownRouteReturnsProblem(t *testing.T) {
 		t.Errorf("content-type = %q, want %q", ct, httpx.ProblemContentType)
 	}
 }
-
