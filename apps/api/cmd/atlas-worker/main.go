@@ -1,12 +1,15 @@
-// Command atlas-worker runs Atlas's scheduled and asynchronous Go work
-// (docs/ATLAS.md §4.1, §5.1): deadline sweeps, due-date checks, and other
-// time-driven jobs that produce events.
+// Command atlas-worker runs Atlas's asynchronous and time-driven Go work
+// (docs/ATLAS.md §4.1, §5.1).
 //
-// Phase 0 provides the process skeleton — boot, database, structured logs and
-// graceful shutdown — with a heartbeat loop. The real job runner (River, on
-// PostgreSQL, per ADR-001 and ADR-003) is introduced in Phase 1 when there are
-// jobs to run. Until then this binary must not pretend to do work it does not
-// do: the loop logs and does nothing else.
+// It currently runs one thing: the notification dispatcher (§6.4). Producers
+// (atlas-api) record a notification and its outbox event in one transaction and
+// return immediately; this process leases those due rows and performs the
+// provider calls with a timeout, retries, backoff and a circuit breaker
+// (§8.10). Keeping delivery here, not in the request path, is what makes the
+// write path fast and the SLOs in §11 hold.
+//
+// The heartbeat loop stays: a worker that cannot see the database is idle in
+// the worst way, so it is logged rather than assumed.
 package main
 
 import (
@@ -19,6 +22,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/safaristack/atlas/apps/api/internal/adapters/email"
+	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
 	"github.com/safaristack/atlas/apps/api/internal/platform/logging"
@@ -66,23 +71,69 @@ func run() error {
 	}
 	defer pool.Close()
 
-	return loop(ctx, logger, pool)
+	dispatcher := notifications.NewDispatcher(
+		notifications.NewPGStore(pool),
+		[]notifications.Sender{
+			email.New(email.Config{
+				Host:     cfg.SMTPHost,
+				Port:     cfg.SMTPPort,
+				From:     cfg.SMTPFrom,
+				Username: cfg.SMTPUsername,
+				Password: cfg.SMTPPassword,
+				TLS:      cfg.SMTPTLS,
+			}),
+		},
+		dispatcherConfig(cfg),
+		logger,
+	)
+
+	// Run the dispatcher and the heartbeat side by side; whichever ends first
+	// (a fatal dispatcher error, or a shutdown signal) ends the process.
+	dispatchErr := make(chan error, 1)
+	go func() { dispatchErr <- dispatcher.Run(ctx) }()
+
+	heartbeatErr := make(chan error, 1)
+	go func() { heartbeatErr <- loop(ctx, logger, pool) }()
+
+	select {
+	case err := <-dispatchErr:
+		return err
+	case err := <-heartbeatErr:
+		return err
+	case <-ctx.Done():
+		return nil
+	}
+}
+
+// dispatcherConfig maps process configuration onto the delivery engine's tuning.
+func dispatcherConfig(cfg *config.Config) notifications.DispatcherConfig {
+	d := notifications.DefaultDispatcherConfig()
+	if cfg.NotifyBatchSize > 0 {
+		d.BatchSize = cfg.NotifyBatchSize
+	}
+	if cfg.NotifyWorkers > 0 {
+		d.PerProvider = cfg.NotifyWorkers
+	}
+	if cfg.NotifySendTimeout > 0 {
+		d.SendTimeout = cfg.NotifySendTimeout
+	}
+	return d
 }
 
 // loop is the worker's heartbeat. It keeps the process shape honest and
-// observable until the Phase 1 job runner replaces it.
+// observable alongside the dispatcher.
 func loop(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool) error {
 	const interval = 30 * time.Second
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	logger.Info("worker ready", slog.Duration("heartbeat", interval))
+	logger.Info("worker heartbeat ready", slog.Duration("heartbeat", interval))
 
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("worker stopping")
+			logger.Info("worker heartbeat stopping")
 			return nil
 		case <-ticker.C:
 			// Prove the database is still reachable; a worker that cannot see
@@ -94,7 +145,7 @@ func loop(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool) error {
 				logger.Warn("heartbeat: database unreachable", slog.String("error", err.Error()))
 				continue
 			}
-			logger.Debug("heartbeat: database ok (no jobs registered yet; see Phase 1)")
+			logger.Debug("heartbeat: database ok")
 		}
 	}
 }

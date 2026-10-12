@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
 	"github.com/safaristack/atlas/apps/api/internal/platform/ed25519jwt"
@@ -73,12 +74,19 @@ func run() error {
 		return err
 	}
 
+	// Notifications: atlas-api owns the write path (records + outbox event in one
+	// transaction) and the notification centre. Delivery runs in atlas-worker, so
+	// a request here never waits on a provider (§6.4, §8.10).
+	notificationService := notifications.NewService(notifications.NewPGStore(pool), logger)
+	notificationHandler := notifications.NewHandler(notificationService, logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
-		Cfg:     cfg,
-		Logger:  logger,
-		DB:      pool,
-		Version: version,
-		Auth:    authService,
+		Cfg:           cfg,
+		Logger:        logger,
+		DB:            pool,
+		Version:       version,
+		Auth:          authService,
+		Notifications: notificationHandler,
 	})
 
 	srv := &http.Server{

@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/health"
 	"github.com/safaristack/atlas/apps/api/internal/platform/httpx"
@@ -33,6 +34,9 @@ type Deps struct {
 	// Auth is optional. When it is nil the authentication routes are not
 	// mounted, which keeps the health-only router simple to test.
 	Auth *auth.Service
+	// Notifications is optional, and only mounted alongside Auth (its routes are
+	// authenticated). When nil the notification routes are absent.
+	Notifications *notifications.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -68,6 +72,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 		}, d.Logger)
 		registerAuth(reg, handler)
 		gate = auth.NewGate(d.Auth, d.Cfg.SessionCookieName, d.Logger)
+	}
+
+	if d.Auth != nil && d.Notifications != nil {
+		registerNotifications(reg, d.Notifications)
 	}
 
 	reg.Mount(r, gate)
@@ -108,4 +116,25 @@ func registerAuth(reg *routing.Registry, h *auth.Handler) {
 
 	reg.Public(http.MethodGet, "/internal/v1/.well-known/jwks.json",
 		"Public signing keys for realtime token verification", h.JWKS)
+}
+
+// registerNotifications declares the notification surface (§6.4). The user
+// routes are authenticated (you only ever see your own); the internal command is
+// service-to-service and gated by a catalogue permission.
+func registerNotifications(reg *routing.Registry, h *notifications.Handler) {
+	reg.Authenticated(http.MethodGet, "/api/v1/notifications",
+		"List your in-app notifications", h.List)
+	reg.Authenticated(http.MethodGet, "/api/v1/notifications/unread-count",
+		"Count your unread notifications", h.UnreadCount)
+	reg.Authenticated(http.MethodPost, "/api/v1/notifications/{id}/read",
+		"Mark one notification read", h.MarkRead)
+	reg.Authenticated(http.MethodPost, "/api/v1/notifications/read-all",
+		"Mark every notification read", h.MarkAllRead)
+	reg.Authenticated(http.MethodGet, "/api/v1/notifications/preferences",
+		"Your notification preferences", h.Preferences)
+	reg.Authenticated(http.MethodPut, "/api/v1/notifications/preferences",
+		"Update your notification preferences", h.SavePreferences)
+
+	reg.Gated("core.notification.manage", http.MethodPost, "/internal/v1/commands/notifications.send",
+		"Ask Go to notify a person (service-to-service)", h.Send)
 }

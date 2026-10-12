@@ -57,11 +57,6 @@ export default async function LoginPage() {
           <LoginFlow />
         </div>
       </div>
-
-      <p className="absolute bottom-5 left-1/2 hidden -translate-x-1/2 whitespace-nowrap rounded-full bg-milk/85 px-4 py-1 text-xs text-[#2C4A7C] backdrop-blur-sm sm:block">
-        © {new Date().getFullYear()} SafariStack Solutions · Atlas Company Operating System ·
-        Authorised staff only
-      </p>
     </main>
   );
 }

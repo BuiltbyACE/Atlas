@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/core.notification.failed.v1.schema.json",
+  "title": "core.notification.failed.v1",
+  "description": "A notification exhausted its delivery attempts (docs/ATLAS.md §6.4, §8.10, §7.4). Emitted by the dispatcher so a failed send is visible rather than silent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["recipient_person_id", "notification_id", "reason", "failed_at"],
+  "properties": {
+    "recipient_person_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "notification_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "failed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

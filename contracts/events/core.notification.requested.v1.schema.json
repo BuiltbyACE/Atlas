@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/core.notification.requested.v1.schema.json",
+  "title": "core.notification.requested.v1",
+  "description": "Signal that a person has a new notification (docs/ATLAS.md §6.4, §7.4). Written in the same transaction as the notification rows; Elixir consumes it to push on the recipient's channel and, later, to schedule channel fan-out.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["recipient_person_id", "notification_ids", "critical", "requested_at"],
+  "properties": {
+    "recipient_person_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "notification_ids": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" },
+      "minItems": 1
+    },
+    "template": {
+      "type": "string",
+      "maxLength": 120
+    },
+    "critical": {
+      "type": "boolean"
+    },
+    "requested_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

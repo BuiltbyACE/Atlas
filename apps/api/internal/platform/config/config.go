@@ -72,6 +72,21 @@ type Config struct {
 	RealtimeTokenTTL   time.Duration
 	// ServiceAudience is the `aud` expected on service-to-service tokens (§6.1).
 	ServiceAudience string
+
+	// ── Notifications (§6.4, §8.10) ──────────────────────────────
+	// SMTP is where the email adapter sends: Mailpit locally, a transactional
+	// provider in staging and production [DECIDE].
+	SMTPHost     string
+	SMTPPort     int
+	SMTPFrom     string
+	SMTPUsername string
+	SMTPPassword string
+	SMTPTLS      bool
+	// Notification dispatch tuning (atlas-worker). Values are configuration,
+	// not code (§2.10).
+	NotifyBatchSize   int
+	NotifyWorkers     int
+	NotifySendTimeout time.Duration
 }
 
 // Load reads configuration from the process environment, applying defaults.
@@ -102,6 +117,17 @@ func Load() (*Config, error) {
 		RealtimeAudience:   get("ATLAS_REALTIME_AUDIENCE", "atlas-realtime"),
 		RealtimeTokenTTL:   duration("ATLAS_REALTIME_TOKEN_TTL", 5*time.Minute),
 		ServiceAudience:    get("ATLAS_SERVICE_AUDIENCE", "atlas-internal"),
+
+		SMTPHost:     get("SMTP_HOST", "localhost"),
+		SMTPPort:     integer("SMTP_PORT", 1025),
+		SMTPFrom:     get("SMTP_FROM", "atlas@localhost"),
+		SMTPUsername: get("SMTP_USERNAME", ""),
+		SMTPPassword: get("SMTP_PASSWORD", ""),
+		SMTPTLS:      boolean("SMTP_TLS", false),
+
+		NotifyBatchSize:   integer("ATLAS_NOTIFY_BATCH_SIZE", 100),
+		NotifyWorkers:     integer("ATLAS_NOTIFY_WORKERS", 8),
+		NotifySendTimeout: duration("ATLAS_NOTIFY_SEND_TIMEOUT", 10*time.Second),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -193,4 +219,27 @@ func duration(key string, def time.Duration) time.Duration {
 		return time.Duration(n) * time.Second
 	}
 	return def
+}
+
+func integer(key string, def int) int {
+	raw := get(key, "")
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func boolean(key string, def bool) bool {
+	switch strings.ToLower(get(key, "")) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
 }
