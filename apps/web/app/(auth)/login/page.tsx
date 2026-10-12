@@ -8,14 +8,19 @@ export const metadata: Metadata = {
 /**
  * Phase 1 placeholder: Atlas login shell.
  *
- * This is intentionally a shell with NO business logic. The real flow (Phase 1)
- * will be a client component that:
- *   1. POSTs credentials to `/api/v1/auth/login` (Go) with the CSRF token,
- *   2. calls `/api/v1/auth/mfa/verify` when the account requires TOTP,
+ * This is intentionally a shell with NO business logic, and it does not work
+ * yet. The real flow (Phase 1) is a client component that:
+ *   1. POSTs JSON `{identifier, password}` to `/api/v1/auth/login` (Go),
+ *   2. calls `/api/v1/auth/mfa/verify` when the account requires TOTP
+ *      (or `/mfa/enroll` + `/mfa/activate` for a first-time privileged role),
  *   3. and only then receives the session cookie.
  *
+ * There is no CSRF token: mutations are JSON and the cookie is SameSite=Lax, so
+ * credentials must be sent with `fetch`, never as a native form POST. The form
+ * below is inert until it is replaced.
+ *
  * Authentication is owned by Go; Next.js never validates credentials itself
- * (blueprint sections 5.2 and 5.7, ADR-008).
+ * (blueprint sections 5.2 and 5.7, ADR-008; see docs/FRONTEND.md).
  */
 export default function LoginPage() {
   return (
@@ -33,15 +38,12 @@ export default function LoginPage() {
         </div>
 
         {/*
-          `method="post"` points straight at the Go endpoint for documentation
-          purposes only. Phase 1 replaces this with a client component that uses
-          the generated API client (lib/api/client.ts).
+          Non-functional documentation shell. A native form POST would be
+          form-encoded, which the API does not accept (and which would defeat
+          the SameSite=Lax CSRF posture). Phase 1 replaces this with a client
+          component using apiFetch (lib/api/client.ts).
         */}
-        <form
-          className="mt-6 space-y-4"
-          action="/api/v1/auth/login"
-          method="post"
-        >
+        <form className="mt-6 space-y-4">
           <div>
             <label
               htmlFor="email"
@@ -99,8 +101,9 @@ export default function LoginPage() {
           </div>
 
           <button
-            type="submit"
-            className="w-full rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700"
+            type="button"
+            disabled
+            className="w-full cursor-not-allowed rounded-md bg-slate-400 px-3 py-2 text-sm font-medium text-white"
           >
             Sign in
           </button>

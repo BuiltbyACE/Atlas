@@ -109,6 +109,23 @@ Sign in with an email address (`ceo@safaristack.co.ke`) or an E.164 phone
 number (`+254…`). Accounts that require MFA answer with a short-lived challenge
 token instead of a session.
 
+### Creating the first account
+
+Atlas has no self-service sign-up (ATLAS.md §6.1): every ordinary account comes
+from an invitation, and an invitation can only be created by an authenticated
+user. The very first account is therefore created deliberately by an operator,
+with a real name and password — never a fixture:
+
+```powershell
+$env:ATLAS_BOOTSTRAP_PASSWORD = "a-long-password"
+task bootstrap -- --email you@safaristack.co.ke --name "Your Name" --role ceo_internal
+```
+
+`--role` defaults to `system_admin`; `--phone` and `--scope` are optional.
+Privileged roles (the two CEOs, `finance_officer`, `system_admin`, `auditor`)
+are created with `mfa_required`, so the first sign-in is a TOTP enrolment. The
+command refuses to overwrite an existing email.
+
 ## Daily commands
 
 | Task | Purpose |
@@ -120,6 +137,7 @@ token instead of a session.
 | `task orch:migrate` | Orchestrator (Ecto) migrations. |
 | `task seed` | Write the role/permission catalogue (idempotent). |
 | `task keygen` | Print fresh local secrets for `.env` (Ed25519 + AES-256). |
+| `task bootstrap` | Create the first account (a real person), then sign in. |
 | `task test` | Go + Elixir tests. |
 | `task lint` | Go vet, Credo, ESLint + typecheck. |
 

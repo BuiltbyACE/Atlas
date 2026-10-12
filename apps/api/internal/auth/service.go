@@ -619,7 +619,7 @@ func (s *Service) AcceptInvite(ctx context.Context, token, fullName, password st
 		TokenHash:    HashToken(token),
 		FullName:     name,
 		PasswordHash: hash,
-		MFARequired:  false,
+		MFARequired:  inviteRequiresMFA(invite),
 		Now:          s.now(),
 	})
 	if err != nil {

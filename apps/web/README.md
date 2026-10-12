@@ -8,6 +8,10 @@ layout, a generated-API-client seam and a Phoenix Channels hook. It contains
 **no business logic** - Go owns all writes, rules and permissions (blueprint
 section 5.2).
 
+> **Frontend team, start here:** [`docs/FRONTEND.md`](../../docs/FRONTEND.md) is
+> the full brief and system preview. Authentication (Go) is built and running;
+> the first task is the login journey against the real backend.
+
 ## Architecture in one paragraph
 
 One origin, two services. In production **Caddy** routes `/api/*` to the Go API
@@ -114,5 +118,8 @@ See [`.env.example`](.env.example):
 
 ## Phase status
 
-Phase 0 (shell) only. Auth, the dashboard data, settings and all module screens
-are Phase 1+ placeholders and are clearly marked as such in the code.
+Phase 0 (shell) only. The Go authentication backend is complete (login, MFA,
+sessions, realtime tokens — see [`docs/FRONTEND.md`](../../docs/FRONTEND.md));
+the login page is still a placeholder. The dashboard data, settings and all
+module screens are Phase 1+ placeholders and are clearly marked as such in the
+code.

@@ -14,6 +14,7 @@
 //	atlas-cli outbox hello [msg]    write a core.system.hello.v1 event
 //	atlas-cli seed                  write the role/permission catalogue (§3.2, §6.2)
 //	atlas-cli keygen                print fresh local secrets (Ed25519 + AES-256)
+//	atlas-cli bootstrap             create the first account (a real person)
 //	atlas-cli version               print the build version
 package main
 
@@ -74,6 +75,8 @@ func run(args []string) error {
 		return runSeed()
 	case "keygen":
 		return runKeygen()
+	case "bootstrap":
+		return runBootstrap(args[1:])
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -90,6 +93,7 @@ func usage() {
   outbox hello [message]
   seed
   keygen
+  bootstrap --email <email> --name <full name> [--phone] [--role <role>] [--scope <scope>]
   version
 `)
 }
@@ -284,5 +288,78 @@ func runSeed() error {
 		slog.Int("role_permissions", report.RolePermissions),
 		slog.Int("settings_added", report.SettingsAdded),
 	)
+	return nil
+}
+
+// ── bootstrap ───────────────────────────────────────────────
+
+// runBootstrap creates the first account. Atlas has no self-service sign-up, so
+// someone with operator access has to create the first person deliberately; every
+// account after that comes from an invitation. The password is never a default —
+// pass --password or set ATLAS_BOOTSTRAP_PASSWORD.
+func runBootstrap(args []string) error {
+	fs := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `atlas-cli bootstrap — create the first Atlas account
+
+  --email <address>     required; also the sign-in identifier
+  --name <full name>    required; the real person's name
+  --role <role key>     default system_admin (see §3.2)
+  --phone <E.164>       optional second sign-in identifier
+  --scope <scope>       default company; one of company|business_unit|department|project|own
+  --password <secret>   at least 12 characters, or set ATLAS_BOOTSTRAP_PASSWORD
+`)
+	}
+	email := fs.String("email", "", "email address (also the sign-in identifier)")
+	name := fs.String("name", "", "the person's full name")
+	role := fs.String("role", "system_admin", "role key from §3.2")
+	phone := fs.String("phone", "", "optional E.164 phone number")
+	scope := fs.String("scope", "company", "grant scope type")
+	password := fs.String("password", os.Getenv("ATLAS_BOOTSTRAP_PASSWORD"), "password (min 12); prefer the env var")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *email == "" || *name == "" {
+		fs.Usage()
+		return errors.New("bootstrap: --email and --name are required")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	logger := logging.New(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	pool, err := database.Connect(ctx, cfg.DatabaseURL, logger)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	account, err := auth.Bootstrap(ctx, pool, auth.BootstrapInput{
+		Email:     *email,
+		FullName:  *name,
+		Phone:     *phone,
+		Password:  *password,
+		RoleKey:   *role,
+		ScopeType: *scope,
+	})
+	if err != nil {
+		return err
+	}
+
+	logger.Info("first account created",
+		slog.String("email", account.Email),
+		slog.String("account_id", account.AccountID.String()),
+		slog.String("person_id", account.PersonID.String()),
+		slog.String("role", *role),
+	)
+	fmt.Fprintln(os.Stdout, "Sign in with your email (or the phone number) and the password you supplied.")
+	if auth.RoleRequiresMFA(*role) {
+		fmt.Fprintln(os.Stdout, "This role is privileged: the first sign-in is a TOTP enrolment.")
+	}
 	return nil
 }

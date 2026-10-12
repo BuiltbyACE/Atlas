@@ -135,7 +135,7 @@ async function toApiError(response: Response): Promise<ApiError> {
  * Typed fetch against the Go API.
  *
  * @example
- * const me = await apiFetch<CurrentUser>("/api/v1/me", { cache: "no-store" });
+ * const me = await apiFetch<CurrentUser>("/api/v1/auth/me", { cache: "no-store" });
  */
 export async function apiFetch<T = unknown>(
   path: string,

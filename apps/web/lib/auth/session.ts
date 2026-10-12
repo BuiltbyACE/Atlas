@@ -14,14 +14,15 @@ import { redirect } from "next/navigation";
 
 import { apiFetch } from "@/lib/api/client";
 
-/** Shape of `GET /api/v1/me` (illustrative until the generated client lands). */
+/** Shape of `GET /api/v1/auth/me` (until the generated client lands). */
 export interface CurrentUser {
   id: string;
   email: string;
   name: string;
+  /** Stable subject, e.g. `user:<uuid>`. */
+  subject: string;
+  person_id?: string;
   roles: string[];
-  permissions?: string[];
-  scopes?: string[];
 }
 
 /**
@@ -30,7 +31,7 @@ export interface CurrentUser {
  */
 export async function getCurrentUser(): Promise<CurrentUser | null> {
   try {
-    return await apiFetch<CurrentUser>("/api/v1/me", { cache: "no-store" });
+    return await apiFetch<CurrentUser>("/api/v1/auth/me", { cache: "no-store" });
   } catch {
     return null;
   }

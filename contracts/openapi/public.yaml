@@ -492,7 +492,7 @@ components:
       required: [role_key, scope_type]
       properties:
         role_key: { type: string }
-        scope_type: { type: string, enum: [global, department, unit, project] }
+        scope_type: { type: string, enum: [company, business_unit, department, project, own] }
         scope_id: { type: string, format: uuid }
 
     InviteRequest:
