@@ -1,0 +1,58 @@
+# ── OS / editors ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.swp
+*.swo
+
+# ── Secrets & local environment (NEVER commit) ───────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!*.example.pem
+!*.example.key
+
+# ── Go (apps/api) ────────────────────────────────────────────
+/apps/api/bin/
+/apps/api/tmp/
+*.exe
+*.test
+*.out
+coverage.out
+
+# ── Node / Next.js (apps/web) ────────────────────────────────
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+
+# ── Elixir (apps/orchestrator) ───────────────────────────────
+/apps/orchestrator/_build/
+/apps/orchestrator/deps/
+/apps/orchestrator/cover/
+/apps/orchestrator/doc/
+/apps/orchestrator/.elixir_ls/
+/apps/orchestrator/atlas_orchestrator-*.tar
+erl_crash.dump
+*.ez
+
+# ── Generated code (do not edit; produced by CI/codegen) ─────
+/apps/web/lib/api/generated/*
+!/apps/web/lib/api/generated/README.md
+!/apps/web/lib/api/generated/.gitkeep
+/apps/api/internal/generated/*
+
+# ── Local runtime data / volumes ─────────────────────────────
+/data/
+/infra/compose/data/
+
+# ── Misc ─────────────────────────────────────────────────────
+*.log
+tmp/
+.cache/

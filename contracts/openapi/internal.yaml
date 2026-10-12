@@ -1,0 +1,28 @@
+openapi: 3.1.0
+info:
+  title: Atlas — Core API (internal)
+  version: 0.1.0
+  description: |
+    Service-to-service contract between the Elixir orchestrator and the Go core
+    (docs/ATLAS.md §4.1). These routes are never exposed publicly — Caddy
+    returns 404 for /internal/* (docs/reference/../caddy/Caddyfile).
+
+    Phase 0 defines no internal routes yet; authentication/authorization
+    endpoints land in Phase 1 (ADR-008). The document exists so the boundary is
+    explicit and the surface stays intentionally small.
+  contact:
+    name: SafariStack
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+paths: {}
+
+components:
+  securitySchemes:
+    serviceToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Service identity token for svc:orchestrator (Phase 1).

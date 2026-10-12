@@ -1,0 +1,33 @@
+{
+  "name": "@atlas/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Atlas web app - the SafariStack Company Operating System (Next.js App Router shell).",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "generate:api": "node -e \"console.log('[atlas/web] generate:api is not wired up yet. Generate the typed client from ../../contracts/openapi/public.yaml with openapi-typescript (see README.md).')\""
+  },
+  "dependencies": {
+    "next": "^15.5.27",
+    "phoenix": "^1.8.15",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/phoenix": "^1.6.7",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.6.1",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^15.5.27",
+    "postcss": "^8.5.29",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3"
+  }
+}

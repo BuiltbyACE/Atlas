@@ -1,0 +1,204 @@
+# Atlas — build & run entry point
+# https://taskfile.dev      (winget install Task.Task)
+version: '3'
+
+silent: true
+
+dotenv: ['.env']
+
+vars:
+  COMPOSE_FILE: infra/compose/docker-compose.yml
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list-all
+
+  # ── Environment ─────────────────────────────────────────────
+  doctor:
+    desc: Check that required tooling is installed
+    cmds:
+      - go version
+      - elixir --version
+      - node --version
+      - npm --version
+      - docker version --format "{{.Server.Version}}"
+      - docker compose version
+
+  env:
+    desc: Create .env from the example if missing
+    cmds:
+      - cmd: test -f .env || cp .env.example .env
+        platforms: [linux, darwin]
+      - cmd: powershell -NoProfile -Command "if (-not (Test-Path .env)) { Copy-Item .env.example .env; Write-Host 'created .env' } else { Write-Host '.env already exists' }"
+        platforms: [windows]
+
+  # ── Local infrastructure ────────────────────────────────────
+  up:
+    desc: Start local infrastructure (Postgres, SeaweedFS, Mailpit)
+    deps: [env]
+    cmds:
+      - docker compose --env-file .env -f {{.COMPOSE_FILE}} up -d --wait
+      - task: storage:init
+
+  down:
+    desc: Stop local infrastructure
+    deps: [env]
+    cmds:
+      - docker compose --env-file .env -f {{.COMPOSE_FILE}} down
+
+  nuke:
+    desc: Stop local infrastructure and DELETE its volumes
+    deps: [env]
+    prompt: This deletes local Postgres/SeaweedFS data. Continue?
+    cmds:
+      - docker compose --env-file .env -f {{.COMPOSE_FILE}} down -v
+
+  ps:
+    desc: Show container status
+    deps: [env]
+    cmds:
+      - docker compose --env-file .env -f {{.COMPOSE_FILE}} ps
+
+  logs:
+    desc: Tail infrastructure logs
+    deps: [env]
+    cmds:
+      - docker compose --env-file .env -f {{.COMPOSE_FILE}} logs -f --tail=100
+
+  psql:
+    desc: Open psql against the local atlas database
+    deps: [env]
+    cmds:
+      - docker compose --env-file .env -f {{.COMPOSE_FILE}} exec postgres psql -U atlas -d atlas
+
+  storage:init:
+    desc: Create the local object-storage bucket if it does not exist
+    deps: [env]
+    cmds:
+      - curl -s -o NUL -w "atlas storage bucket -> %{http_code}\n" --aws-sigv4 "aws:amz:us-east-1:s3" --user "{{.S3_ACCESS_KEY}}:{{.S3_SECRET_KEY}}" -X PUT "{{.S3_ENDPOINT}}/{{.S3_BUCKET}}"
+
+  # ── Go core API (apps/api) ──────────────────────────────────
+  migrate:
+    desc: Apply Go migrations (goose) to the local database
+    dir: apps/api
+    cmds:
+      - go run ./cmd/atlas-cli migrate up
+
+  migrate:status:
+    desc: Show migration status
+    dir: apps/api
+    cmds:
+      - go run ./cmd/atlas-cli migrate status
+
+  api:build:
+    desc: Build all Go binaries
+    dir: apps/api
+    cmds:
+      - go build ./...
+
+  api:run:
+    desc: Run the Go HTTP API on :8080
+    dir: apps/api
+    cmds:
+      - go run ./cmd/atlas-api
+
+  api:worker:
+    desc: Run the Go worker
+    dir: apps/api
+    cmds:
+      - go run ./cmd/atlas-worker
+
+  api:test:
+    desc: Run Go tests
+    dir: apps/api
+    cmds:
+      - go test ./...
+
+  api:lint:
+    desc: Run go vet and staticcheck on the Go module
+    dir: apps/api
+    cmds:
+      - go vet ./...
+      - staticcheck ./...
+
+  generate:
+    desc: Regenerate sqlc Go code from db/queries
+    dir: apps/api
+    cmds:
+      - sqlc generate
+
+  # ── Elixir orchestrator (apps/orchestrator) ─────────────────
+  orch:deps:
+    desc: Fetch Elixir dependencies
+    dir: apps/orchestrator
+    cmds:
+      - mix deps.get
+
+  orch:migrate:
+    desc: Apply orchestrator migrations (Ecto, in the `orchestrator` schema)
+    dir: apps/orchestrator
+    cmds:
+      - mix ecto.migrate --prefix orchestrator
+
+  orch:serve:
+    desc: Run the Elixir orchestrator (Phoenix endpoint + outbox consumer)
+    dir: apps/orchestrator
+    cmds:
+      - mix phx.server
+
+  orch:test:
+    desc: Run Elixir tests
+    dir: apps/orchestrator
+    cmds:
+      - mix test
+
+  orch:lint:
+    desc: Run Credo and the formatter check
+    dir: apps/orchestrator
+    cmds:
+      - mix format --check-formatted
+      - mix credo --strict
+
+  # ── Next.js web (apps/web) ──────────────────────────────────
+  web:install:
+    desc: Install web dependencies
+    dir: apps/web
+    cmds:
+      - npm install
+
+  web:dev:
+    desc: Run the Next.js dev server on :3000
+    dir: apps/web
+    cmds:
+      - npm run dev
+
+  web:build:
+    desc: Production build of the web app
+    dir: apps/web
+    cmds:
+      - npm run build
+
+  web:lint:
+    desc: Lint + typecheck the web app
+    dir: apps/web
+    cmds:
+      - npm run lint
+      - npm run typecheck
+
+  # ── Contracts / codegen ─────────────────────────────────────
+  gen:openapi:
+    desc: Regenerate the TypeScript API client from contracts/openapi/public.yaml
+    dir: apps/web
+    cmds:
+      - npm run generate:api
+
+  # ── Whole-repo ──────────────────────────────────────────────
+  lint:
+    desc: Lint everything
+    deps: [api:lint, orch:lint, web:lint]
+
+  test:
+    desc: Test everything
+    deps: [api:test, orch:test]

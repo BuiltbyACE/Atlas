@@ -1,0 +1,49 @@
+# Atlas — local edge configuration (docs/ATLAS.md §5.3)
+#
+# Same origin, three services. This mirrors the production routing so that
+# cookies stay first-party and there is no CORS surface:
+#
+#   /api/*        → Go core API        (atlas-api)
+#   /webhooks/*   → Go core API        (provider webhooks)
+#   /internal/*   → 404 (never public) service-to-service only
+#   /socket       → Elixir orchestrator (Phoenix Channels, WebSocket)
+#   everything    → Next.js web app
+#
+# In local development the host-run services are reached via
+# host.docker.internal, because Go/Elixir/Next run on the host for hot reload.
+
+{$ATLAS_SITE_ADDRESS:localhost} {
+	encode zstd gzip
+
+	log {
+		output stdout
+		format console
+	}
+
+	# ── Service-to-service API is never exposed publicly ──────
+	@internal path /internal/*
+	respond @internal 404
+
+	# ── Realtime: Phoenix Channels WebSocket ──────────────────
+	@socket path /socket*
+	handle @socket {
+		reverse_proxy host.docker.internal:4000
+	}
+
+	# ── Public API + provider webhooks → Go ───────────────────
+	@api path /api/* /webhooks/*
+	handle @api {
+		reverse_proxy host.docker.internal:8080
+	}
+
+	# ── Everything else → Next.js ─────────────────────────────
+	handle {
+		reverse_proxy host.docker.internal:3000
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}

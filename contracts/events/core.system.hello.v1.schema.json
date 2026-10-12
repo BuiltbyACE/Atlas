@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/core.system.hello.v1.schema.json",
+  "title": "core.system.hello.v1",
+  "description": "Phase 0 smoke event: proves the Go → outbox → Elixir → browser path (docs/ATLAS.md §7, Appendix A).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["message", "greeted_at"],
+  "properties": {
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "greeted_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

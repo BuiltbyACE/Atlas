@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go core (apps/api)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.14
+          working-directory: apps/api
+          args: --timeout=5m
+
+  elixir:
+    name: Elixir orchestrator (apps/orchestrator)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: atlas
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atlas -d atlas"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      ORCHESTRATOR_DATABASE_URL: postgres://atlas_orchestrator:atlas_orchestrator@localhost:5432/atlas
+      ATLAS_MIGRATE_DATABASE_URL: postgres://atlas_migrator:atlas_migrator@localhost:5432/atlas
+    steps:
+      - uses: actions/checkout@v4
+
+      # The business schemas and outbox are created by the Go migration, which
+      # needs the Atlas roles to exist first (docs/ATLAS.md §5.6, §10).
+      - name: Create Atlas database roles
+        run: |
+          psql "$ATLAS_MIGRATE_DATABASE_URL" -v ON_ERROR_STOP=1 <<'EOSQL'
+          -- Same roles as infra/compose/postgres/initdb.d/01-roles.sh
+          CREATE ROLE atlas_migrator LOGIN PASSWORD 'atlas_migrator';
+          CREATE ROLE atlas_api LOGIN PASSWORD 'atlas_api';
+          CREATE ROLE atlas_worker LOGIN PASSWORD 'atlas_worker';
+          CREATE ROLE atlas_orchestrator LOGIN PASSWORD 'atlas_orchestrator';
+          CREATE ROLE atlas_readonly LOGIN PASSWORD 'atlas_readonly';
+          GRANT CREATE, CONNECT ON DATABASE atlas TO atlas_migrator;
+          GRANT CREATE, CONNECT ON DATABASE atlas TO atlas_orchestrator;
+          GRANT CONNECT ON DATABASE atlas TO atlas_api, atlas_worker, atlas_readonly;
+          GRANT CREATE, USAGE ON SCHEMA public TO atlas_migrator;
+          EOSQL
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Apply Go foundation migration (outbox + schemas + grants)
+        working-directory: apps/api
+        run: go run ./cmd/atlas-cli migrate up
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.20.4"
+          otp-version: "29.1"
+          version-type: strict
+
+      - name: Install dependencies
+        working-directory: apps/orchestrator
+        run: mix deps.get
+
+      - name: Compile (warnings as errors)
+        working-directory: apps/orchestrator
+        run: mix compile --warnings-as-errors
+
+      - name: Format check
+        working-directory: apps/orchestrator
+        run: mix format --check-formatted
+
+      - name: Credo
+        working-directory: apps/orchestrator
+        run: mix credo --strict
+
+      - name: Ecto migrations (orchestrator schema)
+        working-directory: apps/orchestrator
+        run: mix ecto.migrate --prefix orchestrator
+
+      - name: Tests
+        working-directory: apps/orchestrator
+        run: mix test
+
+  web:
+    name: Next.js web (apps/web)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  contracts:
+    name: Contracts (openapi + event schemas + sqlc clean)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: OpenAPI + event schemas are valid
+        run: |
+          set -e
+          git ls-files "contracts/**/*.yaml" | xargs -I{} python3 -c "import yaml,sys; yaml.safe_load(open('{}'))"
+          git ls-files "contracts/**/*.json" | while read -r f; do python3 -c "import json,sys; json.load(open('$f'))"; done
+
+      - uses: sqlcdev/sqlc-action@v2
+        with:
+          config: apps/api/sqlc.yaml
+
+      - name: Generated code is committed and up to date
+        run: git diff --exit-code || (echo "sqlc output differs from committed code — run `task generate`" && exit 1)
+
+  images:
+    name: Build Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build atlas-api image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/api
+          file: infra/docker/Dockerfile.api
+          push: false
+          tags: atlas-api:ci
+
+      - name: Build atlas-orchestrator image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/orchestrator
+          file: infra/docker/Dockerfile.orchestrator
+          push: false
+          tags: atlas-orchestrator:ci
+
+      - name: Build atlas-web image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/web
+          file: infra/docker/Dockerfile.web
+          push: false
+          tags: atlas-web:ci

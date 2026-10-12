@@ -1,0 +1,40 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+
+# Next.js
+/.next/
+/out/
+next-env.d.ts
+
+# Production
+/build
+
+# Environment
+.env
+.env*.local
+
+# Testing / coverage
+/coverage
+
+# Misc
+.DS_Store
+*.pem
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+
+# Generated API client output (see lib/api/generated/README.md)
+/lib/api/generated/*
+!/lib/api/generated/.gitkeep
+!/lib/api/generated/README.md
+
+# Editor
+.idea/
+.vscode/

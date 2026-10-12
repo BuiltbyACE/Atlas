@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1
+
+# ── Stage 1: build ─────────────────────────────────────────────
+FROM node:24-alpine AS build
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+# ── Stage 2: run ───────────────────────────────────────────────
+FROM node:24-alpine
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY --from=build --chown=node:node /app/.next ./.next
+COPY --from=build /app/next.config.ts ./next.config.ts
+
+EXPOSE 3000
+USER node
+CMD ["npm", "run", "start"]

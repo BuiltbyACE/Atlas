@@ -1,0 +1,106 @@
+# atlas — local development infrastructure
+# Run via `task up` (which passes --env-file .env from the repo root).
+#
+# Services:
+#   postgres    PostgreSQL 16 + the Atlas database roles and extensions
+#   seaweedfs   S3-compatible object storage (evidence, receipts, contracts)
+#   mailpit     SMTP sink + web UI for transactional email
+#   caddy       Optional edge (profile: edge) — routes /api, /socket, /*
+#
+# NOTE ON OBJECT STORAGE
+#   The blueprint (docs/ATLAS.md §12, §16.1) named MinIO for local storage.
+#   MinIO deleted its community images from Docker Hub in September 2026 and
+#   archived the repository, so they can no longer be pulled. Local storage
+#   now uses SeaweedFS (Apache-2.0, actively maintained, real S3 API).
+#   See docs/adr/ADR-015-object-storage-provider.md. The application only
+#   depends on the generic S3 API, so the provider stays swappable.
+#
+# The Go API, Elixir orchestrator and Next.js app run on the HOST
+# (go run / mix phx.server / npm run dev) for fast reloads.
+
+name: atlas
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: atlas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-atlas}
+      POSTGRES_USER: ${POSTGRES_USER:-atlas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atlas}
+      # Consumed by infra/compose/postgres/initdb.d/01-roles.sh
+      ATLAS_MIGRATOR_DB_PASSWORD: ${ATLAS_MIGRATOR_DB_PASSWORD:-atlas_migrator}
+      ATLAS_API_DB_PASSWORD: ${ATLAS_API_DB_PASSWORD:-atlas_api}
+      ATLAS_WORKER_DB_PASSWORD: ${ATLAS_WORKER_DB_PASSWORD:-atlas_worker}
+      ATLAS_ORCHESTRATOR_DB_PASSWORD: ${ATLAS_ORCHESTRATOR_DB_PASSWORD:-atlas_orchestrator}
+      ATLAS_READONLY_DB_PASSWORD: ${ATLAS_READONLY_DB_PASSWORD:-atlas_readonly}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/initdb.d:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-atlas} -d ${POSTGRES_DB:-atlas}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # SeaweedFS all-in-one: master + volume + filer + S3 gateway in one container.
+  # Host :9000 → container :8333 (the S3 API), so the endpoint shape matches
+  # what the application expects (http://localhost:9000).
+  storage:
+    image: chrislusf/seaweedfs:latest
+    container_name: atlas-storage
+    restart: unless-stopped
+    command:
+      - server
+      - -dir=/data
+      - -master.port=9333
+      - -volume.port=8080
+      - -s3
+      - -s3.port=8333
+      - -s3.config=/etc/seaweedfs/s3.json
+    ports:
+      - "9000:8333"   # S3 API
+      - "9333:9333"   # master (cluster status)
+      - "8888:8888"   # filer (bucket/object browser)
+    volumes:
+      - storagedata:/data
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: atlas-mailpit
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # web UI
+
+  # Optional local edge. Start with:  docker compose --profile edge up -d
+  # Proxies to the host-run services, mimicking the production routing.
+  caddy:
+    image: caddy:2-alpine
+    container_name: atlas-caddy
+    profiles: ["edge"]
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ATLAS_SITE_ADDRESS: ${ATLAS_SITE_ADDRESS:-localhost}
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+
+volumes:
+  pgdata:
+  storagedata:
+  caddydata:
+  caddyconfig:
