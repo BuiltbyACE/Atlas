@@ -18,6 +18,23 @@
 
 Architectural law (see `docs/ATLAS.md` §5.2 and `docs/adr/ADR-002`): **Go owns business data, rules, permissions and every external provider call. Elixir owns time and motion — timers, workflows, escalation and real-time signals — and asks Go to act. Next.js renders; it holds no business logic and never touches the database.**
 
+## Sign in
+
+**Status: built.** Atlas signs a person in with an email address or an E.164
+phone number plus an argon2id password. Privileged roles then complete a TOTP
+challenge — an authenticator code, or a recovery code if the app is lost — and a
+first-time privileged user enrols with a QR code rendered in the browser (the
+secret never leaves the page) and is shown one-time recovery codes. It is a
+milk-white page over the SafariStack ink splash, responsive from 320 px phones to
+wide desktops.
+
+| Desktop | Phone |
+|---|---|
+| ![Atlas sign-in on desktop](<images/Atlas — Sign in.png>) | ![Atlas sign-in on a phone](<images/Atlas — Sign in (phone).png>) |
+
+The flow lives in `apps/web/app/(auth)/login/` and talks JSON to the Go API;
+[`docs/FRONTEND.md`](docs/FRONTEND.md) documents the journey and the contract.
+
 ## Repository layout
 
 ```
@@ -58,6 +75,7 @@ task up                          # start Postgres, SeaweedFS, Mailpit (waits unt
 task migrate                     # Go migrations (goose)
 task orch:migrate                # orchestrator migrations (Ecto)
 task seed                        # roles + permission catalogue (§3.2, §6.2)
+task bootstrap -- --email you@safaristack.co.ke --name "Your Name" --role ceo_internal   # first account, once
 task api:run                     # Go API on :8080            (separate terminal)
 task orch:serve                  # Elixir orchestrator :4000  (separate terminal)
 task web:dev                     # Next.js on :3000           (separate terminal)
@@ -102,6 +120,13 @@ source of truth: *"The foundation is Phase 1. Every later module depends on it."
   phone number plus an argon2id password; TOTP MFA for privileged roles; opaque
   sessions stored only as a hash, with idle and absolute expiry; and 5-minute
   Ed25519 realtime tokens whose JWKS the orchestrator fetches and verifies.
+- **Sign-in UI** (§6.1): the Next.js login journey — email/phone + password, TOTP
+  and recovery-code verification, first-run enrolment with a browser-rendered QR
+  and one-time recovery codes, and sign-out from the authenticated shell. Go
+  authorises every call; the UI holds no rules.
+- **First-account bootstrap** (`task bootstrap`): because Atlas has no
+  self-service sign-up, an operator creates the first real account by hand;
+  privileged roles are created with MFA required.
 
 **Next pillars:** idempotency keys and rate limiting on the write path, then the
 governed domain modules.
@@ -132,7 +157,7 @@ Go writes it inside a transaction, the orchestrator consumes it, advances
 ## Status
 
 Phase 1 — foundation. The event spine, database foundation, configuration seed,
-Go API skeleton and authentication are in place; idempotency keys and rate
-limiting on the write path, then the governed modules, come next. See
+Go API skeleton, authentication and the sign-in UI are in place; idempotency keys
+and rate limiting on the write path, then the governed modules, come next. See
 `docs/ATLAS.md` §17 for phase exit criteria, `docs/ATLAS.md` §6 for the
 foundation, and `docs/adr/` for the decisions taken so far.

@@ -9,8 +9,10 @@ layout, a generated-API-client seam and a Phoenix Channels hook. It contains
 section 5.2).
 
 > **Frontend team, start here:** [`docs/FRONTEND.md`](../../docs/FRONTEND.md) is
-> the full brief and system preview. Authentication (Go) is built and running;
-> the first task is the login journey against the real backend.
+> the full brief and system preview. Authentication (Go) is built and running,
+> and the sign-in journey is live in `app/(auth)/login/`. Next: the sessions
+> page, invite acceptance, honest module-route stubs, and the generated API
+> client.
 
 ## Architecture in one paragraph
 
@@ -55,9 +57,9 @@ rule in `next.config.ts` proxies `/api/*` to `ATLAS_API_INTERNAL_URL`
 
 ```
 app/
-├── layout.tsx              # root layout, metadata "Atlas · SafariStack"
+├── layout.tsx              # root layout, Outfit font, metadata "Atlas · SafariStack"
 ├── page.tsx                # redirects to /dashboard
-├── (auth)/login/           # unauthenticated shell (Phase 1 placeholder)
+├── (auth)/login/           # the sign-in journey (client flow + page shell)
 └── (app)/                  # authenticated shell: sidebar + header
     ├── dashboard/          # executive dashboard v1 shell
     └── settings/           # minimal settings shell
@@ -65,7 +67,7 @@ app/
 
 The sidebar lists the modules from blueprint section 4: Dashboard, CRM, Work,
 Contracts, Finance, People, Systems, Units, Intel, Settings. Only Dashboard and
-Settings have pages in Phase 0; the rest are linked as future routes.
+Settings have pages; the rest are linked as future routes.
 
 ## API client and codegen
 
@@ -118,8 +120,19 @@ See [`.env.example`](.env.example):
 
 ## Phase status
 
-Phase 0 (shell) only. The Go authentication backend is complete (login, MFA,
-sessions, realtime tokens — see [`docs/FRONTEND.md`](../../docs/FRONTEND.md));
-the login page is still a placeholder. The dashboard data, settings and all
-module screens are Phase 1+ placeholders and are clearly marked as such in the
-code.
+Phase 1. The Go authentication backend is complete and the **sign-in journey is
+built**: `app/(auth)/login/` runs email/phone + password, TOTP and recovery-code
+verification, first-run enrolment with a browser-rendered QR and one-time
+recovery codes, and `/login` redirects an already-signed-in visitor on. The
+authenticated shell has a working sign-out. Still to do: the sessions page,
+invite acceptance, honest stubs for the module routes (they currently 404), and
+wiring `generate:api` so the hand-written types are replaced by generated ones.
+See [`docs/FRONTEND.md`](../../docs/FRONTEND.md).
+
+## Brand tokens
+
+The sign-in design tokens live in
+[`tailwind.config.ts`](tailwind.config.ts): `milk` (the warm page), `ink` (the
+SafariStack navy), and `atlas` (the action blue). Outfit is self-hosted from
+`app/fonts/` via `next/font/local`, so sign-in makes no third-party font
+request. Brand assets are in `public/brand/`.

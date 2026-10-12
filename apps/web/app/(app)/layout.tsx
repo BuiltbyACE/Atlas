@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { SignOutButton } from "@/components/sign-out-button";
 import { requireUser } from "@/lib/auth/session";
 
 /**
@@ -25,12 +26,12 @@ const NAVIGATION = [
 ] as const;
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
-  // Phase 1 placeholder. The real check is enforced by Go on every request;
-  // this only decides whether to render the shell or bounce to /login.
+  // The real check is enforced by Go on every request; this only decides
+  // whether to render the shell or bounce to /login.
   const user = await requireUser();
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex min-h-screen bg-milk">
       <aside className="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white">
         <div className="border-b border-slate-200 px-5 py-4">
           <Link
@@ -54,9 +55,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           ))}
         </nav>
 
-        <div className="border-t border-slate-200 px-5 py-4 text-xs text-slate-500">
-          <div className="truncate font-medium text-slate-700">{user.name}</div>
-          <div className="truncate">{user.email}</div>
+        <div className="space-y-3 border-t border-slate-200 px-5 py-4 text-xs text-slate-500">
+          <div>
+            <div className="truncate font-medium text-slate-700">{user.name}</div>
+            <div className="truncate">{user.email}</div>
+          </div>
+          <SignOutButton />
         </div>
       </aside>
 

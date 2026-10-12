@@ -65,8 +65,12 @@ ADR-002, ADR-007, ADR-008, ADR-009.
 
 ## 2. Your first task: the login journey
 
-Today `apps/web/app/(auth)/login/page.tsx` is a hard-coded shell with a form that
-does **not** work. Replace it with a real flow.
+**Status: built.** `apps/web/app/(auth)/login/` now runs the whole journey
+below against Go (`login-flow.tsx`, calls in `lib/auth/flow.ts`), styled from
+the design prototype: a milk-white page (`bg-milk`) with the SafariStack ink
+splash, responsive from 320 px phones to wide desktops. It was verified end to
+end against Postgres: phone and email sign-in, enrolment with a locally rendered
+QR, recovery codes, TOTP and recovery-code verify, reload, redirects, sign-out.
 
 ### Definition of done
 
@@ -111,14 +115,13 @@ The **`mfa_token`** is a 5-minute challenge token issued by login. It is **not**
 a session: no cookie is set until MFA completes. Treat it as opaque and keep it
 in component state only.
 
-### What the shell must stop doing
+### Deliberate gaps (no backend for them yet)
 
-- `LoginPage` posts a **form** to `/api/v1/auth/login` with an `email` field.
-  The API wants **JSON** with `identifier`, and CSRF protection relies on the
-  JSON content type (see §3.4). Convert to a client component using `fetch`
-  (`credentials` are same-origin by default).
-- The old shell had one field for password and one for TOTP. Split the journey
-  into two steps as above.
+- **Forgot password** says plainly that self-service reset does not exist yet
+  and to contact a system administrator. There is no reset endpoint and no
+  email provider (§8); the UI does not pretend to send anything.
+- **Remember me** from the prototype is omitted: session lifetime is fixed by
+  Go (12 h idle / 7 d absolute), so a checkbox would be a promise nothing keeps.
 
 ---
 
@@ -210,6 +213,7 @@ Codes you will meet on the auth surface:
 | `MFA_REQUIRED` | 400 | Tried to verify before enrolling |
 | `MFA_ALREADY_ACTIVE` | 409 | Enrolment attempted twice |
 | `VALIDATION_FAILED` | 400 | Malformed body / password under 12 chars |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | A JSON endpoint received a body not sent as `application/json` |
 | `NOT_FOUND` | 404 | Unknown session id, unknown route |
 | `INTERNAL_ERROR` | 500 | Log it with the `request_id` |
 
@@ -217,7 +221,10 @@ Codes you will meet on the auth surface:
 
 There is **no CSRF token**. Protection is `SameSite=Lax` plus the requirement
 that mutations be JSON with `Content-Type: application/json` (a cross-site form
-cannot do that without an origin check). Consequence for you:
+cannot do that without an origin check). Go enforces the media type in
+`httpx.DecodeJSON`: anything else gets `415 UNSUPPORTED_MEDIA_TYPE`, even a
+`text/plain` body that happens to be valid JSON (the classic form-CSRF shape).
+Consequence for you:
 
 - **Use `fetch`/XHR with JSON.** Do not submit credential forms as native HTML
   `POST` form bodies.
@@ -261,6 +268,10 @@ cd apps/web; npm install; npm run dev   # Next.js on :3000
 The web app reaches Go through the `next.config.ts` rewrite, so in the browser
 `/api/v1/...` is same-origin on `:3000` — the cookie and `SameSite=Lax` behave
 exactly as in production. You do **not** need CORS locally.
+
+Keep `NEXT_PUBLIC_API_BASE_URL` **empty** (root `.env`, which `task web:dev`
+loads, and `apps/web/.env.local`). Set to `http://localhost:8080` it sends the
+browser to Go cross-origin, where there is no CORS, and sign-in fails.
 
 ### You need an account
 
@@ -331,21 +342,27 @@ apps/web/
   and throws `ApiError` carrying the Problem body.
 - `(app)/layout.tsx` calls `requireUser()` and redirects to `/login`.
 
-**Fixed for you in this commit**
+**Fixed**
 
 - `lib/auth/session.ts` read `/api/v1/me`; the real path is
   `/api/v1/auth/me`. Its `CurrentUser` shape now matches the contract (no
   invented `permissions`/`scopes`).
+- `ProblemDetails` in `lib/api/client.ts` typed `errors` as a map; Go sends
+  `[{field, code, detail}]`. It also now carries `request_id`.
+
+**Done**
+
+1. `(auth)/login` is a real client flow (§2), with redirect-if-authenticated.
+2. A sign-out control in the shell (`components/sign-out-button.tsx`).
 
 **Yours to do**
 
-1. Rewrite `(auth)/login/page.tsx` as a real client flow (§2).
-2. Add `(auth)/login` redirect-if-authenticated.
-3. A sign-out control in the shell.
-4. `(app)/settings` — the session-management page (`GET /auth/sessions`,
+1. `(app)/settings` — the session-management page (`GET /auth/sessions`,
    `DELETE /auth/sessions/{id}`, `POST /auth/sessions/revoke-all`).
-5. Accept-invite page (`POST /api/v1/auth/invites/accept`).
-6. Wire `generate:api` and replace hand types with generated ones.
+2. Accept-invite page (`POST /api/v1/auth/invites/accept`).
+3. Honest stubs for the module routes in the sidebar (`/crm`, `/work`, …):
+   today they 404.
+4. Wire `generate:api` and replace hand types with generated ones.
 
 ---
 

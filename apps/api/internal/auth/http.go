@@ -119,7 +119,7 @@ type acceptInviteRequest struct {
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteProblem(w, r, httpx.BadRequest("The request body must be a JSON object with identifier and password."))
+		writeDecodeError(w, r, err, "The request body must be a JSON object with identifier and password.")
 		return
 	}
 
@@ -152,7 +152,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) MFAVerify(w http.ResponseWriter, r *http.Request) {
 	var req mfaVerifyRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteProblem(w, r, httpx.BadRequest("The request body must be a JSON object with mfa_token and code."))
+		writeDecodeError(w, r, err, "The request body must be a JSON object with mfa_token and code.")
 		return
 	}
 
@@ -175,7 +175,7 @@ func (h *Handler) MFAVerify(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) MFAEnroll(w http.ResponseWriter, r *http.Request) {
 	var req mfaVerifyRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteProblem(w, r, httpx.BadRequest("The request body must include the mfa_token."))
+		writeDecodeError(w, r, err, "The request body must include the mfa_token.")
 		return
 	}
 
@@ -196,7 +196,7 @@ func (h *Handler) MFAEnroll(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) MFAActivate(w http.ResponseWriter, r *http.Request) {
 	var req mfaVerifyRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteProblem(w, r, httpx.BadRequest("The request body must be a JSON object with mfa_token and code."))
+		writeDecodeError(w, r, err, "The request body must be a JSON object with mfa_token and code.")
 		return
 	}
 
@@ -344,7 +344,7 @@ func (h *Handler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 
 	var req inviteRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteProblem(w, r, httpx.BadRequest("The request body must be an invite object."))
+		writeDecodeError(w, r, err, "The request body must be an invite object.")
 		return
 	}
 
@@ -366,7 +366,7 @@ func (h *Handler) CreateInvite(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 	var req acceptInviteRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteProblem(w, r, httpx.BadRequest("The request body must be an invite acceptance object."))
+		writeDecodeError(w, r, err, "The request body must be an invite acceptance object.")
 		return
 	}
 
@@ -448,6 +448,18 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 	default:
 		httpx.WriteError(w, r, h.logger, err)
 	}
+}
+
+// writeDecodeError answers a body that could not be decoded. A wrong media
+// type keeps its 415 so the caller learns to send JSON; any other failure gets
+// the endpoint's own explanation of the expected body.
+func writeDecodeError(w http.ResponseWriter, r *http.Request, err error, detail string) {
+	var p httpx.Problem
+	if errors.As(err, &p) && p.Status == http.StatusUnsupportedMediaType {
+		httpx.WriteProblem(w, r, p)
+		return
+	}
+	httpx.WriteProblem(w, r, httpx.BadRequest(detail))
 }
 
 // sessionMeta collects the client context recorded with a session.

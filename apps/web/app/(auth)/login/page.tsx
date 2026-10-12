@@ -1,114 +1,67 @@
 import type { Metadata } from "next";
+import Image from "next/image";
+import { redirect } from "next/navigation";
+
+import { getCurrentUser } from "@/lib/auth/session";
+import inkSplash from "@/public/brand/ink-splash.jpg";
+
+import { LoginFlow } from "./login-flow";
 
 export const metadata: Metadata = {
   title: "Sign in · Atlas",
   description: "Sign in to Atlas, the SafariStack Company Operating System.",
 };
 
+/** Reads the session cookie, so it is always rendered per request. */
+export const dynamic = "force-dynamic";
+
 /**
- * Phase 1 placeholder: Atlas login shell.
+ * Atlas sign-in (docs/FRONTEND.md §2).
  *
- * This is intentionally a shell with NO business logic, and it does not work
- * yet. The real flow (Phase 1) is a client component that:
- *   1. POSTs JSON `{identifier, password}` to `/api/v1/auth/login` (Go),
- *   2. calls `/api/v1/auth/mfa/verify` when the account requires TOTP
- *      (or `/mfa/enroll` + `/mfa/activate` for a first-time privileged role),
- *   3. and only then receives the session cookie.
+ * Authentication is owned by Go (ADR-008); this page only decides whether to
+ * show the journey or skip it for someone already signed in. The journey
+ * itself is the `LoginFlow` client component, which talks JSON to `/api/*`.
  *
- * There is no CSRF token: mutations are JSON and the cookie is SameSite=Lax, so
- * credentials must be sent with `fetch`, never as a native form POST. The form
- * below is inert until it is replaced.
- *
- * Authentication is owned by Go; Next.js never validates credentials itself
- * (blueprint sections 5.2 and 5.7, ADR-008; see docs/FRONTEND.md).
+ * Layout: the ink splash is sized from the form's own box rather than the
+ * viewport, so the form always sits on navy whatever the screen or step. The
+ * splash's fully solid core is ~40% x 56% of the artwork; at 165% of the form's
+ * height the form fits inside it, and a halo in the same navy covers any edge
+ * case. `mix-blend-multiply` melts the artwork's white into the milk page.
  */
-export default function LoginPage() {
+export default async function LoginPage() {
+  if (await getCurrentUser()) {
+    redirect("/dashboard");
+  }
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-12">
-      <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 className="text-xl font-semibold tracking-tight">Atlas</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          SafariStack Company Operating System
-        </p>
+    <main className="relative flex min-h-svh flex-col items-center justify-center overflow-hidden bg-milk px-5 py-20 [@media(max-height:560px)]:py-10">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_42%,theme(colors.milk.50)_0%,theme(colors.milk.DEFAULT)_55%,theme(colors.milk.200)_100%)]"
+      />
 
-        <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          <strong className="font-semibold">Phase 1 placeholder.</strong>{" "}
-          Authentication is not wired up yet. This form is a shell only; it will
-          POST to <code className="font-mono">/api/v1/auth/login</code>.
+      <div className="relative w-full max-w-[22.5rem] sm:max-w-[25rem] xl:max-w-[27rem]">
+        <Image
+          src={inkSplash}
+          alt=""
+          aria-hidden="true"
+          priority
+          sizes="(min-width: 1280px) 1700px, (min-width: 640px) 1500px, 1200px"
+          className="pointer-events-none absolute left-1/2 top-1/2 aspect-[1672/941] h-[165%] w-auto max-w-none -translate-x-1/2 -translate-y-1/2 select-none mix-blend-multiply"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -inset-x-6 -inset-y-4 rounded-[3rem] bg-ink blur-2xl"
+        />
+        <div className="relative py-4 text-white">
+          <LoginFlow />
         </div>
-
-        {/*
-          Non-functional documentation shell. A native form POST would be
-          form-encoded, which the API does not accept (and which would defeat
-          the SameSite=Lax CSRF posture). Phase 1 replaces this with a client
-          component using apiFetch (lib/api/client.ts).
-        */}
-        <form className="mt-6 space-y-4">
-          <div>
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-slate-700"
-            >
-              Email
-            </label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              autoComplete="username"
-              required
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-slate-500 focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="password"
-              className="block text-sm font-medium text-slate-700"
-            >
-              Password
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-slate-500 focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="totp"
-              className="block text-sm font-medium text-slate-700"
-            >
-              Authenticator code
-            </label>
-            <input
-              id="totp"
-              name="totp"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              maxLength={6}
-              autoComplete="one-time-code"
-              placeholder="6-digit code"
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-slate-500 focus:outline-none"
-            />
-            <p className="mt-1 text-xs text-slate-500">
-              TOTP is mandatory for privileged roles (section 13.1).
-            </p>
-          </div>
-
-          <button
-            type="button"
-            disabled
-            className="w-full cursor-not-allowed rounded-md bg-slate-400 px-3 py-2 text-sm font-medium text-white"
-          >
-            Sign in
-          </button>
-        </form>
       </div>
+
+      <p className="absolute bottom-5 left-1/2 hidden -translate-x-1/2 whitespace-nowrap rounded-full bg-milk/85 px-4 py-1 text-xs text-[#2C4A7C] backdrop-blur-sm sm:block">
+        © {new Date().getFullYear()} SafariStack Solutions · Atlas Company Operating System ·
+        Authorised staff only
+      </p>
     </main>
   );
 }

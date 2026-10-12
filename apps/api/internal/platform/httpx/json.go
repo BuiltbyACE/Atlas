@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 )
 
@@ -27,7 +28,17 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 // DecodeJSON reads a single JSON object into dst. Unknown fields are rejected
 // and the body is size-limited, so the wire contract stays explicit (§11).
 // On failure it returns a Problem the handler can pass to WriteError.
+//
+// The body must be declared `application/json`. That is load-bearing for the
+// CSRF posture (docs/FRONTEND.md §3): a cross-site HTML form can only send
+// form-encoded, multipart or text/plain bodies, and text/plain can still
+// carry a well-formed JSON document — so the media type, not the bytes, is
+// what a browser form cannot forge without a CORS preflight.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	if !IsJSONContentType(r.Header.Get("Content-Type")) {
+		return New(http.StatusUnsupportedMediaType, CodeUnsupportedMediaType, "The request body must be sent as application/json.")
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBytes)
 
 	dec := json.NewDecoder(r.Body)
@@ -49,4 +60,11 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 		return BadRequest("The request body must contain a single JSON object.")
 	}
 	return nil
+}
+
+// IsJSONContentType reports whether a Content-Type header names
+// application/json, ignoring parameters such as charset.
+func IsJSONContentType(header string) bool {
+	mediaType, _, err := mime.ParseMediaType(header)
+	return err == nil && mediaType == "application/json"
 }

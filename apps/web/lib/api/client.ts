@@ -16,6 +16,13 @@
  * cookie) and 11 (RFC 9457 error shape, stable `code` values).
  */
 
+/** One field-level validation failure (Go `httpx.FieldError`). */
+export interface ProblemFieldError {
+  field: string;
+  code: string;
+  detail?: string;
+}
+
 /** RFC 9457 Problem Details, extended with Atlas' stable error `code`. */
 export interface ProblemDetails {
   /** A URI reference identifying the problem type. */
@@ -27,8 +34,10 @@ export interface ProblemDetails {
   instance?: string;
   /** Stable Atlas error code, e.g. `TASK_EVIDENCE_REQUIRED`. */
   code?: string;
-  /** Field-level validation errors, keyed by field path. */
-  errors?: Record<string, string[]>;
+  /** Correlates with the `X-Request-Id` header; quote it in bug reports. */
+  request_id?: string;
+  /** Field-level validation errors. */
+  errors?: ProblemFieldError[];
   [key: string]: unknown;
 }
 
@@ -47,6 +56,11 @@ export class ApiError extends Error {
   /** Stable machine-readable code from the API, when present. */
   get code(): string | undefined {
     return this.problem.code;
+  }
+
+  /** Request id from the API, when present. */
+  get requestId(): string | undefined {
+    return this.problem.request_id;
   }
 }
 

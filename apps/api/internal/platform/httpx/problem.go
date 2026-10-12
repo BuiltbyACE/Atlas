@@ -33,6 +33,7 @@ const (
 	CodeIdempotencyKeyRequired = "IDEMPOTENCY_KEY_REQUIRED"
 	CodeIdempotencyConflict    = "IDEMPOTENCY_CONFLICT"
 	CodeMFARequired            = "MFA_REQUIRED"
+	CodeUnsupportedMediaType   = "UNSUPPORTED_MEDIA_TYPE"
 )
 
 // FieldError describes a single validation failure.
