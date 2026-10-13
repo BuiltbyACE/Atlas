@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/health"
@@ -37,6 +38,7 @@ type Deps struct {
 	// Notifications is optional, and only mounted alongside Auth (its routes are
 	// authenticated). When nil the notification routes are absent.
 	Notifications *notifications.Handler
+	Approvals    *approvals.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -76,6 +78,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Auth != nil && d.Notifications != nil {
 		registerNotifications(reg, d.Notifications)
+	}
+
+	if d.Approvals != nil {
+		registerApprovals(reg, d.Approvals)
 	}
 
 	reg.Mount(r, gate)
@@ -137,4 +143,15 @@ func registerNotifications(reg *routing.Registry, h *notifications.Handler) {
 
 	reg.Gated("core.notification.manage", http.MethodPost, "/internal/v1/commands/notifications.send",
 		"Ask Go to notify a person (service-to-service)", h.Send)
+}
+
+func registerApprovals(reg *routing.Registry, h *approvals.Handler) {
+	reg.Authenticated(http.MethodPost, "/api/v1/approvals", "Request an approval", h.RequestApproval)
+	reg.Authenticated(http.MethodGet, "/api/v1/approvals/{id}", "Get an approval", h.Get)
+	reg.Authenticated(http.MethodGet, "/api/v1/approvals/pending", "List pending approvals for a role", h.PendingForRole)
+	reg.Authenticated(http.MethodGet, "/api/v1/approvals/mine", "List approvals requested by you", h.MyRequested)
+	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/approve", "Approve an approval", h.Approve)
+	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/decline", "Decline an approval", h.Decline)
+	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/escalate", "Escalate an approval", h.Escalate)
+	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/cancel", "Cancel an approval", h.Cancel)
 }

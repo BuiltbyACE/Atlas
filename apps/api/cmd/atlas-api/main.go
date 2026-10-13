@@ -18,7 +18,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
@@ -80,6 +82,9 @@ func run() error {
 	notificationService := notifications.NewService(notifications.NewPGStore(pool), logger)
 	notificationHandler := notifications.NewHandler(notificationService, logger)
 
+	// Approvals engine
+	approvalService := approvals.NewService(approvals.NewPGStore(pool), audit.NewWriter(), logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -87,6 +92,7 @@ func run() error {
 		Version:       version,
 		Auth:          authService,
 		Notifications: notificationHandler,
+		Approvals:     approvals.NewHandler(approvalService, logger),
 	})
 
 	srv := &http.Server{
