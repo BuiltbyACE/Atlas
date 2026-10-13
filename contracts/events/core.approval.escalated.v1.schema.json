@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/core.approval.escalated.v1.schema.json",
+  "title": "core.approval.escalated.v1",
+  "description": "An approval was escalated (docs/ATLAS.md §6.3, §7.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["approval_id", "ref", "escalated_at"],
+  "properties": {
+    "approval_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "from_role": { "type": "string", "maxLength": 80 },
+    "to_role": { "type": "string", "maxLength": 80 },
+    "to_person_id": { "type": "string", "format": "uuid" },
+    "escalated_by": { "type": "string", "format": "uuid" },
+    "reason": { "type": "string", "maxLength": 500 },
+    "escalated_at": { "type": "string", "format": "date-time" }
+  }
+}

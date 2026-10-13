@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/core.approval.expired.v1.schema.json",
+  "title": "core.approval.expired.v1",
+  "description": "An approval expired without a decision (docs/ATLAS.md §6.3, §7.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["approval_id", "ref", "expired_at"],
+  "properties": {
+    "approval_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "expired_at": { "type": "string", "format": "date-time" }
+  }
+}

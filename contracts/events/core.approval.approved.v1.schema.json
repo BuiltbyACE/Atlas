@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/core.approval.approved.v1.schema.json",
+  "title": "core.approval.approved.v1",
+  "description": "An approval was approved (docs/ATLAS.md §6.3, §7.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["approval_id", "ref", "decided_at"],
+  "properties": {
+    "approval_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "decided_by": { "type": "string", "format": "uuid" },
+    "reason": { "type": "string", "maxLength": 500 },
+    "decided_at": { "type": "string", "format": "date-time" }
+  }
+}
