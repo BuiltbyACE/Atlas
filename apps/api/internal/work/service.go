@@ -14,11 +14,13 @@ import (
 
 // Entity types used in the audit trail and event aggregate names.
 const (
-	EntityProject   = "work.project"
-	EntityMilestone = "work.milestone"
-	EntityTask      = "work.task"
-	EntityBlocker   = "work.blocker"
-	EntityEvidence  = "work.evidence"
+	EntityProject     = "work.project"
+	EntityMilestone   = "work.milestone"
+	EntityTask        = "work.task"
+	EntityBlocker     = "work.blocker"
+	EntityEvidence    = "work.evidence"
+	EntityDailyReport = "work.daily_report"
+	EntityAbsence     = "work.absence"
 )
 
 // Service coordinates work orchestration: validation, state transitions,

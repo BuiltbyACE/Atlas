@@ -313,4 +313,26 @@ func registerWork(reg *routing.Registry, h *work.Handler) {
 		"Verify an evidence record", h.VerifyEvidence)
 	reg.Gated("work.evidence.write", http.MethodDelete, "/api/v1/work/evidence/{id}",
 		"Remove an evidence record", h.DeleteEvidence)
+
+	// Daily reports (one per person per day).
+	reg.Gated("people.daily_report.read", http.MethodGet, "/api/v1/work/daily-reports",
+		"List daily reports", h.ListDailyReports)
+	reg.Gated("people.daily_report.read", http.MethodGet, "/api/v1/work/daily-reports/{id}",
+		"Get a daily report", h.GetDailyReport)
+	reg.Gated("people.daily_report.submit", http.MethodPost, "/api/v1/work/daily-reports",
+		"Submit a daily report", h.SubmitDailyReport)
+
+	// Absences (leave).
+	reg.Gated("people.leave.read", http.MethodGet, "/api/v1/work/absences",
+		"List absences", h.ListAbsences)
+	reg.Gated("people.leave.read", http.MethodGet, "/api/v1/work/absences/{id}",
+		"Get an absence", h.GetAbsence)
+	reg.Gated("people.leave.request", http.MethodPost, "/api/v1/work/absences",
+		"Request leave", h.RequestAbsence)
+	reg.Gated("people.leave.request", http.MethodPost, "/api/v1/work/absences/{id}/cancel",
+		"Cancel your leave request", h.CancelAbsence)
+	reg.Gated("people.leave.manage", http.MethodPost, "/api/v1/work/absences/{id}/approve",
+		"Approve leave", h.ApproveAbsence)
+	reg.Gated("people.leave.manage", http.MethodPost, "/api/v1/work/absences/{id}/decline",
+		"Decline leave", h.DeclineAbsence)
 }

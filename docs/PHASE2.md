@@ -50,12 +50,19 @@ tick an item only when its code, tests and migrations are in place.
 - [x] File availability checked through `work.FileResolver`, adapted from the
       files service in `cmd/atlas-api` (the work package does not import files)
 
-## 4. Daily reports + absence
+## 4. Daily reports + absence — done
 
-- [ ] `internal/work` daily reports: submit/list/get, one per person per day,
-      policy hooks for D5 (report time/deadline) left as configuration
-- [ ] Absence: request/list/decide via the approvals engine or a dedicated flow
-- [ ] Permissions already catalogued (`people.daily_report.*`, `people.leave.*`)
+- [x] `internal/work` daily reports: submit/list/get, one per person per day
+      (unique key; re-submitting updates an unreviewed day, an already-reviewed
+      day is immutable); emits `work.daily_report.submitted.v1`. The report
+      time/deadline policy (D5) is deliberately not enforced — it is open
+      configuration, so any date is accepted for now.
+- [x] Absence: request/list/get/decide/cancel (dedicated flow, not the approvals
+      engine); overlapping active leave is rejected; a requester cannot decide
+      their own absence, and only the requester may cancel theirs
+- [x] Events `work.absence.requested/approved/declined/cancelled.v1`
+- [x] Permissions already catalogued (`people.daily_report.read/.submit`,
+      `people.leave.read/.request/.manage`)
 
 ## 5. Overdue escalation ladder + worker
 
@@ -72,7 +79,7 @@ tick an item only when its code, tests and migrations are in place.
 
 - [ ] Go-side event constructors are in `internal/outbox/work.go`
       (`work.project.created/status_changed`, `work.task.created/status_changed/assigned/blocked/unblocked`,
-      `work.evidence.added`)
+      `work.evidence.added`, `work.daily_report.submitted`, `work.absence.*`)
 - [ ] Route `work.*` events to signals; push invalidation on `exec:dashboard`
       and named recipients; tests
 

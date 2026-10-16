@@ -62,15 +62,22 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       into router + cmd/atlas-api
 - [x] Tests: unit (validation, transitions) + DB integration (lifecycle,
       cycles, blockers, overdue filter) + registry/permission-catalogue checks
+- [x] Evidence: link an available core.files row to a task/project
+      (work.evidence.read/.write, work.evidence.added.v1); verify fields with
+      separation of duties (cannot verify own evidence)
+- [x] Daily reports: submit/list/get, one per person per day (unique key,
+      re-submit updates an unreviewed day), work.daily_report.submitted.v1;
+      D5 policy intentionally not enforced (open decision)
+- [x] Absences: request/list/get/decide/cancel, overlap rejection, no
+      self-decision (work.absence.requested/approved/declined/cancelled.v1)
 
 ### Remaining Phase 2 (next)
-- [ ] Evidence: link an available core.files row to a task (work.evidence.*)
-- [ ] Daily reports + leave/absence (D5 policy config open)
 - [ ] Overdue escalation ladder + worker sweep (feeds exec dashboard)
 - [ ] Exec dashboard "overdue work" tile
 - [ ] Elixir outbox wiring for work.* events (signals + dashboard invalidation)
 - [ ] Frontend (after backend above is complete)
 
-Current status: Phase 1 (A-H) complete. Phase 2 work core complete (schema 11,
-outbox constructors, projects/milestones/tasks/dependencies/blockers with tests,
-routes wired). Next: evidence, then daily reports/leave, escalation ladder.
+Current status: Phase 1 (A-H) complete. Phase 2 work core, evidence, daily
+reports and absences complete (schema 11; routes wired; tests green). Next:
+overdue escalation ladder + worker sweep, then the exec "overdue work" tile,
+then Elixir outbox wiring for work.*.
