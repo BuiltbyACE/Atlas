@@ -281,6 +281,28 @@ func (s *Service) Cancel(ctx context.Context, in Cancel) error {
 	return nil
 }
 
+// ExpireDue expires approvals whose deadline has passed. It is the worker's
+// sweep: it claims a batch atomically (FOR UPDATE SKIP LOCKED), marks each one
+// expired, emits core.approval.expired.v1 and notifies the requester and the
+// approvers. It returns how many approvals it expired.
+func (s *Service) ExpireDue(ctx context.Context, limit int) (int, error) {
+	expired, err := s.store.ExpireDue(ctx, limit, func(a Approval) (outbox.Event, error) {
+		return outbox.NewApprovalExpired(nil, a.ID, a.Ref)
+	})
+	if err != nil {
+		return 0, err
+	}
+	for i := range expired {
+		a := &expired[i]
+		_ = s.writeAudit(ctx, nil, "core.approval.expired", "approval", a.ID, nil, map[string]any{
+			"ref":    a.Ref,
+			"status": string(StatusExpired),
+		})
+		s.notifyExpired(ctx, a)
+	}
+	return len(expired), nil
+}
+
 // Get fetches an approval by id.
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (*Approval, error) {
 	a, err := s.store.Get(ctx, id)
@@ -330,11 +352,15 @@ func (s *Service) writeAudit(ctx context.Context, actor *uuid.UUID, action, enti
 	})
 }
 
-// generateRef builds a human reference (docs/ATLAS.md 6.6). It is derived from
-// the approval's UUIDv7 so two approvals created in the same nanosecond can
-// never collide; core.approvals has a unique index on ref.
+// generateRef builds a human reference (docs/ATLAS.md §6.6). It is derived from
+// the approval's UUIDv7 tail, whose 48 bits are random, so two approvals created
+// in the same millisecond — where their timestamps, and therefore the leading
+// hex, are identical — still get distinct refs. (Deriving from the leading hex
+// would collide for a whole millisecond.) core.approvals has a unique index on
+// ref as the backstop.
 func generateRef(year int, id uuid.UUID) string {
-	return fmt.Sprintf("APR-%d-%s", year, strings.ToUpper(id.String()[:8]))
+	s := id.String()
+	return fmt.Sprintf("APR-%d-%s", year, strings.ToUpper(s[len(s)-12:]))
 }
 
 func zeroIfNil(p *uuid.UUID) uuid.UUID {
@@ -453,6 +479,46 @@ func (s *Service) notifyEscalation(ctx context.Context, a *Approval, actor *uuid
 			Critical:       true,
 			IdempotencyKey: fmt.Sprintf("approval:%s:escalated:%s", a.ID, a.ApproverRole),
 			ActorID:        actor,
+		})
+	}
+}
+
+// notifyExpired tells the requester and the approvers that an approval lapsed
+// without a decision. The requester needs to know it lapsed and may resubmit;
+// the approvers need their queue to reflect that there is nothing left to act
+// on. Expiry is routine, not urgent, so it does not bypass quiet hours.
+func (s *Service) notifyExpired(ctx context.Context, a *Approval) {
+	entityID := a.ID
+	base := map[string]any{
+		"approval_id": a.ID.String(),
+		"ref":         a.Ref,
+		"status":      string(StatusExpired),
+	}
+	if a.RequestedBy != uuid.Nil {
+		s.notify(ctx, Notification{
+			RecipientPersonID: a.RequestedBy,
+			Template:          TemplateExpired,
+			Subject:           "Approval expired: " + a.Ref,
+			Body:              fmt.Sprintf("Your %s request expired without a decision.", a.EntityType),
+			Payload:           base,
+			EntityType:        "approval",
+			EntityID:          &entityID,
+			IdempotencyKey:    fmt.Sprintf("approval:%s:expired:%s", a.ID, a.RequestedBy),
+		})
+	}
+	for _, pid := range s.approverRecipients(ctx, a) {
+		if pid == a.RequestedBy {
+			continue
+		}
+		s.notify(ctx, Notification{
+			RecipientPersonID: pid,
+			Template:          TemplateExpired,
+			Subject:           "Approval expired: " + a.Ref,
+			Body:              fmt.Sprintf("A %s approval expired before you acted on it.", a.EntityType),
+			Payload:           base,
+			EntityType:        "approval",
+			EntityID:          &entityID,
+			IdempotencyKey:    fmt.Sprintf("approval:%s:expired:%s", a.ID, pid),
 		})
 	}
 }

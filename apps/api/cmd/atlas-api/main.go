@@ -84,7 +84,7 @@ func run() error {
 
 	// Approvals engine. Its fan-out records notification intents through the
 	// notifications engine after a state change has committed (§6.3, §6.4).
-	approvalService := approvals.NewService(approvals.NewPGStore(pool), audit.NewWriter(),
+	approvalService := approvals.NewService(approvals.NewPGStore(pool), audit.NewWriter(pool),
 		approvals.NewNotificationsAdapter(notificationService), logger)
 
 	router := httpserver.NewRouter(httpserver.Deps{

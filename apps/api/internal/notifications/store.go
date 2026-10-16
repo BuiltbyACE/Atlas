@@ -78,8 +78,8 @@ func (s *PGStore) Recipient(ctx context.Context, personID uuid.UUID) (*Recipient
 
 func (s *PGStore) Preferences(ctx context.Context, personID uuid.UUID) (Preference, error) {
 	var (
-		p            Preference
-		start, end   *int16
+		p          Preference
+		start, end *int16
 	)
 	err := s.db.QueryRow(ctx, `
 		SELECT person_id, in_app, email, whatsapp, sms,

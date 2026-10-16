@@ -16,8 +16,8 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/safaristack/atlas/apps/api/internal/auth"
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
+	"github.com/safaristack/atlas/apps/api/internal/auth"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/health"
@@ -38,7 +38,7 @@ type Deps struct {
 	// Notifications is optional, and only mounted alongside Auth (its routes are
 	// authenticated). When nil the notification routes are absent.
 	Notifications *notifications.Handler
-	Approvals    *approvals.Handler
+	Approvals     *approvals.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.

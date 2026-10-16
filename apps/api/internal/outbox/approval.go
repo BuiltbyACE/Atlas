@@ -1,4 +1,4 @@
-﻿package outbox
+package outbox
 
 import (
 	"time"
@@ -17,6 +17,7 @@ const (
 )
 
 const AggregateApproval = "approval"
+
 // ApprovalRequestedPayload is emitted when an approval is created.
 type ApprovalRequestedPayload struct {
 	ApprovalID   uuid.UUID `json:"approval_id"`
@@ -31,6 +32,7 @@ type ApprovalRequestedPayload struct {
 	DueAt        time.Time `json:"due_at,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
+
 // ApprovalDecidedPayload is emitted on approve/decline.
 type ApprovalDecidedPayload struct {
 	ApprovalID uuid.UUID `json:"approval_id"`
@@ -42,11 +44,11 @@ type ApprovalDecidedPayload struct {
 
 // ApprovalEscalatedPayload is emitted when escalated.
 type ApprovalEscalatedPayload struct {
-	ApprovalID uuid.UUID `json:"approval_id"`
-	Ref        string    `json:"ref"`
-	FromRole   string    `json:"from_role,omitempty"`
-	ToRole     string    `json:"to_role,omitempty"`
-	ToPersonID uuid.UUID `json:"to_person_id,omitempty"`
+	ApprovalID  uuid.UUID `json:"approval_id"`
+	Ref         string    `json:"ref"`
+	FromRole    string    `json:"from_role,omitempty"`
+	ToRole      string    `json:"to_role,omitempty"`
+	ToPersonID  uuid.UUID `json:"to_person_id,omitempty"`
 	EscalatedBy uuid.UUID `json:"escalated_by,omitempty"`
 	Reason      string    `json:"reason,omitempty"`
 	EscalatedAt time.Time `json:"escalated_at"`
@@ -67,6 +69,7 @@ type ApprovalExpiredPayload struct {
 	Ref        string    `json:"ref"`
 	ExpiredAt  time.Time `json:"expired_at"`
 }
+
 func NewApprovalRequested(actorID *uuid.UUID, a ApprovalRef) (Event, error) {
 	return buildEvent(TypeApprovalRequestedV1, AggregateApproval, a.ID, actorID, nil, ApprovalRequestedPayload{
 		ApprovalID:   a.ID,
@@ -129,10 +132,11 @@ func NewApprovalCancelled(actorID *uuid.UUID, id uuid.UUID, ref, reason string, 
 func NewApprovalExpired(actorID *uuid.UUID, id uuid.UUID, ref string) (Event, error) {
 	return buildEvent(TypeApprovalExpiredV1, AggregateApproval, id, actorID, nil, ApprovalExpiredPayload{
 		ApprovalID: id,
-		Ref:         ref,
+		Ref:        ref,
 		ExpiredAt:  time.Now().UTC(),
 	})
 }
+
 // ApprovalRef is a minimal view used to build requested event.
 type ApprovalRef struct {
 	ID           uuid.UUID

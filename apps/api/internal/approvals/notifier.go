@@ -40,6 +40,7 @@ const (
 	TemplateDeclined    = "core.approval.declined"
 	TemplateEscalated   = "core.approval.escalated"
 	TemplateCancelled   = "core.approval.cancelled"
+	TemplateExpired     = "core.approval.expired"
 	TemplateAwaitSecond = "core.approval.awaiting_second"
 )
 

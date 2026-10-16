@@ -1,6 +1,6 @@
 # To-do: finish foundation (backends/engines/orchestrations) so frontend can build on top
 
-The sequence follows: Notifications done (Go), Elixir notification handler done. Approvals engine now has policy lookup, four-eyes/two-person enforcement and notification fan-out. Next: worker sweeps, Elixir wiring, settings, files, audit views, exec dashboard v1.
+The sequence follows: Notifications done (Go), Elixir notification handler done. Approvals engine now has policy lookup, four-eyes/two-person enforcement, notification fan-out and a worker expiry sweep. Next: Elixir outbox wiring, settings, files, audit views, exec dashboard v1.
 
 ## A) Approvals engine — core complete
 - [x] Service layer `internal/approvals/service.go`: create approval with policy checks, decide (approve/decline), escalate, cancel; optimistic concurrency; emits correct outbox events; writes audit
@@ -13,9 +13,10 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] Integration: approvals create notification intents (request → approvers, decide → requester, escalate → target), best-effort after commit
 
 ## B) Worker sweeps (expiry/escalation)
-- [ ] Extend `atlas-worker` to run approvals sweeper: claim expired (`due_at < now()`, status requested/pending) with `FOR UPDATE SKIP LOCKED`, call `ExpireWithEvent`, emit `core.approval.expired.v1` + notifications
-- [ ] Backoff/poll interval for sweeps (configurable)
-- [ ] Tests
+- [x] Extend `atlas-worker` to run approvals sweeper: claim expired (`due_at < now()`, status requested/pending) with `FOR UPDATE SKIP LOCKED`, expire with event, emit `core.approval.expired.v1` + notifications
+- [x] Backoff/poll interval for sweeps (configurable): `ATLAS_APPROVAL_SWEEP_INTERVAL`, `ATLAS_APPROVAL_SWEEP_BATCH`
+- [x] Tests: sweep expiry end-to-end (status/event/history/fan-out), batch limit, ref uniqueness, sweeper loop unit tests
+- [ ] Escalation sweep (auto-escalate before expiry) — deferred to Phase 2 work orchestration
 
 ## C) Settings & policies
 - [ ] `internal/settings/` (typed settings, get/set, versioned, audited)
@@ -47,4 +48,4 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [ ] Metrics/logs for dispatcher + sweeps (attempts, failures, lag)
 - [ ] Contracts schema validation hook awareness (CI) — schemas already present
 
-Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests). B–H remaining. Next: B (worker expiry sweep), then G (Elixir wiring), C, D, E, F.
+Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests) and B complete (worker expiry sweep, configurable poll/batch, tests). C–H remaining. Next: G (Elixir outbox wiring), then C (settings), D (files), E (audit views), F (exec dashboard).

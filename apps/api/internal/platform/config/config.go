@@ -87,6 +87,12 @@ type Config struct {
 	NotifyBatchSize   int
 	NotifyWorkers     int
 	NotifySendTimeout time.Duration
+
+	// ── Approvals (§6.3) ─────────────────────────────────────────
+	// Overdue approvals are expired by atlas-worker on a poll. Both values are
+	// configuration (§2.10), not code.
+	ApprovalSweepInterval time.Duration
+	ApprovalSweepBatch    int
 }
 
 // Load reads configuration from the process environment, applying defaults.
@@ -128,6 +134,9 @@ func Load() (*Config, error) {
 		NotifyBatchSize:   integer("ATLAS_NOTIFY_BATCH_SIZE", 100),
 		NotifyWorkers:     integer("ATLAS_NOTIFY_WORKERS", 8),
 		NotifySendTimeout: duration("ATLAS_NOTIFY_SEND_TIMEOUT", 10*time.Second),
+
+		ApprovalSweepInterval: duration("ATLAS_APPROVAL_SWEEP_INTERVAL", time.Minute),
+		ApprovalSweepBatch:    integer("ATLAS_APPROVAL_SWEEP_BATCH", 100),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -186,6 +195,13 @@ func (c *Config) Validate() error {
 
 	if c.Env == EnvProduction && c.EncryptionKey == "" {
 		return fmt.Errorf("ATLAS_ENCRYPTION_KEY is required outside local development (base64, 32 bytes)")
+	}
+
+	if c.ApprovalSweepInterval <= 0 {
+		return fmt.Errorf("ATLAS_APPROVAL_SWEEP_INTERVAL must be positive")
+	}
+	if c.ApprovalSweepBatch <= 0 {
+		return fmt.Errorf("ATLAS_APPROVAL_SWEEP_BATCH must be positive")
 	}
 
 	return nil

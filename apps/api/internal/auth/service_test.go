@@ -16,8 +16,8 @@ import (
 
 // fakeStore is an in-memory auth.Store for exercising the service.
 type fakeStore struct {
-	accounts map[string]*Account   // key: email, lowercase
-	sessions map[string]*Session   // key: hex(token hash)
+	accounts map[string]*Account // key: email, lowercase
+	sessions map[string]*Session // key: hex(token hash)
 	services map[string]*ServiceIdentity
 	recovery map[string]bool // key: hex(recovery hash), true while unused
 	attempts []time.Time

@@ -1,9 +1,13 @@
 // Package audit records who did what, when (docs/ATLAS.md §6.3).
 //
-// Events are written inside the same transaction as the change they describe,
-// so a rolled-back change leaves no audit row and an audit row always has a
-// real change behind it. `audit.events` is append-only: the database rejects
-// UPDATE and DELETE, and only `atlas_api`/`atlas_worker` may INSERT.
+// Events are normally written inside the same transaction as the change they
+// describe, so a rolled-back change leaves no audit row and an audit row always
+// has a real change behind it: build a Writer with NewWriter(tx) and pass the
+// transaction to Write. A Writer built with NewWriter(pool) can instead write on
+// its own connection when no transaction is supplied, which is what best-effort
+// audit after a committed change needs. `audit.events` is append-only: the
+// database rejects UPDATE and DELETE, and only `atlas_api`/`atlas_worker` may
+// INSERT.
 //
 // Sensitive fields (salaries, contract values, personal phone numbers) are
 // replaced by a marker before the row is written, so the audit log can be read
@@ -18,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Actor types.
@@ -29,6 +34,12 @@ const (
 
 // RedactedMarker replaces a suppressed value.
 const RedactedMarker = "[redacted]"
+
+// Execer is the subset of pgx shared by *pgxpool.Pool and pgx.Tx, so a Writer
+// can either join a caller's transaction or run on its own connection.
+type Execer interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
 
 // Event is one audited action.
 type Event struct {
@@ -47,27 +58,44 @@ type Event struct {
 	UserAgent  string
 }
 
-// Writer persists audit events. It is stateless apart from the redaction rules.
+// Writer persists audit events. It is stateless apart from the redaction rules
+// and the optional executor used when Write is called without a transaction.
 type Writer struct {
 	redactor *Redactor
+	db       Execer
 }
 
-// NewWriter returns a Writer with the default redaction rules.
-func NewWriter() *Writer {
-	return &Writer{redactor: NewRedactor()}
+// NewWriter returns a Writer with the default redaction rules. Pass a
+// *pgxpool.Pool to let Write run on its own when no transaction is supplied; a
+// bare NewWriter() requires every Write to carry a transaction.
+func NewWriter(db ...Execer) *Writer {
+	w := &Writer{redactor: NewRedactor()}
+	if len(db) > 0 {
+		w.db = db[0]
+	}
+	return w
 }
 
 // Redactor exposes the field-level redaction rules for configuration.
 func (w *Writer) Redactor() *Redactor { return w.redactor }
 
-// Write inserts an audit row. It must be called with the transaction that
-// carries the change being audited (§6.3).
+// Write inserts an audit row. Prefer calling it with the transaction that
+// carries the change being audited (§6.3); when tx is nil the Writer's own
+// executor is used (best-effort audit after commit).
 func (w *Writer) Write(ctx context.Context, tx pgx.Tx, e Event) error {
 	if e.ActorType == "" || e.ActorID == "" {
 		return fmt.Errorf("audit: actor type and id are required")
 	}
 	if e.Action == "" || e.EntityType == "" {
 		return fmt.Errorf("audit: action and entity type are required")
+	}
+
+	exec := Execer(tx)
+	if tx == nil {
+		if w.db == nil {
+			return fmt.Errorf("audit: no transaction supplied and the writer has no database")
+		}
+		exec = w.db
 	}
 
 	id, err := uuid.NewV7()
@@ -92,7 +120,7 @@ func (w *Writer) Write(ctx context.Context, tx pgx.Tx, e Event) error {
 		ip = e.IP
 	}
 
-	_, err = tx.Exec(ctx, q,
+	_, err = exec.Exec(ctx, q,
 		id, occurred, e.ActorType, e.ActorID, e.OnBehalfOf, e.Action,
 		e.EntityType, e.EntityID, jsonOrNil(before), jsonOrNil(after),
 		nullIfEmpty(e.Reason), nullIfEmpty(e.RequestID), ip, nullIfEmpty(e.UserAgent),

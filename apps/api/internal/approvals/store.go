@@ -47,6 +47,11 @@ type Store interface {
 	CancelWithEvent(ctx context.Context, id uuid.UUID, actor uuid.UUID, reason string, ev outbox.Event) error
 	ExpireWithEvent(ctx context.Context, id uuid.UUID, ev outbox.Event) error
 	ClaimExpired(ctx context.Context, limit int) ([]Approval, error)
+	// ExpireDue claims up to limit overdue approvals, marks them expired and
+	// writes their history and outbox events in one transaction. buildEvent
+	// supplies the event for each approval, so event construction stays in the
+	// service. FOR UPDATE SKIP LOCKED makes a second worker skip claimed rows.
+	ExpireDue(ctx context.Context, limit int, buildEvent func(Approval) (outbox.Event, error)) ([]Approval, error)
 }
 
 // History is an approval history row.
@@ -562,6 +567,81 @@ func (s *PGStore) ClaimExpired(ctx context.Context, limit int) ([]Approval, erro
 		return nil, err
 	}
 	return out, nil
+}
+
+// ExpireDue claims and expires overdue approvals in a single transaction. The
+// claim and the expiry share one transaction on purpose: FOR UPDATE SKIP LOCKED
+// only protects rows for the life of the transaction, so a claim that commits
+// before the expiry would let a second worker pick the same row. Here the locks
+// are held until every claimed row has been expired, and the rows are locked in
+// due_at order so two workers take disjoint, deterministic slices.
+func (s *PGStore) ExpireDue(ctx context.Context, limit int, buildEvent func(Approval) (outbox.Event, error)) ([]Approval, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("approvals: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, `
+		SELECT id, ref, status, entity_type, requested_by, approver_role, approver_id
+		FROM core.approvals
+		WHERE status IN ('requested','pending') AND archived_at IS NULL
+		  AND due_at IS NOT NULL AND due_at < now()
+		ORDER BY due_at
+		LIMIT $1
+		FOR UPDATE SKIP LOCKED
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("approvals: claim expired: %w", err)
+	}
+	claimed := make([]Approval, 0, limit)
+	for rows.Next() {
+		var a Approval
+		if err := rows.Scan(&a.ID, &a.Ref, &a.Status, &a.EntityType, &a.RequestedBy, &a.ApproverRole, &a.ApproverID); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("approvals: scan expired: %w", err)
+		}
+		claimed = append(claimed, a)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, fmt.Errorf("approvals: claim expired: %w", err)
+	}
+
+	for i := range claimed {
+		a := &claimed[i]
+		ev, err := buildEvent(*a)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE core.approvals
+			SET status='expired', version=version+1, updated_at=now()
+			WHERE id=$1
+		`, a.ID); err != nil {
+			return nil, fmt.Errorf("approvals: expire: %w", err)
+		}
+		hID, _ := uuid.NewV7()
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO core.approval_history (id, approval_id, actor_id, action, reason, from_status, to_status, created_at)
+			VALUES ($1,$2,NULL,'expire','',$3,'expired',now())
+		`, hID, a.ID, string(a.Status)); err != nil {
+			return nil, fmt.Errorf("approvals: history: %w", err)
+		}
+		if _, err := outbox.Write(ctx, tx, ev); err != nil {
+			return nil, err
+		}
+		a.Status = StatusExpired
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("approvals: commit: %w", err)
+	}
+	return claimed, nil
 }
 
 func timePtr(t *time.Time) any {

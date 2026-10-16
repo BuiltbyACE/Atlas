@@ -509,6 +509,141 @@ func TestTwoPersonApprovalNeedsTwoDistinctPeople(t *testing.T) {
 	}
 }
 
+// TestApprovalRefsAreUniqueWithinAMillisecond is the regression test for the
+// reference generator. Refs derive from a UUIDv7, whose leading hex is its
+// millisecond timestamp, so approvals created in the same millisecond must still
+// get distinct refs (core.approvals has a unique index on ref, so a collision
+// would be a hard insert failure, not silent corruption).
+func TestApprovalRefsAreUniqueWithinAMillisecond(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService(t)
+
+	seen := map[string]bool{}
+	for i := 0; i < 50; i++ {
+		a, err := svc.Request(ctx, Request{
+			EntityType:   "invoice",
+			EntityID:     mustNewID(t),
+			RequestedBy:  mustNewID(t),
+			ApproverRole: "ceo_internal",
+		}, nil)
+		if err != nil {
+			t.Fatalf("Request %d: %v", i, err)
+		}
+		if seen[a.Ref] {
+			t.Fatalf("duplicate ref %q at request %d", a.Ref, i)
+		}
+		seen[a.Ref] = true
+	}
+}
+
+// TestExpireDueSweepsOverdueApprovals covers the worker sweep end to end: it
+// claims only overdue approvals, expires them with an event and history, fans
+// out the expiry to the requester and the approvers, and is idempotent on a
+// second pass.
+func TestExpireDueSweepsOverdueApprovals(t *testing.T) {
+	ctx := context.Background()
+	svc, pool, notifier := newTestServiceWithNotifier(t)
+
+	roleKey := "test_role_" + mustNewID(t).String()
+	approver := seedPersonWithRole(t, pool, roleKey)
+	requester := seedPerson(t, pool)
+
+	past := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	future := time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
+
+	overdue, err := svc.Request(ctx, Request{
+		EntityType:   "expense_claim",
+		EntityID:     mustNewID(t),
+		RequestedBy:  requester,
+		ApproverRole: roleKey,
+		DueAt:        &past,
+	}, &requester)
+	if err != nil {
+		t.Fatalf("Request overdue: %v", err)
+	}
+	if _, err := svc.Request(ctx, Request{
+		EntityType:   "expense_claim",
+		EntityID:     mustNewID(t),
+		RequestedBy:  requester,
+		ApproverRole: roleKey,
+		DueAt:        &future,
+	}, &requester); err != nil {
+		t.Fatalf("Request future: %v", err)
+	}
+
+	n, err := svc.ExpireDue(ctx, 10)
+	if err != nil {
+		t.Fatalf("ExpireDue: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ExpireDue expired %d, want 1 (only the overdue approval)", n)
+	}
+
+	got, err := svc.Get(ctx, overdue.ID)
+	if err != nil {
+		t.Fatalf("Get after expire: %v", err)
+	}
+	if got.Status != StatusExpired {
+		t.Fatalf("status = %q, want %q", got.Status, StatusExpired)
+	}
+	if got.Version != 2 {
+		t.Fatalf("version = %d, want 2", got.Version)
+	}
+	if c := countRows(t, pool, `SELECT count(*) FROM outbox.events WHERE type = $1`, outbox.TypeApprovalExpiredV1); c != 1 {
+		t.Fatalf("expired events = %d, want 1", c)
+	}
+	if c := countRows(t, pool, `SELECT count(*) FROM core.approval_history WHERE approval_id = $1 AND action = 'expire'`, overdue.ID); c != 1 {
+		t.Fatalf("expire history rows = %d, want 1", c)
+	}
+
+	recipients := notifier.recipients(TemplateExpired)
+	seen := map[uuid.UUID]bool{}
+	for _, r := range recipients {
+		seen[r] = true
+	}
+	if len(recipients) != 2 || !seen[requester] || !seen[approver] {
+		t.Fatalf("expired notifications = %v, want requester %s and approver %s", recipients, requester, approver)
+	}
+
+	n, err = svc.ExpireDue(ctx, 10)
+	if err != nil {
+		t.Fatalf("second ExpireDue: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("second ExpireDue expired %d, want 0 (idempotent)", n)
+	}
+}
+
+// TestExpireDueRespectsBatchLimit checks the sweep takes at most the batch size
+// so a backlog drains across polls rather than in one unbounded statement.
+func TestExpireDueRespectsBatchLimit(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService(t)
+
+	past := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	for i := 0; i < 3; i++ {
+		if _, err := svc.Request(ctx, Request{
+			EntityType:   "expense_claim",
+			EntityID:     mustNewID(t),
+			RequestedBy:  mustNewID(t),
+			ApproverRole: "ceo_internal",
+			DueAt:        &past,
+		}, nil); err != nil {
+			t.Fatalf("Request %d: %v", i, err)
+		}
+	}
+
+	if n, err := svc.ExpireDue(ctx, 2); err != nil || n != 2 {
+		t.Fatalf("ExpireDue(limit 2) = (%d, %v), want (2, nil)", n, err)
+	}
+	if n, err := svc.ExpireDue(ctx, 2); err != nil || n != 1 {
+		t.Fatalf("ExpireDue(limit 2) second pass = (%d, %v), want (1, nil)", n, err)
+	}
+	if n, err := svc.ExpireDue(ctx, 2); err != nil || n != 0 {
+		t.Fatalf("ExpireDue(limit 2) third pass = (%d, %v), want (0, nil)", n, err)
+	}
+}
+
 // TestApprovalNotificationsFanOut covers request→approvers and decide→requester.
 func TestApprovalNotificationsFanOut(t *testing.T) {
 	ctx := context.Background()

@@ -1,9 +1,53 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// fakeExecer stands in for a *pgxpool.Pool so the standalone-write path can be
+// tested without a database.
+type fakeExecer struct {
+	called bool
+	sql    string
+}
+
+func (f *fakeExecer) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+	f.called = true
+	f.sql = sql
+	return pgconn.CommandTag{}, nil
+}
+
+// TestWriterUsesOwnExecutorWithoutTx is the regression test for the worker
+// crash: approvals writes audit after the state change commits, so Write is
+// called with a nil transaction and must use the writer's own executor.
+func TestWriterUsesOwnExecutorWithoutTx(t *testing.T) {
+	f := &fakeExecer{}
+	w := NewWriter(f)
+	if err := w.Write(context.Background(), nil, Event{
+		ActorType: ActorSystem, ActorID: "system", Action: "core.approval.expired", EntityType: "approval",
+	}); err != nil {
+		t.Fatalf("Write without tx: %v", err)
+	}
+	if !f.called {
+		t.Fatal("Write without tx did not use the writer's executor")
+	}
+}
+
+// TestWriterWithoutTxOrExecutorErrors checks a bare NewWriter() returns an error
+// rather than panicking when Write is called without a transaction.
+func TestWriterWithoutTxOrExecutorErrors(t *testing.T) {
+	w := NewWriter()
+	err := w.Write(context.Background(), nil, Event{
+		ActorType: ActorSystem, ActorID: "system", Action: "a", EntityType: "e",
+	})
+	if err == nil {
+		t.Fatal("Write without tx or executor: want error, got nil")
+	}
+}
 
 func TestRedactSensitiveFields(t *testing.T) {
 	r := NewRedactor()

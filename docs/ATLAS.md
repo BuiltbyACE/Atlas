@@ -153,6 +153,7 @@ Rules that are **not** configurable:
 - Nobody approves their own request (separation of duties).
 - "Both CEOs" means two distinct approvals; the second approver sees the first's comment.
 - Approvals expire if the underlying record changes materially (amount, scope) after approval.
+- An approval past its deadline expires automatically: the Go worker sweeps overdue rows (`FOR UPDATE SKIP LOCKED`), marks them `expired` and emits `core.approval.expired.v1`, so a late decision can never be taken.
 
 ### 3.4 Escalation ladder **[CONFIG]**
 
@@ -1102,7 +1103,7 @@ Backups: nightly full + continuous WAL archiving (point-in-time recovery), encry
 | GET | `/api/v1/projects/{id}/tasks` | Project tasks |
 | POST | `/api/v1/daily-reports` | Submit staff report |
 | GET | `/api/v1/reports/executive/daily` | Authorised executive summary |
-| GET | `/api/v1/approvals?mine=pending` | Approvals waiting for me |
+| GET | `/api/v1/approvals/pending` · `/api/v1/approvals/mine` | Approvals waiting for me · approvals I requested |
 | POST | `/internal/v1/commands/{command}` | Orchestrator commands |
 | GET | `/internal/v1/authz/check` | Channel join authorisation |
 | POST | `/webhooks/whatsapp` · `/webhooks/github` · `/webhooks/payments` · `/webhooks/school` | Inbound integrations |

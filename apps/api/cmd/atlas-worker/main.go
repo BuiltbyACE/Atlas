@@ -1,12 +1,13 @@
 // Command atlas-worker runs Atlas's asynchronous and time-driven Go work
 // (docs/ATLAS.md §4.1, §5.1).
 //
-// It currently runs one thing: the notification dispatcher (§6.4). Producers
-// (atlas-api) record a notification and its outbox event in one transaction and
-// return immediately; this process leases those due rows and performs the
-// provider calls with a timeout, retries, backoff and a circuit breaker
-// (§8.10). Keeping delivery here, not in the request path, is what makes the
-// write path fast and the SLOs in §11 hold.
+// It runs two jobs. The notification dispatcher (§6.4) leases due rows that
+// producers (atlas-api) recorded with their outbox event in one transaction and
+// performs the provider calls with a timeout, retries, backoff and a circuit
+// breaker (§8.10). The approvals expiry sweeper (§6.3) expires approvals whose
+// deadline passed and fans out the core.approval.expired.v1 event. Both are
+// time-driven, which is why they live here and not in the request path: it is
+// what makes the write path fast and the SLOs in §11 hold.
 //
 // The heartbeat loop stays: a worker that cannot see the database is idle in
 // the worst way, so it is logged rather than assumed.
@@ -23,6 +24,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/safaristack/atlas/apps/api/internal/adapters/email"
+	"github.com/safaristack/atlas/apps/api/internal/approvals"
+	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
@@ -87,16 +90,27 @@ func run() error {
 		logger,
 	)
 
-	// Run the dispatcher and the heartbeat side by side; whichever ends first
-	// (a fatal dispatcher error, or a shutdown signal) ends the process.
+	notificationService := notifications.NewService(notifications.NewPGStore(pool), logger)
+	approvalService := approvals.NewService(approvals.NewPGStore(pool), audit.NewWriter(pool),
+		approvals.NewNotificationsAdapter(notificationService), logger)
+	sweeper := approvals.NewSweeper(approvalService, cfg.ApprovalSweepInterval, cfg.ApprovalSweepBatch, logger)
+
+	// Run the dispatcher, the expiry sweeper and the heartbeat side by side;
+	// whichever ends first (a fatal engine error, or a shutdown signal) ends the
+	// process.
 	dispatchErr := make(chan error, 1)
 	go func() { dispatchErr <- dispatcher.Run(ctx) }()
+
+	sweepErr := make(chan error, 1)
+	go func() { sweepErr <- sweeper.Run(ctx) }()
 
 	heartbeatErr := make(chan error, 1)
 	go func() { heartbeatErr <- loop(ctx, logger, pool) }()
 
 	select {
 	case err := <-dispatchErr:
+		return err
+	case err := <-sweepErr:
 		return err
 	case err := <-heartbeatErr:
 		return err
