@@ -59,6 +59,7 @@ type ServiceConfig struct {
 	RealtimeAudience     string
 	RealtimeTTL          time.Duration
 	ServiceAudience      string
+	ServiceTokenTTL      time.Duration
 	LoginMaxFailures     int
 	LoginWindow          time.Duration
 	RecoveryCodeCount    int
@@ -557,7 +558,11 @@ func (s *Service) MintServiceToken(ctx context.Context, serviceID string, fallba
 	}
 
 	now := s.now()
-	expires := now.Add(s.cfg.RealtimeTTL)
+	ttl := s.cfg.ServiceTokenTTL
+	if ttl <= 0 {
+		ttl = s.cfg.RealtimeTTL
+	}
+	expires := now.Add(ttl)
 	token, err := s.key.Sign(ed25519jwt.Claims{
 		Issuer:    s.cfg.RealtimeIssuer,
 		Subject:   serviceID,

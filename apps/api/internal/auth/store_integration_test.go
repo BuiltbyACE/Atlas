@@ -4,9 +4,13 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/safaristack/atlas/apps/api/internal/authz"
+	"github.com/safaristack/atlas/apps/api/internal/platform/ed25519jwt"
 )
 
 func testPool(t *testing.T) *pgxpool.Pool {
@@ -85,5 +89,75 @@ func TestPGStoreLoadPrincipal(t *testing.T) {
 	}
 	if !p.HasRole(roleKey) {
 		t.Fatalf("roles = %v, want %q", p.Roles, roleKey)
+	}
+}
+
+// TestServiceIdentityTokenRoundTrip covers the static service-token path the
+// orchestrator uses: create an identity, mint a token for it, and resolve that
+// token back to a service principal with the identity's permissions.
+func TestServiceIdentityTokenRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	suffix := uuid.NewString()[:8]
+	serviceID := "svc:test-" + suffix
+	permKey := "test.service." + suffix
+
+	mustExec(t, pool, `INSERT INTO core.permissions (key, description) VALUES ($1, $2)`, permKey, "Test service permission")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM core.service_identities WHERE id = $1`, serviceID)
+		_, _ = pool.Exec(ctx, `DELETE FROM core.permissions WHERE key = $1`, permKey)
+	})
+
+	if err := EnsureService(ctx, pool, ServiceIdentityInput{
+		ID:          serviceID,
+		Description: "test identity",
+		Permissions: []string{permKey},
+	}); err != nil {
+		t.Fatalf("EnsureService: %v", err)
+	}
+
+	// An unknown permission must be rejected before the identity is written.
+	if err := EnsureService(ctx, pool, ServiceIdentityInput{
+		ID: serviceID, Permissions: []string{"nope.not.a.permission"},
+	}); err == nil {
+		t.Fatal("EnsureService accepted an unknown permission")
+	}
+
+	key, err := ed25519jwt.Generate()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	encoded, err := GenerateEncryptionKey()
+	if err != nil {
+		t.Fatalf("generate encryption key: %v", err)
+	}
+	sealer, err := NewSealer(encoded)
+	if err != nil {
+		t.Fatalf("sealer: %v", err)
+	}
+	service := NewService(NewPGStore(pool), sealer, key, ServiceConfig{
+		RealtimeIssuer:  "atlas",
+		ServiceAudience: "atlas-internal",
+		ServiceTokenTTL: time.Hour,
+	}, nil)
+
+	token, expires, err := service.MintServiceToken(ctx, serviceID, nil)
+	if err != nil {
+		t.Fatalf("MintServiceToken: %v", err)
+	}
+	if remaining := time.Until(expires); remaining < 30*time.Minute {
+		t.Fatalf("token expiry = %s, want the ServiceTokenTTL (~1h)", expires)
+	}
+
+	principal, err := service.ResolveServiceToken(ctx, token)
+	if err != nil {
+		t.Fatalf("ResolveServiceToken: %v", err)
+	}
+	if principal.Kind != authz.KindService || principal.Subject != serviceID {
+		t.Fatalf("principal = %+v, want service %q", principal, serviceID)
+	}
+	if !principal.Can(permKey) {
+		t.Fatalf("permissions = %v, want %q", principal.Permissions, permKey)
 	}
 }

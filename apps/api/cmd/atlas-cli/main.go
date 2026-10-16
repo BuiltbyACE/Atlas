@@ -15,6 +15,8 @@
 //	atlas-cli seed                  write the role/permission catalogue (§3.2, §6.2)
 //	atlas-cli keygen                print fresh local secrets (Ed25519 + AES-256)
 //	atlas-cli bootstrap             create the first account (a real person)
+//	atlas-cli service create        create/update a service identity (§6.1)
+//	atlas-cli service token         mint a service token for an identity
 //	atlas-cli version               print the build version
 package main
 
@@ -29,6 +31,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver "pgx" for goose
@@ -77,6 +80,8 @@ func run(args []string) error {
 		return runKeygen()
 	case "bootstrap":
 		return runBootstrap(args[1:])
+	case "service":
+		return runService(args[1:])
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -94,6 +99,8 @@ func usage() {
   seed
   keygen
   bootstrap --email <email> --name <full name> [--phone] [--role <role>] [--scope <scope>]
+  service create --id <svc:id> --permission <key> [--permission <key>]... [--description <text>]
+  service token --id <svc:id>
   version
 `)
 }
@@ -360,6 +367,163 @@ func runBootstrap(args []string) error {
 	fmt.Fprintln(os.Stdout, "Sign in with your email (or the phone number) and the password you supplied.")
 	if auth.RoleRequiresMFA(*role) {
 		fmt.Fprintln(os.Stdout, "This role is privileged: the first sign-in is a TOTP enrolment.")
+	}
+	return nil
+}
+
+// ── service identities ──────────────────────────────────────
+
+// runService provisions service identities and mints tokens for them (§6.1).
+// The orchestrator presents a static service token on internal calls, so an
+// operator creates the identity once and re-mints the token when the signing
+// key rotates.
+func runService(args []string) error {
+	if len(args) == 0 {
+		return errors.New("service: expected create|token")
+	}
+	switch args[0] {
+	case "create":
+		return runServiceCreate(args[1:])
+	case "token":
+		return runServiceToken(args[1:])
+	default:
+		return fmt.Errorf("service: unknown action %q", args[0])
+	}
+}
+
+func runServiceCreate(args []string) error {
+	fs := flag.NewFlagSet("service create", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `atlas-cli service create — create or update a service identity
+
+  --id <svc:id>          required; e.g. svc:orchestrator
+  --permission <key>     required, repeatable; a §6.2 permission key
+  --description <text>   what the identity is for
+`)
+	}
+	id := fs.String("id", "", "service identity id")
+	description := fs.String("description", "", "what the identity is for")
+	var permissions stringList
+	fs.Var(&permissions, "permission", "a §6.2 permission key (repeatable)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *id == "" || len(permissions) == 0 {
+		fs.Usage()
+		return errors.New("service create: --id and at least one --permission are required")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	logger := logging.New(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	pool, err := database.Connect(ctx, cfg.DatabaseURL, logger)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	if err := auth.EnsureService(ctx, pool, auth.ServiceIdentityInput{
+		ID:          *id,
+		Description: *description,
+		Permissions: permissions,
+	}); err != nil {
+		return err
+	}
+
+	logger.Info("service identity ensured",
+		slog.String("id", *id),
+		slog.Int("permissions", len(permissions)),
+	)
+	return nil
+}
+
+func runServiceToken(args []string) error {
+	fs := flag.NewFlagSet("service token", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `atlas-cli service token — mint a service token
+
+  --id <svc:id>   required; the identity to mint for (see service create)
+
+The token is signed with ATLAS_REALTIME_PRIVATE_KEY, so that key must be set
+(run "atlas-cli keygen") — an ephemeral key would mint a token the API cannot
+verify. Paste the output into the caller's ATLAS_SERVICE_TOKEN.
+`)
+	}
+	id := fs.String("id", "", "service identity id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *id == "" {
+		fs.Usage()
+		return errors.New("service token: --id is required")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.RealtimePrivateKey) == "" {
+		return errors.New("service token: ATLAS_REALTIME_PRIVATE_KEY is not set; run `atlas-cli keygen` so the API can verify the token")
+	}
+	logger := logging.New(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	pool, err := database.Connect(ctx, cfg.DatabaseURL, logger)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	privateKey, err := ed25519jwt.ParsePrivateKey(cfg.RealtimePrivateKey)
+	if err != nil {
+		return fmt.Errorf("ATLAS_REALTIME_PRIVATE_KEY: %w", err)
+	}
+	// The sealer is unused when minting; a generated one satisfies NewService's
+	// contract without reading the API's encryption key.
+	encoded, err := auth.GenerateEncryptionKey()
+	if err != nil {
+		return err
+	}
+	sealer, err := auth.NewSealer(encoded)
+	if err != nil {
+		return err
+	}
+
+	service := auth.NewService(auth.NewPGStore(pool), sealer, ed25519jwt.FromPrivateKey(privateKey), auth.ServiceConfig{
+		RealtimeIssuer:   cfg.RealtimeIssuer,
+		RealtimeAudience: cfg.RealtimeAudience,
+		RealtimeTTL:      cfg.RealtimeTokenTTL,
+		ServiceAudience:  cfg.ServiceAudience,
+		ServiceTokenTTL:  cfg.ServiceTokenTTL,
+	}, logger)
+
+	token, expires, err := service.MintServiceToken(ctx, *id, nil)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(token)
+	fmt.Fprintf(os.Stderr, "# subject %s, expires %s — set ATLAS_SERVICE_TOKEN for the caller\n",
+		*id, expires.UTC().Format(time.RFC3339))
+	return nil
+}
+
+// stringList is a repeatable string flag (`--permission a --permission b`).
+type stringList []string
+
+func (s *stringList) String() string { return strings.Join(*s, ",") }
+
+func (s *stringList) Set(value string) error {
+	if value = strings.TrimSpace(value); value != "" {
+		*s = append(*s, value)
 	}
 	return nil
 }

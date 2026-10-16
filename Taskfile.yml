@@ -118,6 +118,12 @@ tasks:
     cmds:
       - go run ./cmd/atlas-cli bootstrap {{.CLI_ARGS}}
 
+  service:
+    desc: 'Provision a service identity or mint its token (e.g. task service -- create --id svc:orchestrator --permission core.authz.check)'
+    dir: apps/api
+    cmds:
+      - go run ./cmd/atlas-cli service {{.CLI_ARGS}}
+
   smoke:event:
     desc: Write a core.system.hello.v1 event to prove the event spine end to end
     dir: apps/api

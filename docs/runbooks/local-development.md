@@ -101,6 +101,23 @@ The orchestrator fetches keys from `ATLAS_JWKS_URL`
 running before a socket can be authenticated. The URL is served only inside the
 deployment â€” Caddy returns 404 for `/internal/*`.
 
+### The orchestrator's service credential
+
+When the orchestrator calls Go's internal API (for example the realtime join
+check `GET /internal/v1/authz/check`), it presents a static service token. Because
+the token is signed with the API's key, set `ATLAS_REALTIME_PRIVATE_KEY` first
+(run `task keygen` and paste it into `.env`), then create the identity and mint a
+token once:
+
+```powershell
+task service -- create --id svc:orchestrator `
+  --permission core.authz.check --permission core.notification.manage
+task service -- token --id svc:orchestrator    # paste into ATLAS_SERVICE_TOKEN
+```
+
+Re-mint the token whenever the signing key rotates (or the token's
+`ATLAS_SERVICE_TOKEN_TTL`, 30 days by default, lapses).
+
 Inspect the published keys:
 
 ```powershell

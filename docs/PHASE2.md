@@ -118,9 +118,13 @@ tick an item only when its code, tests and migrations are in place.
       service-to-service and gated by `core.authz.check`; resolves the user's
       effective permissions from their grants so the orchestrator can authorise
       a topic join without knowing roles→permissions itself
+- [x] Static service credential: `atlas-cli service create` (upsert the
+      `svc:orchestrator` identity and its permissions) and `atlas-cli service
+      token` (mint a long-lived token signed with the API key, `ATLAS_SERVICE_TOKEN`),
+      plus `auth.EnsureService`; integration test of the mint→resolve round trip
 - [ ] Mount the `work:project:{id}` channel, calling the join check above
       (§7.5, ADR-009) — the topic is broadcast to now, but no channel is joined
-      until the orchestrator has a service credential for the internal API
+      until the orchestrator calls the internal API with `ATLAS_SERVICE_TOKEN`
 
 ## 8. Frontend (after the backend above is complete and tested)
 

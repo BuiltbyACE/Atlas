@@ -72,6 +72,11 @@ type Config struct {
 	RealtimeTokenTTL   time.Duration
 	// ServiceAudience is the `aud` expected on service-to-service tokens (§6.1).
 	ServiceAudience string
+	// ServiceTokenTTL is how long a minted service identity token lives. It is
+	// deliberately longer than RealtimeTokenTTL: the orchestrator is configured
+	// with a static token (atlas-cli service token) rather than refreshing one
+	// per request, so a short TTL would break it between re-mints (§6.1).
+	ServiceTokenTTL time.Duration
 
 	// ── Notifications (§6.4, §8.10) ──────────────────────────────
 	// SMTP is where the email adapter sends: Mailpit locally, a transactional
@@ -146,6 +151,7 @@ func Load() (*Config, error) {
 		RealtimeAudience:   get("ATLAS_REALTIME_AUDIENCE", "atlas-realtime"),
 		RealtimeTokenTTL:   duration("ATLAS_REALTIME_TOKEN_TTL", 5*time.Minute),
 		ServiceAudience:    get("ATLAS_SERVICE_AUDIENCE", "atlas-internal"),
+		ServiceTokenTTL:    duration("ATLAS_SERVICE_TOKEN_TTL", 30*24*time.Hour),
 
 		SMTPHost:     get("SMTP_HOST", "localhost"),
 		SMTPPort:     integer("SMTP_PORT", 1025),

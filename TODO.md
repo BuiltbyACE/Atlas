@@ -91,8 +91,11 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] Go realtime join check: `GET /internal/v1/authz/check?user_id=&permission=`
       (service-to-service, gated by `core.authz.check`); resolves a user's
       roles→permissions so the orchestrator can authorise topic joins
-- [ ] Mount the `work:project:{id}` channel and call the join check above
-      (needs an orchestrator service credential for the internal API)
+- [x] Static service credential tooling: `atlas-cli service create` (upsert
+      `svc:orchestrator`) and `atlas-cli service token` (mint `ATLAS_SERVICE_TOKEN`,
+      30-day TTL), backed by `auth.EnsureService`; mint→resolve round-trip test
+- [ ] Mount the `work:project:{id}` channel and call the join check above with
+      `ATLAS_SERVICE_TOKEN`
 - [ ] People §8.5 endpoints still missing: `GET /api/v1/people/availability?date=`
       and `POST /api/v1/people/{id}/offboard`
 - [ ] Frontend (after backend above is complete)

@@ -219,6 +219,7 @@ func newAuthService(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool)
 		RealtimeAudience:     cfg.RealtimeAudience,
 		RealtimeTTL:          cfg.RealtimeTokenTTL,
 		ServiceAudience:      cfg.ServiceAudience,
+		ServiceTokenTTL:      cfg.ServiceTokenTTL,
 		LoginMaxFailures:     5,
 		LoginWindow:          15 * time.Minute,
 	}, logger), nil
