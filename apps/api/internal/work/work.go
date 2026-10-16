@@ -411,6 +411,54 @@ type ListAbsencesQuery struct {
 	ToDate   *time.Time
 }
 
+// EscalationStatus mirrors the work.escalations.status check constraint.
+type EscalationStatus string
+
+const (
+	EscalationOpen     EscalationStatus = "open"
+	EscalationResolved EscalationStatus = "resolved"
+)
+
+// Escalation is a row in work.escalations: a durable record that a work item
+// has passed its deadline and needs a human to act (docs/ATLAS.md §3.2, §5.8).
+// The ladder's timing windows (E1-E3) are decision D4 and still open, so level 1
+// is raised as soon as a task is overdue.
+type Escalation struct {
+	ID         uuid.UUID
+	EntityType string
+	EntityID   uuid.UUID
+	ProjectID  *uuid.UUID
+	Level      int
+	Status     EscalationStatus
+	Reason     string
+	AssigneeID *uuid.UUID
+	RaisedBy   *uuid.UUID
+	ResolvedBy *uuid.UUID
+	ResolvedAt *time.Time
+	Version    int
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// OverdueTask is the minimal view the escalation sweep claims: an open task past
+// its due time, plus the project owner who should be nudged.
+type OverdueTask struct {
+	ID         uuid.UUID
+	ProjectID  uuid.UUID
+	Title      string
+	AssigneeID *uuid.UUID
+	OwnerID    *uuid.UUID
+	DueAt      time.Time
+}
+
+// ListEscalationsQuery filters an escalation listing.
+type ListEscalationsQuery struct {
+	EntityType string
+	EntityID   *uuid.UUID
+	ProjectID  *uuid.UUID
+	Status     EscalationStatus
+}
+
 func trim(s string) string { return strings.TrimSpace(s) }
 
 // validateProject normalises a create/update payload.

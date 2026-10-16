@@ -66,22 +66,39 @@ tick an item only when its code, tests and migrations are in place.
 
 ## 5. Overdue escalation ladder + worker
 
-- [ ] Detect overdue tasks (due_at < now, not done/cancelled)
-- [ ] Escalation sweep in `atlas-worker` (claim + escalate in one transaction,
-      `FOR UPDATE SKIP LOCKED`), configurable interval/batch
-- [ ] Events + notification fan-out; feeds the exec dashboard
+- [x] `work.escalations` (migration `00012`): `entity_type`/`entity_id`, `level`,
+      `status` (open/resolved), `reason`, `assignee_person_id`, `resolved_by`/
+      `resolved_at`, `version`; partial unique index on open escalations
+- [x] Detect overdue tasks (due_at < now, not done/cancelled) and raise a level-1
+      escalation assigned to the project owner, in one transaction
+      (`FOR UPDATE SKIP LOCKED`), so two workers take disjoint slices; the
+      "current deadline" scopes an episode so a resolved escalation is not
+      re-raised until the deadline moves and passes again
+- [x] Escalation sweep in `atlas-worker`
+      (`ATLAS_WORK_SWEEP_INTERVAL`/`ATLAS_WORK_SWEEP_BATCH`), mirroring the
+      approvals sweeper: it drains in batches and logs, never dies on one bad batch
+- [x] Automatic resolution: once the task is done/cancelled or no longer overdue
+      the sweep closes the escalation and emits `core.escalation.resolved.v1`
+- [x] Manual resolution: `POST /api/v1/work/escalations/{id}/resolve` gated by
+      `work.task.review`; list/get gated by `work.task.read`
+- [x] Events `work.task.overdue.v1` + `core.escalation.raised/resolved.v1`.
+      The ladder's E1-E3 timing windows (L2/L3) are decision **D4** and still
+      open, so only L1 is raised for now; the `level` column already exists so
+      later rungs need configuration, not schema. Notification fan-out is Phase 7.
 
 ## 6. Executive dashboard updates
 
-- [ ] Add "overdue work" tile (Phase 2 exit needs it); reuse `dashboard.changed`
+- [x] Add "overdue work" tile (open tasks past deadline + open escalations) to
+      `GET /api/v1/dashboard/executive`; reuse `dashboard.changed`
 
 ## 7. Elixir outbox wiring
 
 - [ ] Go-side event constructors are in `internal/outbox/work.go`
-      (`work.project.created/status_changed`, `work.task.created/status_changed/assigned/blocked/unblocked`,
-      `work.evidence.added`, `work.daily_report.submitted`, `work.absence.*`)
-- [ ] Route `work.*` events to signals; push invalidation on `exec:dashboard`
-      and named recipients; tests
+      (`work.project.created/status_changed`, `work.task.created/status_changed/assigned/blocked/unblocked/overdue`,
+      `work.evidence.added`, `work.daily_report.submitted`, `work.absence.*`) and
+      `internal/outbox/escalation.go` (`core.escalation.raised/resolved.v1`)
+- [ ] Route `work.*` and `core.escalation.*` events to signals; push invalidation
+      on `exec:dashboard` and named recipients; tests
 
 ## 8. Frontend (after the backend above is complete and tested)
 

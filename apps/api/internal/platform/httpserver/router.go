@@ -335,4 +335,12 @@ func registerWork(reg *routing.Registry, h *work.Handler) {
 		"Approve leave", h.ApproveAbsence)
 	reg.Gated("people.leave.manage", http.MethodPost, "/api/v1/work/absences/{id}/decline",
 		"Decline leave", h.DeclineAbsence)
+
+	// Escalations (overdue work).
+	reg.Gated("work.task.read", http.MethodGet, "/api/v1/work/escalations",
+		"List escalations", h.ListEscalations)
+	reg.Gated("work.task.read", http.MethodGet, "/api/v1/work/escalations/{id}",
+		"Get an escalation", h.GetEscalation)
+	reg.Gated("work.task.review", http.MethodPost, "/api/v1/work/escalations/{id}/resolve",
+		"Resolve an escalation", h.ResolveEscalation)
 }

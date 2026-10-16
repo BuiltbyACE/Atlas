@@ -14,8 +14,10 @@ import (
 type fakeStore struct {
 	people       map[string]int
 	approvals    ApprovalsSummary
+	work         WorkSummary
 	peopleErr    error
 	approvalsErr error
+	workErr      error
 	gotNow       time.Time
 }
 
@@ -32,6 +34,14 @@ func (s *fakeStore) Approvals(_ context.Context, now time.Time) (ApprovalsSummar
 		return ApprovalsSummary{}, s.approvalsErr
 	}
 	return s.approvals, nil
+}
+
+func (s *fakeStore) Work(_ context.Context, now time.Time) (WorkSummary, error) {
+	s.gotNow = now
+	if s.workErr != nil {
+		return WorkSummary{}, s.workErr
+	}
+	return s.work, nil
 }
 
 type fakeAuditStore struct {
@@ -51,6 +61,7 @@ func TestSummaryBuildsTiles(t *testing.T) {
 	store := &fakeStore{
 		people:    map[string]int{"active": 3, "on_leave": 1},
 		approvals: ApprovalsSummary{Pending: 2, Escalated: 1, Overdue: 1, PendingByRole: map[string]int{"ceo_finance": 2}},
+		work:      WorkSummary{Overdue: 4, OpenEscalations: 2},
 	}
 	auditStore := &fakeAuditStore{entries: []audit.Entry{{
 		ID:         uuid.New(),
@@ -78,6 +89,9 @@ func TestSummaryBuildsTiles(t *testing.T) {
 	}
 	if sum.Approvals.PendingByRole["ceo_finance"] != 2 {
 		t.Fatalf("pending_by_role = %+v", sum.Approvals.PendingByRole)
+	}
+	if sum.Work.Overdue != 4 || sum.Work.OpenEscalations != 2 {
+		t.Fatalf("work = %+v", sum.Work)
 	}
 	if len(sum.RecentAudit) != 1 {
 		t.Fatalf("recent_audit = %d, want 1", len(sum.RecentAudit))

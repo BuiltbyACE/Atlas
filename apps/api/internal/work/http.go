@@ -147,6 +147,23 @@ type absenceView struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
+type escalationView struct {
+	ID         string     `json:"id"`
+	EntityType string     `json:"entity_type"`
+	EntityID   string     `json:"entity_id"`
+	ProjectID  string     `json:"project_id,omitempty"`
+	Level      int        `json:"level"`
+	Status     string     `json:"status"`
+	Reason     string     `json:"reason,omitempty"`
+	AssigneeID string     `json:"assignee_person_id,omitempty"`
+	RaisedBy   string     `json:"raised_by_person_id,omitempty"`
+	ResolvedBy string     `json:"resolved_by_person_id,omitempty"`
+	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
+	Version    int        `json:"version"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
 // ── requests ────────────────────────────────────────────────────────────────
 
 type projectReq struct {
@@ -1162,6 +1179,93 @@ func (h *Handler) CancelAbsence(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, absenceOf(a))
 }
 
+// ── escalations ─────────────────────────────────────────────────────────────
+
+// ListEscalations handles GET /api/v1/work/escalations.
+func (h *Handler) ListEscalations(w http.ResponseWriter, r *http.Request) {
+	limit, cursor, err := httpx.ParsePage(r)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	before, err := cursorOrNil(cursor)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	q := ListEscalationsQuery{
+		EntityType: strings.TrimSpace(r.URL.Query().Get("entity_type")),
+		Status:     EscalationStatus(strings.TrimSpace(r.URL.Query().Get("status"))),
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("entity_id")); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteProblem(w, r, httpx.BadRequest("entity_id is not a valid id."))
+			return
+		}
+		q.EntityID = &id
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("project_id")); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteProblem(w, r, httpx.BadRequest("project_id is not a valid id."))
+			return
+		}
+		q.ProjectID = &id
+	}
+
+	items, err := h.service.ListEscalations(r.Context(), q, limit+1, before)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	next := ""
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[len(items)-1]
+		next = encodeCursor(last.CreatedAt, last.ID)
+	}
+	views := make([]escalationView, 0, len(items))
+	for _, e := range items {
+		views = append(views, escalationOf(e))
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewPage(views, next, limit))
+}
+
+// GetEscalation handles GET /api/v1/work/escalations/{id}.
+func (h *Handler) GetEscalation(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.idParam(w, r, "id", "escalation")
+	if !ok {
+		return
+	}
+	e, err := h.service.GetEscalation(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(e.Version))
+	httpx.WriteJSON(w, http.StatusOK, escalationOf(e))
+}
+
+// ResolveEscalation handles POST /api/v1/work/escalations/{id}/resolve.
+func (h *Handler) ResolveEscalation(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "escalation")
+	if !ok {
+		return
+	}
+	e, err := h.service.ResolveEscalation(r.Context(), principal.PersonID, id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(e.Version))
+	httpx.WriteJSON(w, http.StatusOK, escalationOf(e))
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (*authz.Principal, bool) {
@@ -1478,6 +1582,34 @@ func absenceOf(a Absence) absenceView {
 	}
 	if a.ApproverID != nil {
 		v.ApproverID = a.ApproverID.String()
+	}
+	return v
+}
+
+func escalationOf(e Escalation) escalationView {
+	v := escalationView{
+		ID:         e.ID.String(),
+		EntityType: e.EntityType,
+		EntityID:   e.EntityID.String(),
+		Level:      e.Level,
+		Status:     string(e.Status),
+		Reason:     e.Reason,
+		ResolvedAt: e.ResolvedAt,
+		Version:    e.Version,
+		CreatedAt:  e.CreatedAt,
+		UpdatedAt:  e.UpdatedAt,
+	}
+	if e.ProjectID != nil {
+		v.ProjectID = e.ProjectID.String()
+	}
+	if e.AssigneeID != nil {
+		v.AssigneeID = e.AssigneeID.String()
+	}
+	if e.RaisedBy != nil {
+		v.RaisedBy = e.RaisedBy.String()
+	}
+	if e.ResolvedBy != nil {
+		v.ResolvedBy = e.ResolvedBy.String()
 	}
 	return v
 }

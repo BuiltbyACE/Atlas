@@ -70,14 +70,22 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       D5 policy intentionally not enforced (open decision)
 - [x] Absences: request/list/get/decide/cancel, overlap rejection, no
       self-decision (work.absence.requested/approved/declined/cancelled.v1)
+- [x] Overdue escalation: migration 00012 `work.escalations` (schema 12; work
+      schema re-owned by atlas_migrator so `task migrate` works), sweep in
+      atlas-worker (config `ATLAS_WORK_SWEEP_INTERVAL`/`ATLAS_WORK_SWEEP_BATCH`),
+      L1 raised to the project owner in one tx (FOR UPDATE SKIP LOCKED, per-deadline
+      episode), auto-resolve when the task is no longer overdue, manual resolve
+      (work.task.review), events work.task.overdue.v1 +
+      core.escalation.raised/resolved.v1; L2/L3 windows deferred to decision D4
+- [x] Exec dashboard "overdue work" tile (overdue tasks + open escalations)
 
 ### Remaining Phase 2 (next)
-- [ ] Overdue escalation ladder + worker sweep (feeds exec dashboard)
-- [ ] Exec dashboard "overdue work" tile
-- [ ] Elixir outbox wiring for work.* events (signals + dashboard invalidation)
+- [ ] Elixir outbox wiring for work.* + core.escalation.* events (signals +
+      dashboard invalidation) + tests
 - [ ] Frontend (after backend above is complete)
+- [ ] L2/L3 ladder timing + notification fan-out for escalations (blocked on D4)
 
-Current status: Phase 1 (A-H) complete. Phase 2 work core, evidence, daily
-reports and absences complete (schema 11; routes wired; tests green). Next:
-overdue escalation ladder + worker sweep, then the exec "overdue work" tile,
-then Elixir outbox wiring for work.*.
+Current status: Phase 1 (A-H) complete. Phase 2 backend for work core, evidence,
+daily reports, absences, escalation ladder and the exec work tile complete
+(schema 12; routes wired; tests green). Next: Elixir outbox wiring for work.*
+and core.escalation.*, then the frontend.

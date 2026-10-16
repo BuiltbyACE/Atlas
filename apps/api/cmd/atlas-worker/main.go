@@ -31,6 +31,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
 	"github.com/safaristack/atlas/apps/api/internal/platform/logging"
 	"github.com/safaristack/atlas/apps/api/internal/platform/telemetry"
+	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
 var version = "dev"
@@ -95,7 +96,13 @@ func run() error {
 		approvals.NewNotificationsAdapter(notificationService), logger)
 	sweeper := approvals.NewSweeper(approvalService, cfg.ApprovalSweepInterval, cfg.ApprovalSweepBatch, logger)
 
-	// Run the dispatcher, the expiry sweeper and the heartbeat side by side;
+	// The overdue-work escalation ladder is a second time-driven job (§3.2,
+	// §5.8): it raises escalations for overdue tasks and resolves the ones whose
+	// task is no longer late.
+	workService := work.NewService(work.NewPGStore(pool), nil, audit.NewWriter(pool), logger)
+	workSweeper := work.NewSweeper(workService, cfg.WorkSweepInterval, cfg.WorkSweepBatch, logger)
+
+	// Run the dispatcher, the two sweepers and the heartbeat side by side;
 	// whichever ends first (a fatal engine error, or a shutdown signal) ends the
 	// process.
 	dispatchErr := make(chan error, 1)
@@ -104,6 +111,9 @@ func run() error {
 	sweepErr := make(chan error, 1)
 	go func() { sweepErr <- sweeper.Run(ctx) }()
 
+	workSweepErr := make(chan error, 1)
+	go func() { workSweepErr <- workSweeper.Run(ctx) }()
+
 	heartbeatErr := make(chan error, 1)
 	go func() { heartbeatErr <- loop(ctx, logger, pool) }()
 
@@ -111,6 +121,8 @@ func run() error {
 	case err := <-dispatchErr:
 		return err
 	case err := <-sweepErr:
+		return err
+	case err := <-workSweepErr:
 		return err
 	case err := <-heartbeatErr:
 		return err

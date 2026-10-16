@@ -69,6 +69,19 @@ type Store interface {
 	ListAbsences(ctx context.Context, q ListAbsencesQuery, limit int, before *Cursor) ([]Absence, error)
 	OverlappingAbsence(ctx context.Context, personID uuid.UUID, from, to time.Time) (bool, error)
 	UpdateAbsence(ctx context.Context, a Absence, expectedVersion int, ev *outbox.Event) (Absence, error)
+
+	// Escalations.
+	GetEscalation(ctx context.Context, id uuid.UUID) (*Escalation, error)
+	ListEscalations(ctx context.Context, q ListEscalationsQuery, limit int, before *Cursor) ([]Escalation, error)
+	ResolveEscalation(ctx context.Context, id, resolvedBy uuid.UUID, ev *outbox.Event) (Escalation, error)
+	// SweepOverdueTasks claims a batch of overdue tasks that have not already
+	// been escalated for their current deadline, raises one escalation per task
+	// and writes the events, all in one transaction (FOR UPDATE SKIP LOCKED) so
+	// a second worker skips them.
+	SweepOverdueTasks(ctx context.Context, limit int, build func(t OverdueTask, esc Escalation) ([]outbox.Event, error)) ([]Escalation, error)
+	// ResolveStaleEscalations resolves open escalations whose task is no longer
+	// overdue (done, cancelled, or due again), writing each event in-tx.
+	ResolveStaleEscalations(ctx context.Context, limit int, build func(e Escalation) (outbox.Event, error)) ([]Escalation, error)
 }
 
 // PGStore implements Store over Postgres.
@@ -1108,4 +1121,270 @@ func (s *PGStore) UpdateAbsence(ctx context.Context, a Absence, expectedVersion 
 		return Absence{}, fmt.Errorf("work: commit: %w", err)
 	}
 	return updated, nil
+}
+
+// ── escalations ─────────────────────────────────────────────────────────────
+
+const escalationCols = `id, entity_type, entity_id, project_id, level, status,
+	COALESCE(reason,''), assignee_person_id, raised_by_person_id, resolved_by_person_id,
+	resolved_at, version, created_at, updated_at`
+
+func scanEscalation(row rowScanner) (Escalation, error) {
+	var e Escalation
+	var status string
+	if err := row.Scan(&e.ID, &e.EntityType, &e.EntityID, &e.ProjectID, &e.Level, &status,
+		&e.Reason, &e.AssigneeID, &e.RaisedBy, &e.ResolvedBy, &e.ResolvedAt,
+		&e.Version, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		return e, err
+	}
+	e.Status = EscalationStatus(status)
+	return e, nil
+}
+
+func (s *PGStore) GetEscalation(ctx context.Context, id uuid.UUID) (*Escalation, error) {
+	e, err := scanEscalation(s.db.QueryRow(ctx, `SELECT `+escalationCols+` FROM work.escalations WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("work: get escalation: %w", err)
+	}
+	return &e, nil
+}
+
+func (s *PGStore) ListEscalations(ctx context.Context, q ListEscalationsQuery, limit int, before *Cursor) ([]Escalation, error) {
+	where := make([]string, 0, 5)
+	args := make([]any, 0, 6)
+	add := func(clause string, v any) {
+		args = append(args, v)
+		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	if q.EntityType != "" {
+		add("entity_type = $%d", q.EntityType)
+	}
+	if q.EntityID != nil {
+		add("entity_id = $%d", *q.EntityID)
+	}
+	if q.ProjectID != nil {
+		add("project_id = $%d", *q.ProjectID)
+	}
+	if q.Status != "" {
+		add("status = $%d", string(q.Status))
+	}
+	if before != nil {
+		args = append(args, before.At.UTC(), before.ID)
+		where = append(where, fmt.Sprintf("(created_at, id) < ($%d, $%d)", len(args)-1, len(args)))
+	}
+	args = append(args, limit)
+
+	sql := `SELECT ` + escalationCols + ` FROM work.escalations`
+	if len(where) > 0 {
+		sql += " WHERE " + strings.Join(where, " AND ")
+	}
+	sql += fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT $%d", len(args))
+
+	rows, err := s.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("work: list escalations: %w", err)
+	}
+	defer rows.Close()
+	out := make([]Escalation, 0, 8)
+	for rows.Next() {
+		e, err := scanEscalation(rows)
+		if err != nil {
+			return nil, fmt.Errorf("work: scan escalation: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ResolveEscalation closes an open escalation on behalf of a person. Resolving
+// an escalation that is already resolved is a conflict, not a not-found.
+func (s *PGStore) ResolveEscalation(ctx context.Context, id, resolvedBy uuid.UUID, ev *outbox.Event) (Escalation, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return Escalation{}, fmt.Errorf("work: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	updated, err := scanEscalation(tx.QueryRow(ctx, `
+		UPDATE work.escalations
+		   SET status = 'resolved', resolved_by_person_id = $2, resolved_at = now(),
+		       version = version + 1
+		 WHERE id = $1 AND status = 'open'
+		RETURNING `+escalationCols,
+		id, resolvedBy))
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Distinguish "missing" from "already resolved".
+		if _, gerr := s.GetEscalation(ctx, id); gerr == nil {
+			return Escalation{}, fmt.Errorf("%w: escalation %s is already resolved", ErrConflict, id)
+		}
+		return Escalation{}, fmt.Errorf("%w: escalation %s", ErrNotFound, id)
+	}
+	if err != nil {
+		return Escalation{}, fmt.Errorf("work: resolve escalation: %w", err)
+	}
+	if ev != nil {
+		if _, err := outbox.Write(ctx, tx, *ev); err != nil {
+			return Escalation{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Escalation{}, fmt.Errorf("work: commit: %w", err)
+	}
+	return updated, nil
+}
+
+// SweepOverdueTasks claims a batch of overdue tasks that have not already been
+// escalated for their current deadline, raises one escalation per task and
+// writes the caller's events — all in one transaction. The claim holds FOR
+// UPDATE SKIP LOCKED on the task rows until the transaction commits, so two
+// workers take disjoint, deterministic slices (oldest due first) and cannot
+// raise the same escalation twice; the partial unique index on open escalations
+// is the backstop.
+//
+// "Current deadline" is what scopes an overdue episode: once an escalation has
+// been raised at or after a task's due_at, that episode is closed and the sweep
+// will not nag again unless the deadline is pushed out and passes afresh.
+func (s *PGStore) SweepOverdueTasks(ctx context.Context, limit int, build func(t OverdueTask, esc Escalation) ([]outbox.Event, error)) ([]Escalation, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("work: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, `
+		SELECT t.id, t.project_id, t.title, t.assignee_person_id, p.owner_person_id, t.due_at
+		  FROM work.tasks t
+		  JOIN work.projects p ON p.id = t.project_id
+		 WHERE t.status NOT IN ('done','cancelled')
+		   AND t.due_at IS NOT NULL AND t.due_at < now()
+		   AND NOT EXISTS (
+		         SELECT 1 FROM work.escalations e
+		          WHERE e.entity_type = 'task' AND e.entity_id = t.id
+		            AND e.created_at >= t.due_at)
+		 ORDER BY t.due_at
+		 LIMIT $1
+		   FOR UPDATE OF t SKIP LOCKED`,
+		limit)
+	if err != nil {
+		return nil, fmt.Errorf("work: claim overdue tasks: %w", err)
+	}
+
+	claimed := make([]OverdueTask, 0, limit)
+	for rows.Next() {
+		var t OverdueTask
+		if err := rows.Scan(&t.ID, &t.ProjectID, &t.Title, &t.AssigneeID, &t.OwnerID, &t.DueAt); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("work: scan overdue task: %w", err)
+		}
+		claimed = append(claimed, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+
+	now := time.Now().UTC()
+	out := make([]Escalation, 0, len(claimed))
+	for _, t := range claimed {
+		id, err := uuid.NewV7()
+		if err != nil {
+			return nil, fmt.Errorf("work: new escalation id: %w", err)
+		}
+		projectID := t.ProjectID
+		esc, err := scanEscalation(tx.QueryRow(ctx, `
+			INSERT INTO work.escalations (
+				id, entity_type, entity_id, project_id, level, status, reason,
+				assignee_person_id, version, created_at, updated_at)
+			VALUES ($1,'task',$2,$3,1,'open',$4,$5,1,$6,$6)
+			RETURNING `+escalationCols,
+			id, t.ID, &projectID, fmt.Sprintf("task overdue since %s", t.DueAt.UTC().Format(time.RFC3339)),
+			t.OwnerID, now))
+		if err != nil {
+			return nil, fmt.Errorf("work: raise escalation: %w", err)
+		}
+		evs, err := build(t, esc)
+		if err != nil {
+			return nil, err
+		}
+		for _, ev := range evs {
+			if _, err := outbox.Write(ctx, tx, ev); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, esc)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("work: commit: %w", err)
+	}
+	return out, nil
+}
+
+// ResolveStaleEscalations closes open escalations whose task is no longer
+// overdue (done, cancelled, or given a future deadline again), writing each
+// event in the same transaction. Resolutions are reported to the caller so the
+// service can audit them.
+func (s *PGStore) ResolveStaleEscalations(ctx context.Context, limit int, build func(e Escalation) (outbox.Event, error)) ([]Escalation, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("work: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, `
+		UPDATE work.escalations e
+		   SET status = 'resolved', resolved_at = now(), version = version + 1
+		 WHERE e.id IN (
+		       SELECT e2.id
+		         FROM work.escalations e2
+		         JOIN work.tasks t ON t.id = e2.entity_id
+		        WHERE e2.entity_type = 'task' AND e2.status = 'open'
+		          AND (t.status IN ('done','cancelled') OR t.due_at IS NULL OR t.due_at >= now())
+		        ORDER BY e2.created_at
+		        LIMIT $1
+		          FOR UPDATE OF e2 SKIP LOCKED)
+		RETURNING `+escalationCols,
+		limit)
+	if err != nil {
+		return nil, fmt.Errorf("work: resolve stale escalations: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]Escalation, 0, limit)
+	for rows.Next() {
+		e, err := scanEscalation(rows)
+		if err != nil {
+			return nil, fmt.Errorf("work: scan escalation: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+
+	// Build and write the events only after the result set is drained: pgx does
+	// not allow another statement on the connection while rows are open.
+	for _, e := range out {
+		ev, err := build(e)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := outbox.Write(ctx, tx, ev); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("work: commit: %w", err)
+	}
+	return out, nil
 }

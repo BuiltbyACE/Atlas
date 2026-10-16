@@ -17,6 +17,7 @@ const (
 	TypeTaskAssignedV1         = "work.task.assigned.v1"
 	TypeTaskBlockedV1          = "work.task.blocked.v1"
 	TypeTaskUnblockedV1        = "work.task.unblocked.v1"
+	TypeTaskOverdueV1          = "work.task.overdue.v1"
 	TypeEvidenceAddedV1        = "work.evidence.added.v1"
 	TypeDailyReportSubmittedV1 = "work.daily_report.submitted.v1"
 	TypeAbsenceRequestedV1     = "work.absence.requested.v1"
@@ -102,6 +103,18 @@ type TaskUnblockedPayload struct {
 	ResolvedAt time.Time `json:"resolved_at"`
 }
 
+// TaskOverduePayload is emitted the first time a task passes its deadline.
+type TaskOverduePayload struct {
+	TaskID       uuid.UUID  `json:"task_id"`
+	ProjectID    uuid.UUID  `json:"project_id"`
+	Title        string     `json:"title"`
+	DueAt        time.Time  `json:"due_at"`
+	AssigneeID   *uuid.UUID `json:"assignee_person_id,omitempty"`
+	EscalationID uuid.UUID  `json:"escalation_id"`
+	Level        int        `json:"level"`
+	OverdueAt    time.Time  `json:"overdue_at"`
+}
+
 // NewProjectCreated builds a work.project.created.v1 event.
 func NewProjectCreated(actorID *uuid.UUID, p ProjectRef) (Event, error) {
 	return buildEvent(TypeProjectCreatedV1, AggregateProject, p.ID, actorID, nil, ProjectCreatedPayload{
@@ -181,6 +194,31 @@ func NewTaskUnblocked(actorID *uuid.UUID, taskID, projectID, blockerID uuid.UUID
 		BlockerID:  blockerID,
 		ResolvedBy: resolvedBy,
 		ResolvedAt: time.Now().UTC(),
+	})
+}
+
+// TaskOverdueRef is the minimal view the overdue event builder needs.
+type TaskOverdueRef struct {
+	ID           uuid.UUID
+	ProjectID    uuid.UUID
+	Title        string
+	DueAt        time.Time
+	AssigneeID   *uuid.UUID
+	EscalationID uuid.UUID
+	Level        int
+}
+
+// NewTaskOverdue builds a work.task.overdue.v1 event.
+func NewTaskOverdue(actorID *uuid.UUID, t TaskOverdueRef) (Event, error) {
+	return buildEvent(TypeTaskOverdueV1, AggregateTask, t.ID, actorID, nil, TaskOverduePayload{
+		TaskID:       t.ID,
+		ProjectID:    t.ProjectID,
+		Title:        t.Title,
+		DueAt:        t.DueAt,
+		AssigneeID:   t.AssigneeID,
+		EscalationID: t.EscalationID,
+		Level:        t.Level,
+		OverdueAt:    time.Now().UTC(),
 	})
 }
 

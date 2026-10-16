@@ -21,6 +21,7 @@ const (
 	EntityEvidence    = "work.evidence"
 	EntityDailyReport = "work.daily_report"
 	EntityAbsence     = "work.absence"
+	EntityEscalation  = "work.escalation"
 )
 
 // Service coordinates work orchestration: validation, state transitions,
@@ -652,13 +653,19 @@ func taskSnapshot(t Task) map[string]any {
 }
 
 func (s *Service) writeAudit(ctx context.Context, actor uuid.UUID, action, entityType string, entityID uuid.UUID, before, after any) {
+	s.writeAuditAs(ctx, audit.ActorUser, actor.String(), action, entityType, entityID, before, after)
+}
+
+// writeAuditAs is writeAudit with an explicit actor type, so system sweeps
+// (no person involved) are recorded as the system rather than a person.
+func (s *Service) writeAuditAs(ctx context.Context, actorType, actorID, action, entityType string, entityID uuid.UUID, before, after any) {
 	if s.audit == nil {
 		return
 	}
 	id := entityID
 	if err := s.audit.Write(ctx, nil, audit.Event{
-		ActorType:  audit.ActorUser,
-		ActorID:    actor.String(),
+		ActorType:  actorType,
+		ActorID:    actorID,
 		Action:     action,
 		EntityType: entityType,
 		EntityID:   &id,

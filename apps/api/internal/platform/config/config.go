@@ -94,6 +94,12 @@ type Config struct {
 	ApprovalSweepInterval time.Duration
 	ApprovalSweepBatch    int
 
+	// ── Work escalations (§3.2, §5.8) ────────────────────────────
+	// Overdue tasks are escalated by atlas-worker on a poll; both values are
+	// configuration (§2.10), not code.
+	WorkSweepInterval time.Duration
+	WorkSweepBatch    int
+
 	// ── Files / object storage (§6.5) ────────────────────────────
 	// Evidence and documents live in an S3-compatible bucket (Cloudflare R2 in
 	// staging and production; SeaweedFS or R2 locally). Go issues pre-signed
@@ -154,6 +160,9 @@ func Load() (*Config, error) {
 
 		ApprovalSweepInterval: duration("ATLAS_APPROVAL_SWEEP_INTERVAL", time.Minute),
 		ApprovalSweepBatch:    integer("ATLAS_APPROVAL_SWEEP_BATCH", 100),
+
+		WorkSweepInterval: duration("ATLAS_WORK_SWEEP_INTERVAL", time.Minute),
+		WorkSweepBatch:    integer("ATLAS_WORK_SWEEP_BATCH", 100),
 
 		S3Endpoint:      get("S3_ENDPOINT", ""),
 		S3Region:        get("S3_REGION", "auto"),
@@ -228,6 +237,13 @@ func (c *Config) Validate() error {
 	}
 	if c.ApprovalSweepBatch <= 0 {
 		return fmt.Errorf("ATLAS_APPROVAL_SWEEP_BATCH must be positive")
+	}
+
+	if c.WorkSweepInterval <= 0 {
+		return fmt.Errorf("ATLAS_WORK_SWEEP_INTERVAL must be positive")
+	}
+	if c.WorkSweepBatch <= 0 {
+		return fmt.Errorf("ATLAS_WORK_SWEEP_BATCH must be positive")
 	}
 
 	if c.FileUploadTTL <= 0 {

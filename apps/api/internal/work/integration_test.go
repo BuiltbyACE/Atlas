@@ -462,3 +462,129 @@ func TestAbsenceLifecycle(t *testing.T) {
 		t.Fatalf("ListAbsences = %d, err = %v, want 2", len(listed), err)
 	}
 }
+
+// TestEscalationSweep covers the overdue ladder end to end: an overdue task is
+// escalated once (assigned to the project owner), a manual resolve is honoured
+// and not re-raised in the same episode, and the outbox carries both the overdue
+// and the escalation events.
+func TestEscalationSweep(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	svc := NewService(NewPGStore(pool), nil, nil, nil)
+	owner := mustPerson(t, pool)
+	assignee := mustPerson(t, pool)
+
+	project, err := svc.CreateProject(ctx, owner, ProjectInput{Name: "Escalation test", OwnerPersonID: &owner})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM work.projects WHERE id = $1`, project.ID)
+	})
+
+	past := time.Now().UTC().Add(-72 * time.Hour)
+	task, err := svc.CreateTask(ctx, owner, project.ID, TaskInput{Title: "Late", DueAt: &past, AssigneePersonID: &assignee})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	raised, resolved, err := svc.Sweep(ctx, 10)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if raised != 1 || resolved != 0 {
+		t.Fatalf("sweep raised=%d resolved=%d, want 1/0", raised, resolved)
+	}
+
+	opens, err := svc.ListEscalations(ctx, ListEscalationsQuery{EntityType: "task", EntityID: &task.ID, Status: EscalationOpen}, 10, nil)
+	if err != nil || len(opens) != 1 {
+		t.Fatalf("open escalations = %d, err = %v, want 1", len(opens), err)
+	}
+	esc := opens[0]
+	if esc.Level != 1 || esc.AssigneeID == nil || *esc.AssigneeID != owner {
+		t.Fatalf("escalation = %+v, want level 1 assigned to owner %s", esc, owner)
+	}
+
+	// Both events were written for the escalation.
+	var events int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM outbox.events
+		 WHERE aggregate_id IN ($1, $2)
+		   AND type IN ('work.task.overdue.v1','core.escalation.raised.v1')`,
+		task.ID, esc.ID).Scan(&events); err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	if events != 2 {
+		t.Fatalf("events = %d, want work.task.overdue.v1 and core.escalation.raised.v1", events)
+	}
+
+	// A second sweep does not re-raise the same episode.
+	if raised, _, err := svc.Sweep(ctx, 10); err != nil || raised != 0 {
+		t.Fatalf("second sweep raised=%d err=%v, want 0", raised, err)
+	}
+
+	// A human can resolve it; a manual resolution is honoured by later sweeps.
+	resolvedEsc, err := svc.ResolveEscalation(ctx, assignee, esc.ID)
+	if err != nil {
+		t.Fatalf("ResolveEscalation: %v", err)
+	}
+	if resolvedEsc.Status != EscalationResolved || resolvedEsc.ResolvedBy == nil || *resolvedEsc.ResolvedBy != assignee {
+		t.Fatalf("resolved = %+v, want resolved by %s", resolvedEsc, assignee)
+	}
+	if _, err := svc.ResolveEscalation(ctx, assignee, esc.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("double resolve: err = %v, want ErrConflict", err)
+	}
+	if raised, _, err := svc.Sweep(ctx, 10); err != nil || raised != 0 {
+		t.Fatalf("post-resolve sweep raised=%d err=%v, want 0", raised, err)
+	}
+}
+
+// TestEscalationResolvesWhenTaskCompletes covers the automatic resolution: once
+// the overdue task is finished the sweep closes the escalation and emits
+// core.escalation.resolved.v1.
+func TestEscalationResolvesWhenTaskCompletes(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	svc := NewService(NewPGStore(pool), nil, nil, nil)
+	owner := mustPerson(t, pool)
+
+	project, err := svc.CreateProject(ctx, owner, ProjectInput{Name: "Resolve test", OwnerPersonID: &owner})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM work.projects WHERE id = $1`, project.ID)
+	})
+
+	past := time.Now().UTC().Add(-48 * time.Hour)
+	task, err := svc.CreateTask(ctx, owner, project.ID, TaskInput{Title: "Late", DueAt: &past})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if raised, _, err := svc.Sweep(ctx, 10); err != nil || raised != 1 {
+		t.Fatalf("raise sweep raised=%d err=%v, want 1", raised, err)
+	}
+
+	if _, err := svc.UpdateTask(ctx, owner, task.ID, task.Version, TaskInput{Title: "Late", Status: TaskInProgress}); err != nil {
+		t.Fatalf("UpdateTask in progress: %v", err)
+	}
+	progress, err := svc.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if _, err := svc.UpdateTask(ctx, owner, task.ID, progress.Version, TaskInput{Title: "Late", Status: TaskDone}); err != nil {
+		t.Fatalf("UpdateTask done: %v", err)
+	}
+
+	raised, resolved, err := svc.Sweep(ctx, 10)
+	if err != nil {
+		t.Fatalf("resolve sweep: %v", err)
+	}
+	if raised != 0 || resolved != 1 {
+		t.Fatalf("sweep raised=%d resolved=%d, want 0/1", raised, resolved)
+	}
+	opens, err := svc.ListEscalations(ctx, ListEscalationsQuery{EntityType: "task", EntityID: &task.ID, Status: EscalationOpen}, 10, nil)
+	if err != nil || len(opens) != 0 {
+		t.Fatalf("open escalations = %d, err = %v, want 0", len(opens), err)
+	}
+}

@@ -40,6 +40,10 @@ func (s *Service) Summary(ctx context.Context) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
+	work, err := s.store.Work(ctx, now)
+	if err != nil {
+		return Summary{}, err
+	}
 	recent, err := s.auditStore.List(ctx, audit.Query{}, defaultAuditHighlights, nil)
 	if err != nil {
 		return Summary{}, err
@@ -52,6 +56,7 @@ func (s *Service) Summary(ctx context.Context) (Summary, error) {
 		GeneratedAt: now,
 		People:      peopleSummary(people),
 		Approvals:   approvals,
+		Work:        work,
 		RecentAudit: highlights(recent),
 	}, nil
 }

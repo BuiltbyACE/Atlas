@@ -36,6 +36,14 @@ type ApprovalsSummary struct {
 	PendingByRole map[string]int `json:"pending_by_role"`
 }
 
+// WorkSummary is the overdue-work tile (§3.2, §5.8): open tasks past their
+// deadline, and the escalations the worker sweep has raised for them and not
+// yet resolved.
+type WorkSummary struct {
+	Overdue         int `json:"overdue"`
+	OpenEscalations int `json:"open_escalations"`
+}
+
 // AuditHighlight is one recent audit event, trimmed to what a dashboard row
 // shows. The full before/after snapshots stay in the audit views (§6.3).
 type AuditHighlight struct {
@@ -53,6 +61,7 @@ type Summary struct {
 	GeneratedAt time.Time        `json:"generated_at"`
 	People      PeopleSummary    `json:"people"`
 	Approvals   ApprovalsSummary `json:"approvals"`
+	Work        WorkSummary      `json:"work"`
 	RecentAudit []AuditHighlight `json:"recent_audit"`
 }
 
@@ -63,6 +72,8 @@ type Store interface {
 	// Approvals counts pending, escalated and overdue approvals and breaks the
 	// pending ones down by approver role, as at now.
 	Approvals(ctx context.Context, now time.Time) (ApprovalsSummary, error)
+	// Work counts overdue tasks and open escalations, as at now.
+	Work(ctx context.Context, now time.Time) (WorkSummary, error)
 }
 
 // PGStore implements Store over Postgres.
@@ -137,6 +148,24 @@ func (s *PGStore) Approvals(ctx context.Context, now time.Time) (ApprovalsSummar
 	}
 	if err := rows.Err(); err != nil {
 		return ApprovalsSummary{}, fmt.Errorf("dashboard: role rows: %w", err)
+	}
+	return sum, nil
+}
+
+// Work counts the overdue-work tile as at now: open tasks past their deadline
+// and the open escalations raised for overdue work.
+func (s *PGStore) Work(ctx context.Context, now time.Time) (WorkSummary, error) {
+	var sum WorkSummary
+	err := s.db.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM work.tasks
+			  WHERE status NOT IN ('done','cancelled')
+			    AND due_at IS NOT NULL AND due_at < $1) AS overdue,
+			(SELECT count(*) FROM work.escalations
+			  WHERE status = 'open')                    AS open_escalations`, now,
+	).Scan(&sum.Overdue, &sum.OpenEscalations)
+	if err != nil {
+		return WorkSummary{}, fmt.Errorf("dashboard: work: %w", err)
 	}
 	return sum, nil
 }
