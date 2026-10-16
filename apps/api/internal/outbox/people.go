@@ -16,12 +16,14 @@ const (
 	TypeLeaveApprovedV1        = "people.leave.approved.v1"
 	TypeLeaveDeclinedV1        = "people.leave.declined.v1"
 	TypeLeaveCancelledV1       = "people.leave.cancelled.v1"
+	TypePersonOffboardedV1     = "people.person.offboarded.v1"
 )
 
 // Aggregate types for people events.
 const (
 	AggregateDailyReport  = "daily_report"
 	AggregateLeaveRequest = "leave_request"
+	AggregatePerson       = "person"
 )
 
 // DailyReportSubmittedPayload is emitted when a daily report is submitted (§7.4).
@@ -101,5 +103,29 @@ func NewLeaveCancelled(actorID *uuid.UUID, leaveID, personID uuid.UUID, cancelle
 		By:             cancelledBy,
 		Reason:         reason,
 		Occurred:       time.Now().UTC(),
+	})
+}
+
+// PersonOffboardedPayload is emitted when a person is off-boarded (§7.4, §8.5):
+// their account is deactivated and sessions and role grants revoked.
+type PersonOffboardedPayload struct {
+	PersonID uuid.UUID `json:"person_id"`
+	// PersonUserID is the off-boarded person's account id, resolved by the
+	// producer so a consumer can close the account's realtime channels (§7.5);
+	// nil when the person never had an account.
+	PersonUserID *uuid.UUID `json:"person_user_id,omitempty"`
+	EndDate      string     `json:"end_date,omitempty"`
+	Reason       string     `json:"reason,omitempty"`
+	OccurredAt   time.Time  `json:"occurred_at"`
+}
+
+// NewPersonOffboarded builds a people.person.offboarded.v1 event.
+func NewPersonOffboarded(actorID *uuid.UUID, personID uuid.UUID, personUserID *uuid.UUID, endDate, reason string) (Event, error) {
+	return buildEvent(TypePersonOffboardedV1, AggregatePerson, personID, actorID, nil, PersonOffboardedPayload{
+		PersonID:     personID,
+		PersonUserID: personUserID,
+		EndDate:      endDate,
+		Reason:       reason,
+		OccurredAt:   time.Now().UTC(),
 	})
 }

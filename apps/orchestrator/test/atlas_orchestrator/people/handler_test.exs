@@ -70,6 +70,21 @@ defmodule AtlasOrchestrator.People.HandlerTest do
     refute_receive %Phoenix.Socket.Broadcast{topic: "user:" <> _}, 50
   end
 
+  test "an offboarded person only invalidates the dashboard" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "exec:dashboard")
+
+    assert :ok =
+             Handler.handle_event(
+               event("people.person.offboarded.v1", %{
+                 "person_id" => @person,
+                 "person_user_id" => @person
+               })
+             )
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+    refute_receive %Phoenix.Socket.Broadcast{topic: "user:" <> _}, 50
+  end
+
   test "an unknown people event type is ignored, not failed" do
     assert :ok = Handler.handle_event(event("people.something.happened.v1", %{}))
     assert :ok = Handler.handle_event(%{})

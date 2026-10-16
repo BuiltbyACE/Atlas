@@ -35,7 +35,8 @@ defmodule AtlasOrchestrator.People.Handler do
     "people.leave.requested.v1" => {"leave_request", "leave_request_id", nil},
     "people.leave.approved.v1" => {"leave_request", "leave_request_id", "person_user_id"},
     "people.leave.declined.v1" => {"leave_request", "leave_request_id", "person_user_id"},
-    "people.leave.cancelled.v1" => {"leave_request", "leave_request_id", "person_user_id"}
+    "people.leave.cancelled.v1" => {"leave_request", "leave_request_id", "person_user_id"},
+    "people.person.offboarded.v1" => {"person", "person_id", nil}
   }
 
   # uuid.UUID is an array, so Go cannot omit an unset one: it arrives as the nil

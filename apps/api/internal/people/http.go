@@ -89,6 +89,46 @@ type leaveDecisionReq struct {
 	Reason   string `json:"reason"`
 }
 
+type offboardReq struct {
+	Reason         string `json:"reason"`
+	LastWorkingDay string `json:"last_working_day"`
+}
+
+// availabilityView is the day's roster (GET /api/v1/people/availability).
+type availabilityView struct {
+	Date  string             `json:"date"`
+	Items []availabilityItem `json:"items"`
+}
+
+type availabilityItem struct {
+	PersonID       string             `json:"person_id"`
+	FullName       string             `json:"full_name"`
+	EmploymentType string             `json:"employment_type"`
+	DepartmentID   string             `json:"department_id,omitempty"`
+	Status         string             `json:"status"`
+	Available      bool               `json:"available"`
+	Leave          *availabilityLeave `json:"leave,omitempty"`
+}
+
+type availabilityLeave struct {
+	ID       string `json:"id"`
+	Type     string `json:"leave_type"`
+	FromDate string `json:"from_date"`
+	ToDate   string `json:"to_date"`
+}
+
+// offboardView is the result of POST /api/v1/people/{id}/offboard.
+type offboardView struct {
+	PersonID        string `json:"person_id"`
+	Status          string `json:"status"`
+	EndDate         string `json:"end_date,omitempty"`
+	Version         int    `json:"version"`
+	AccountID       string `json:"account_id,omitempty"`
+	AccountStatus   string `json:"account_status,omitempty"`
+	SessionsRevoked int    `json:"sessions_revoked"`
+	RolesRevoked    int    `json:"roles_revoked"`
+}
+
 // ── daily reports ───────────────────────────────────────────────────────────
 
 // SubmitDailyReport handles POST /api/v1/daily-reports.
@@ -362,6 +402,63 @@ func (h *Handler) CancelLeaveRequest(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, leaveRequestOf(l))
 }
 
+// ── availability ────────────────────────────────────────────────────────────
+
+// GetAvailability handles GET /api/v1/people/availability?date=YYYY-MM-DD: the
+// roster for a day, with the approved leave that covers it. A missing date means
+// today.
+func (h *Handler) GetAvailability(w http.ResponseWriter, r *http.Request) {
+	day := dateOnly(time.Now().UTC())
+	if raw := strings.TrimSpace(r.URL.Query().Get("date")); raw != "" {
+		parsed, err := requireDate(raw, "date")
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		day = dateOnly(parsed)
+	}
+	entries, err := h.service.Availability(r.Context(), day)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, availabilityOf(day, entries))
+}
+
+// OffboardPerson handles POST /api/v1/people/{id}/offboard. The body is
+// optional: {"reason": "...", "last_working_day": "YYYY-MM-DD"}.
+func (h *Handler) OffboardPerson(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "person")
+	if !ok {
+		return
+	}
+	var req offboardReq
+	if r.ContentLength != 0 {
+		if err := httpx.DecodeJSON(w, r, &req); err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+	}
+	lastDay, err := optDate(req.LastWorkingDay)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	res, err := h.service.OffboardPerson(r.Context(), principal.PersonID, id, OffboardInput{
+		Reason:         req.Reason,
+		LastWorkingDay: lastDay,
+	})
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, offboardViewOf(res))
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (*authz.Principal, bool) {
@@ -480,6 +577,50 @@ func leaveRequestOf(l LeaveRequest) leaveRequestView {
 	}
 	if l.ApproverID != nil {
 		v.ApproverID = l.ApproverID.String()
+	}
+	return v
+}
+
+func availabilityOf(day time.Time, entries []AvailabilityEntry) availabilityView {
+	v := availabilityView{Date: dateString(day), Items: make([]availabilityItem, 0, len(entries))}
+	for _, e := range entries {
+		item := availabilityItem{
+			PersonID:       e.Person.ID.String(),
+			FullName:       e.Person.FullName,
+			EmploymentType: e.Person.EmploymentType,
+			Status:         string(e.Person.Status),
+			Available:      e.Leave == nil,
+		}
+		if e.Person.DepartmentID != nil {
+			item.DepartmentID = e.Person.DepartmentID.String()
+		}
+		if e.Leave != nil {
+			item.Leave = &availabilityLeave{
+				ID:       e.Leave.ID.String(),
+				Type:     string(e.Leave.Type),
+				FromDate: dateString(e.Leave.FromDate),
+				ToDate:   dateString(e.Leave.ToDate),
+			}
+		}
+		v.Items = append(v.Items, item)
+	}
+	return v
+}
+
+func offboardViewOf(res OffboardResult) offboardView {
+	v := offboardView{
+		PersonID:        res.Person.ID.String(),
+		Status:          string(res.Person.Status),
+		Version:         res.Person.Version,
+		SessionsRevoked: res.SessionsRevoked,
+		RolesRevoked:    res.RolesRevoked,
+	}
+	if res.Person.EndDate != nil {
+		v.EndDate = dateString(*res.Person.EndDate)
+	}
+	if res.AccountID != nil {
+		v.AccountID = res.AccountID.String()
+		v.AccountStatus = res.AccountStatus
 	}
 	return v
 }

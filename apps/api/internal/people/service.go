@@ -14,6 +14,7 @@ import (
 const (
 	EntityDailyReport  = "people.daily_report"
 	EntityLeaveRequest = "people.leave_request"
+	EntityPerson       = "people.person"
 )
 
 // Service coordinates the people module: validation, state transitions,

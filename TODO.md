@@ -105,8 +105,10 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       (`UserSocket` `sub` = `core.user_accounts.id`, §7.5/§10.1). Contracts,
       handler maps and tests updated; `internal/identity` + a work producer
       integration test pin the bridge.
-- [ ] People §8.5 endpoints still missing: `GET /api/v1/people/availability?date=`
-      and `POST /api/v1/people/{id}/offboard`
+- [x] People §8.5 endpoints: `GET /api/v1/people/availability?date=` (today's
+      roster, default today) and `POST /api/v1/people/{id}/offboard` (exit +
+      deactivate account + revoke sessions/roles, one transaction; emits
+      `people.person.offboarded.v1`)
 - [ ] Frontend (after backend above is complete)
 - [ ] L2/L3 ladder timing + notification fan-out for escalations (blocked on D4)
 - [ ] Blueprint deviation still open: escalation timing is a Go worker sweep,
@@ -115,6 +117,5 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 
 Current status: Phase 1 (A-H) complete. Phase 2 backend (work, people,
 escalations, exec dashboard) is done, including the Elixir outbox wiring, the Go
-realtime join check, the static service credential, and account-addressed
-personal `user:{id}` topics. Next: the two remaining §8.5 people endpoints, then
-the frontend.
+realtime join check, the static service credential, account-addressed personal
+`user:{id}` topics, and the two remaining §8.5 people APIs. Next: the frontend.

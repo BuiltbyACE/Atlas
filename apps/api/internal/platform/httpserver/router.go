@@ -335,10 +335,10 @@ func registerWork(reg *routing.Registry, h *work.Handler) {
 }
 
 // registerPeople declares the people & accountability surface (§8.5): daily
-// reports and leave. Daily reports live at the top level per §8.5; leave is
-// nested under /people. Reads need people.daily_report.read / people.leave.read;
-// writes need the submit/request/manage permission. Every write carries the
-// version it read in If-Match (§6.6).
+// reports, leave, the availability roster and off-boarding. Daily reports live
+// at the top level per §8.5; the rest is nested under /people. Reads need
+// people.daily_report.read / people.leave.read / people.person.read; writes need
+// the submit/request/manage permission.
 func registerPeople(reg *routing.Registry, h *people.Handler) {
 	// Daily reports (one per person per day).
 	reg.Gated("people.daily_report.read", http.MethodGet, "/api/v1/daily-reports",
@@ -361,4 +361,10 @@ func registerPeople(reg *routing.Registry, h *people.Handler) {
 		"Cancel your leave request", h.CancelLeaveRequest)
 	reg.Gated("people.leave.manage", http.MethodPost, "/api/v1/people/leave-requests/{id}/decide",
 		"Approve or decline leave", h.DecideLeaveRequest)
+
+	// Availability and offboarding.
+	reg.Gated("people.person.read", http.MethodGet, "/api/v1/people/availability",
+		"See who is available on a date", h.GetAvailability)
+	reg.Gated("people.person.manage", http.MethodPost, "/api/v1/people/{id}/offboard",
+		"Offboard a person and revoke their access", h.OffboardPerson)
 }

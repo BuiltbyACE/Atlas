@@ -169,6 +169,53 @@ type ListLeaveRequestsQuery struct {
 	ToDate   *time.Time
 }
 
+// PersonStatus mirrors people.persons.status (§8.5). The people module does not
+// own person rows yet, but it reads them for the availability view.
+type PersonStatus string
+
+const (
+	PersonOnboarding PersonStatus = "onboarding"
+	PersonActive     PersonStatus = "active"
+	PersonOnLeave    PersonStatus = "on_leave"
+	PersonExited     PersonStatus = "exited"
+)
+
+// Person is the slice of people.persons the availability view reads (§8.5).
+type Person struct {
+	ID             uuid.UUID
+	FullName       string
+	EmploymentType string
+	DepartmentID   *uuid.UUID
+	Status         PersonStatus
+	EndDate        *time.Time
+	Version        int
+}
+
+// AvailabilityEntry is one person on a given day, with the approved leave (if
+// any) that covers that day.
+type AvailabilityEntry struct {
+	Person Person
+	Leave  *LeaveRequest
+}
+
+// OffboardInput is the body of POST /api/v1/people/{id}/offboard. Both fields
+// are optional: the last working day defaults to today and the reason is free
+// text kept in the audit trail.
+type OffboardInput struct {
+	Reason         string
+	LastWorkingDay *time.Time
+}
+
+// OffboardResult is the state after off-boarding: the exited person, the
+// deactivated account (if the person had one) and how much access was revoked.
+type OffboardResult struct {
+	Person          Person
+	AccountID       *uuid.UUID
+	AccountStatus   string
+	SessionsRevoked int
+	RolesRevoked    int
+}
+
 func trim(s string) string { return strings.TrimSpace(s) }
 
 // validateDailyReport normalises a daily-report payload. The report date is a

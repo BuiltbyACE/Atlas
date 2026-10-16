@@ -33,6 +33,11 @@ type Store interface {
 	ListLeaveRequests(ctx context.Context, q ListLeaveRequestsQuery, limit int, before *Cursor) ([]LeaveRequest, error)
 	OverlappingLeave(ctx context.Context, personID uuid.UUID, from, to time.Time) (bool, error)
 	UpdateLeaveRequest(ctx context.Context, l LeaveRequest, expectedVersion int, ev *outbox.Event) (LeaveRequest, error)
+
+	// Availability and off-boarding (§8.5).
+	ListPersons(ctx context.Context) ([]Person, error)
+	ListApprovedLeaveOn(ctx context.Context, date time.Time) ([]LeaveRequest, error)
+	OffboardPerson(ctx context.Context, personID uuid.UUID, endDate time.Time, ev *outbox.Event) (OffboardResult, error)
 }
 
 // PGStore implements Store over Postgres.
@@ -359,4 +364,131 @@ func (s *PGStore) UpdateLeaveRequest(ctx context.Context, l LeaveRequest, expect
 		return LeaveRequest{}, fmt.Errorf("people: commit: %w", err)
 	}
 	return updated, nil
+}
+
+// ── availability and off-boarding ───────────────────────────────────────────
+
+const personCols = `id, full_name, employment_type, department_id, status, end_date, version`
+
+func scanPerson(row rowScanner) (Person, error) {
+	var p Person
+	var status string
+	if err := row.Scan(&p.ID, &p.FullName, &p.EmploymentType, &p.DepartmentID,
+		&status, &p.EndDate, &p.Version); err != nil {
+		return p, err
+	}
+	p.Status = PersonStatus(status)
+	return p, nil
+}
+
+// ListPersons returns every non-exited person, name-ordered, for the day's
+// availability roster.
+func (s *PGStore) ListPersons(ctx context.Context) ([]Person, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT `+personCols+` FROM people.persons WHERE status <> 'exited' ORDER BY full_name, id`)
+	if err != nil {
+		return nil, fmt.Errorf("people: list persons: %w", err)
+	}
+	defer rows.Close()
+	out := make([]Person, 0, 16)
+	for rows.Next() {
+		p, err := scanPerson(rows)
+		if err != nil {
+			return nil, fmt.Errorf("people: scan person: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ListApprovedLeaveOn returns the approved leave covering a day. Overlapping
+// active leave is rejected when requested, so a person appears at most once.
+func (s *PGStore) ListApprovedLeaveOn(ctx context.Context, date time.Time) ([]LeaveRequest, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT `+leaveCols+` FROM people.leave_requests
+		 WHERE status = 'approved' AND from_date <= $1 AND to_date >= $1
+		 ORDER BY from_date, id`, dateOnly(date))
+	if err != nil {
+		return nil, fmt.Errorf("people: list approved leave on date: %w", err)
+	}
+	defer rows.Close()
+	out := make([]LeaveRequest, 0, 8)
+	for rows.Next() {
+		l, err := scanLeave(rows)
+		if err != nil {
+			return nil, fmt.Errorf("people: scan leave request: %w", err)
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// OffboardPerson marks a person exited in one transaction: it deactivates the
+// linked account and revokes the account's sessions and role grants immediately
+// (§8.5). An already-exited person is a conflict; an unknown person is not
+// found.
+func (s *PGStore) OffboardPerson(ctx context.Context, personID uuid.UUID, endDate time.Time, ev *outbox.Event) (OffboardResult, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return OffboardResult{}, fmt.Errorf("people: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	person, err := scanPerson(tx.QueryRow(ctx, `
+		UPDATE people.persons
+		   SET status = 'exited', end_date = $2, version = version + 1
+		 WHERE id = $1 AND status <> 'exited'
+		RETURNING `+personCols, personID, endDate))
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		var status string
+		switch err := tx.QueryRow(ctx, `SELECT status FROM people.persons WHERE id = $1`, personID).Scan(&status); {
+		case errors.Is(err, pgx.ErrNoRows):
+			return OffboardResult{}, fmt.Errorf("%w: person %s", ErrNotFound, personID)
+		case err != nil:
+			return OffboardResult{}, fmt.Errorf("people: read person status: %w", err)
+		}
+		return OffboardResult{}, fmt.Errorf("%w: person is already %s", ErrConflict, status)
+	case err != nil:
+		return OffboardResult{}, fmt.Errorf("people: offboard person: %w", err)
+	}
+
+	out := OffboardResult{Person: person}
+	var accountID uuid.UUID
+	switch err := tx.QueryRow(ctx, `SELECT id FROM core.user_accounts WHERE person_id = $1`, personID).Scan(&accountID); {
+	case errors.Is(err, pgx.ErrNoRows):
+		// No login to revoke; the person record is the whole offboarding.
+	case err != nil:
+		return OffboardResult{}, fmt.Errorf("people: read account: %w", err)
+	default:
+		if _, err := tx.Exec(ctx,
+			`UPDATE core.user_accounts SET status = 'deactivated' WHERE id = $1 AND status <> 'deactivated'`,
+			accountID); err != nil {
+			return OffboardResult{}, fmt.Errorf("people: deactivate account: %w", err)
+		}
+		sessions, err := tx.Exec(ctx,
+			`UPDATE core.sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, accountID)
+		if err != nil {
+			return OffboardResult{}, fmt.Errorf("people: revoke sessions: %w", err)
+		}
+		roles, err := tx.Exec(ctx,
+			`UPDATE core.role_grants SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, accountID)
+		if err != nil {
+			return OffboardResult{}, fmt.Errorf("people: revoke role grants: %w", err)
+		}
+		out.AccountID = &accountID
+		out.AccountStatus = "deactivated"
+		out.SessionsRevoked = int(sessions.RowsAffected())
+		out.RolesRevoked = int(roles.RowsAffected())
+	}
+
+	if ev != nil {
+		if _, err := outbox.Write(ctx, tx, *ev); err != nil {
+			return OffboardResult{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return OffboardResult{}, fmt.Errorf("people: commit: %w", err)
+	}
+	return out, nil
 }

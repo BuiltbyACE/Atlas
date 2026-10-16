@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/people"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/ed25519jwt"
 	"github.com/safaristack/atlas/apps/api/internal/platform/routing"
@@ -63,9 +64,11 @@ func testDeps(t *testing.T) Deps {
 		Logger:  logger,
 		Version: "test",
 		Auth:    testService(t),
-		// Mounting work ensures its routes are covered by the registry and
-		// permission-catalogue checks above. The store is never called here.
-		Work: work.NewHandler(work.NewService(work.NewPGStore(nil), nil, nil, logger), logger),
+		// Mounting work and people ensures their routes are covered by the
+		// registry and permission-catalogue checks above. The stores are never
+		// called here (there is no database).
+		Work:   work.NewHandler(work.NewService(work.NewPGStore(nil), nil, nil, logger), logger),
+		People: people.NewHandler(people.NewService(people.NewPGStore(nil), nil, logger), logger),
 	}
 }
 

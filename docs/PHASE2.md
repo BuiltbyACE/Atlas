@@ -52,7 +52,7 @@ tick an item only when its code, tests and migrations are in place.
 - [x] File availability checked through `work.FileResolver`, adapted from the
       files service in `cmd/atlas-api` (the work package does not import files)
 
-## 4. Daily reports + leave (`internal/people`) — done
+## 4. People module — daily reports, leave, availability, offboarding (`internal/people`) — done
 
 - [x] `internal/people` module (migration `00013` moves the tables home):
       daily reports: submit/list/get + `GET /api/v1/daily-reports/today`, one per
@@ -72,6 +72,14 @@ tick an item only when its code, tests and migrations are in place.
       `POST /api/v1/people/leave-requests/{id}/cancel`
 - [x] Permissions already catalogued (`people.daily_report.read/.submit`,
       `people.leave.read/.request/.manage`)
+- [x] Availability: `GET /api/v1/people/availability?date=` (defaults to today)
+      gated by `people.person.read` — every non-exited person with the approved
+      leave covering the day attached
+- [x] Offboarding: `POST /api/v1/people/{id}/offboard` gated by
+      `people.person.manage` — one transaction exits the person with a last
+      working day, deactivates the linked account and revokes its sessions and
+      role grants; emits `people.person.offboarded.v1`. The blueprint's
+      offboarding checklist and work handover are deferred (no table yet)
 
 ## 5. Overdue escalation ladder + worker
 
@@ -159,8 +167,14 @@ either a refinement or an open question, listed so the divergence is explicit.
   `work.daily_reports`/`work.absences` into `people` (`people.daily_reports`,
   `people.leave_requests`), the `internal/people` package owns them, and the
   events are emitted as `people.*`. Permission and event namespaces now agree.
-  Two §8.5 people endpoints are still to come (tracked in `TODO.md`):
-  `GET /api/v1/people/availability?date=` and `POST /api/v1/people/{id}/offboard`.
+  The two remaining §8.5 people APIs (`GET /api/v1/people/availability`,
+  `POST /api/v1/people/{id}/offboard`) are implemented too.
+- **Offboarding scope.** `POST /api/v1/people/{id}/offboard` covers the access
+  lifecycle — the person exits and their account's sessions and role grants are
+  revoked immediately (the account lifecycle, §7.1/§8.5). The blueprint's
+  `offboarding_checklist` entity has no table yet, so the checklist, asset
+  return and work handover are not modelled; they can be added without changing
+  this endpoint's contract.
 - **Approval events** (Phase 1) are finer-grained than §7.4's single
   `core.approval.decided.v1`: `core.approval.requested/approved/declined/
   escalated/cancelled/expired.v1`.
