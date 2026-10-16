@@ -2,20 +2,34 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   @moduledoc """
   Dispatches a consumed event to the code that reacts to it.
 
-  Phase 0 has exactly one handler: `core.system.hello.v1` is turned into a
-  realtime signal so the browser can see the event arrive (Appendix A). Real
-  workflow handlers arrive with the modules in later phases.
+  The router is a thin map from event type to handler:
+
+    * `core.system.hello.v1` — the Phase 0 smoke event (Appendix A);
+    * `core.notification.requested.v1` — push `notification.changed` to the
+      recipient's channel;
+    * `core.approval.*.v1` — push `approval.changed` to the dashboard and any
+      named approver/escalation target.
 
   Reacting means *signalling*, never writing business data (ADR-009): Go remains
   the authority, the orchestrator nudges.
   """
   require Logger
 
+  alias AtlasOrchestrator.Approvals.Handler, as: ApprovalsHandler
+  alias AtlasOrchestrator.Notifications.Handler, as: NotificationsHandler
   alias AtlasOrchestrator.Outbox.Event
 
   @doc "Handles one event. Unknown types are logged and ignored, not failed."
   @spec dispatch(Event.t()) :: :ok
   def dispatch(%Event{type: "core.system.hello.v1"} = event), do: handle_hello(event)
+
+  def dispatch(%Event{type: "core.notification.requested.v1"} = event) do
+    NotificationsHandler.handle_event(event)
+  end
+
+  def dispatch(%Event{type: "core.approval." <> _} = event) do
+    ApprovalsHandler.handle_event(event)
+  end
 
   def dispatch(%Event{type: type}) do
     Logger.debug("no handler registered", type: type)

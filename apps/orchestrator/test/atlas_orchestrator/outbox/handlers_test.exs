@@ -30,6 +30,44 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "signal"}
   end
 
+  test "a notification.requested event is routed to the notifications handler" do
+    recipient = "01999999-9999-7999-9999-999999999997"
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "user:#{recipient}")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "core.notification.requested.v1",
+      seq: 2,
+      payload: %{
+        "recipient_person_id" => recipient,
+        "notification_ids" => [Ecto.UUID.generate()],
+        "template" => "core.approval.requested",
+        "critical" => false,
+        "requested_at" => "2026-10-16T10:00:00Z"
+      },
+      occurred_at: ~U[2026-10-16 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: topic, event: "notification.changed"}
+    assert topic == "user:#{recipient}"
+  end
+
+  test "an approval event is routed to the approvals handler" do
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "core.approval.approved.v1",
+      seq: 3,
+      payload: %{"approval_id" => Ecto.UUID.generate(), "ref" => "APR-2026-000000000001"},
+      occurred_at: ~U[2026-10-16 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "approval.changed"}
+  end
+
   test "an unknown event type is ignored, not failed" do
     assert :ok = Handlers.dispatch(%Event{id: Ecto.UUID.generate(), type: "x.y.z.v1", payload: %{}})
     refute_receive %Phoenix.Socket.Broadcast{}, 50

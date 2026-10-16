@@ -17,7 +17,9 @@ defmodule AtlasOrchestrator.Notifications.Handler do
   @doc """
   handle_event/2 is invoked by the outbox consumer's event router.
   """
-  def handle_event(%{type: @event_requested, payload: payload} = _event, _meta \\ %{}) do
+  def handle_event(event, meta \\ %{})
+
+  def handle_event(%{type: @event_requested, payload: payload} = _event, _meta) do
     with {:ok, recipient_id} <- extract_recipient(payload),
          {:ok, ids} <- extract_notification_ids(payload),
          {:ok, critical} <- extract_critical(payload),
@@ -30,7 +32,7 @@ defmodule AtlasOrchestrator.Notifications.Handler do
           :ok
 
         {:error, reason} ->
-          Logger.warn("notifications.handler.broadcast_failed",
+          Logger.warning("notifications.handler.broadcast_failed",
             topic: topic,
             event_type: @event_requested,
             reason: inspect(reason)
@@ -40,7 +42,7 @@ defmodule AtlasOrchestrator.Notifications.Handler do
       end
     else
       {:error, reason} ->
-        Logger.warn("notifications.handler.skipping_event",
+        Logger.warning("notifications.handler.skipping_event",
           event_type: @event_requested,
           reason: reason,
           payload_keys: payload_keys(payload)

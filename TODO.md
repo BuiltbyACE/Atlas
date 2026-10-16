@@ -1,6 +1,6 @@
 # To-do: finish foundation (backends/engines/orchestrations) so frontend can build on top
 
-The sequence follows: Notifications done (Go), Elixir notification handler done. Approvals engine now has policy lookup, four-eyes/two-person enforcement, notification fan-out and a worker expiry sweep. Next: Elixir outbox wiring, settings, files, audit views, exec dashboard v1.
+The sequence follows: Notifications done (Go), Elixir notification handler done. Approvals engine now has policy lookup, four-eyes/two-person enforcement, notification fan-out and a worker expiry sweep, and the Elixir outbox consumer routes notification and approval events to realtime signals. Next: settings, files, audit views, exec dashboard v1.
 
 ## A) Approvals engine — core complete
 - [x] Service layer `internal/approvals/service.go`: create approval with policy checks, decide (approve/decline), escalate, cancel; optimistic concurrency; emits correct outbox events; writes audit
@@ -39,13 +39,13 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [ ] Events for tile changes
 
 ## G) Elixir outbox consumer wiring (complete)
-- [ ] Register `Notifications.Handler` in the outbox event router so `core.notification.requested.v1` actually pushes to `user:{id}`
-- [ ] Add `core.approval.*.v1` handlers to push signals (approvals pending changed) to relevant topics
-- [ ] End-to-end test with outbox event
+- [x] Register handlers in `Outbox.Handlers.dispatch/1`: `core.notification.requested.v1` routes to `Notifications.Handler`, `core.approval.*.v1` to `Approvals.Handler`
+- [x] `AtlasOrchestrator.Approvals.Signals` (`approval.changed`) + `Approvals.Handler`: dashboard on every approval event, named approver on request, named target on escalation (requester/role nudges already come via the notifications engine)
+- [x] Tests: signals shape, handler routing/topics, and router dispatch for notification + approval events (24 orchestrator tests)
 
 ## H) Operational/infra polish
 - [ ] Worker process docs/runbook update; ensure task to run api+worker+orchestrator+web
 - [ ] Metrics/logs for dispatcher + sweeps (attempts, failures, lag)
 - [ ] Contracts schema validation hook awareness (CI) — schemas already present
 
-Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests) and B complete (worker expiry sweep, configurable poll/batch, tests). C–H remaining. Next: G (Elixir outbox wiring), then C (settings), D (files), E (audit views), F (exec dashboard).
+Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests), B complete (worker expiry sweep, configurable poll/batch, tests) and G complete (Elixir outbox routing + approval signals). C–F, H remaining. Next: C (settings), D (files), E (audit views), F (exec dashboard).
