@@ -31,14 +31,15 @@ func NewHandler(service *Service, logger *slog.Logger) *Handler {
 }
 
 type requestApprovalReq struct {
-	EntityType   string     `json:"entity_type"`
-	EntityID     string     `json:"entity_id"`
-	AmountMinor  int64      `json:"amount_minor"`
-	Currency     string     `json:"currency"`
-	ApproverRole string     `json:"approver_role"`
-	ApproverID   string     `json:"approver_id,omitempty"`
-	PolicyRef    string     `json:"policy_ref"`
-	DueAt        *time.Time `json:"due_at"`
+	EntityType        string     `json:"entity_type"`
+	EntityID          string     `json:"entity_id"`
+	AmountMinor       int64      `json:"amount_minor"`
+	Currency          string     `json:"currency"`
+	ApproverRole      string     `json:"approver_role"`
+	ApproverID        string     `json:"approver_id,omitempty"`
+	ApprovalsRequired int        `json:"approvals_required,omitempty"`
+	PolicyRef         string     `json:"policy_ref"`
+	DueAt             *time.Time `json:"due_at"`
 }
 
 type decideReq struct {
@@ -57,18 +58,20 @@ type cancelReq struct {
 }
 
 type approvalView struct {
-	ID           string     `json:"id"`
-	Ref          string     `json:"ref"`
-	EntityType   string     `json:"entity_type"`
-	EntityID     string     `json:"entity_id"`
-	RequestedBy  string     `json:"requested_by"`
-	AmountMinor  int64      `json:"amount_minor"`
-	Currency     string     `json:"currency"`
-	ApproverRole string     `json:"approver_role"`
-	ApproverID   string     `json:"approver_id,omitempty"`
-	Status       string     `json:"status"`
-	DueAt        *time.Time `json:"due_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID                string     `json:"id"`
+	Ref               string     `json:"ref"`
+	EntityType        string     `json:"entity_type"`
+	EntityID          string     `json:"entity_id"`
+	RequestedBy       string     `json:"requested_by"`
+	AmountMinor       int64      `json:"amount_minor"`
+	Currency          string     `json:"currency"`
+	ApproverRole      string     `json:"approver_role"`
+	ApproverID        string     `json:"approver_id,omitempty"`
+	ApprovalsRequired int        `json:"approvals_required"`
+	Status            string     `json:"status"`
+	PolicyRef         string     `json:"policy_ref,omitempty"`
+	DueAt             *time.Time `json:"due_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
 }
 
 // RequestApproval handles POST /api/v1/approvals.
@@ -96,18 +99,23 @@ func (h *Handler) RequestApproval(w http.ResponseWriter, r *http.Request) {
 		}
 		approverID = &id
 	}
-	in := Request{
-		EntityType:   strings.TrimSpace(req.EntityType),
-		EntityID:     entityID,
-		RequestedBy:  principal.UserID,
-		AmountMinor:  req.AmountMinor,
-		Currency:     strings.ToUpper(strings.TrimSpace(req.Currency)),
-		ApproverRole: strings.ToLower(strings.TrimSpace(req.ApproverRole)),
-		ApproverID:    approverID,
-		PolicyRef:    strings.TrimSpace(req.PolicyRef),
-		DueAt:        req.DueAt,
+	if principal.PersonID == uuid.Nil {
+		httpx.WriteProblem(w, r, httpx.Unauthenticated("Authentication is required."))
+		return
 	}
-	a, err := h.service.Request(r.Context(), in, &principal.UserID)
+	in := Request{
+		EntityType:        strings.TrimSpace(req.EntityType),
+		EntityID:          entityID,
+		RequestedBy:       principal.PersonID,
+		AmountMinor:       req.AmountMinor,
+		Currency:          strings.ToUpper(strings.TrimSpace(req.Currency)),
+		ApproverRole:      strings.TrimSpace(req.ApproverRole),
+		ApproverID:        approverID,
+		ApprovalsRequired: req.ApprovalsRequired,
+		PolicyRef:         strings.TrimSpace(req.PolicyRef),
+		DueAt:             req.DueAt,
+	}
+	a, err := h.service.Request(r.Context(), in, &principal.PersonID)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -195,7 +203,7 @@ func (h *Handler) MyRequested(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	items, err := h.service.ListRequestedBy(r.Context(), principal.UserID, limit+1, before)
+	items, err := h.service.ListRequestedBy(r.Context(), principal.PersonID, limit+1, before)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -229,7 +237,7 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err)
 		return
 	}
-	if err := h.service.Decide(r.Context(), Decide{ApprovalID: id, ActorID: principal.UserID, Approve: true, Reason: req.Reason}); err != nil {
+	if err := h.service.Decide(r.Context(), Decide{ApprovalID: id, ActorID: principal.PersonID, Approve: true, Reason: req.Reason}); err != nil {
 		h.writeError(w, r, err)
 		return
 	}
@@ -252,7 +260,7 @@ func (h *Handler) Decline(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err)
 		return
 	}
-	if err := h.service.Decide(r.Context(), Decide{ApprovalID: id, ActorID: principal.UserID, Approve: false, Reason: req.Reason}); err != nil {
+	if err := h.service.Decide(r.Context(), Decide{ApprovalID: id, ActorID: principal.PersonID, Approve: false, Reason: req.Reason}); err != nil {
 		h.writeError(w, r, err)
 		return
 	}
@@ -284,7 +292,7 @@ func (h *Handler) Escalate(w http.ResponseWriter, r *http.Request) {
 		}
 		toPerson = &pid
 	}
-	if err := h.service.Escalate(r.Context(), Escalate{ApprovalID: id, ActorID: principal.UserID, ToRole: req.ToRole, ToPersonID: toPerson, Reason: req.Reason}); err != nil {
+	if err := h.service.Escalate(r.Context(), Escalate{ApprovalID: id, ActorID: principal.PersonID, ToRole: req.ToRole, ToPersonID: toPerson, Reason: req.Reason}); err != nil {
 		h.writeError(w, r, err)
 		return
 	}
@@ -307,7 +315,7 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err)
 		return
 	}
-	if err := h.service.Cancel(r.Context(), Cancel{ApprovalID: id, ActorID: principal.UserID, Reason: req.Reason}); err != nil {
+	if err := h.service.Cancel(r.Context(), Cancel{ApprovalID: id, ActorID: principal.PersonID, Reason: req.Reason}); err != nil {
 		h.writeError(w, r, err)
 		return
 	}
@@ -338,17 +346,19 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 
 func viewOf(a Approval) approvalView {
 	v := approvalView{
-		ID:           a.ID.String(),
-		Ref:          a.Ref,
-		EntityType:   a.EntityType,
-		EntityID:     a.EntityID.String(),
-		RequestedBy:  a.RequestedBy.String(),
-		AmountMinor:  a.AmountMinor,
-		Currency:     a.Currency,
-		ApproverRole: a.ApproverRole,
-		Status:       string(a.Status),
-		DueAt:        a.DueAt,
-		CreatedAt:    a.CreatedAt,
+		ID:                a.ID.String(),
+		Ref:               a.Ref,
+		EntityType:        a.EntityType,
+		EntityID:          a.EntityID.String(),
+		RequestedBy:       a.RequestedBy.String(),
+		AmountMinor:       a.AmountMinor,
+		Currency:          a.Currency,
+		ApproverRole:      a.ApproverRole,
+		ApprovalsRequired: a.ApprovalsRequired,
+		Status:            string(a.Status),
+		PolicyRef:         a.PolicyRef,
+		DueAt:             a.DueAt,
+		CreatedAt:         a.CreatedAt,
 	}
 	if a.ApproverID != nil {
 		v.ApproverID = a.ApproverID.String()

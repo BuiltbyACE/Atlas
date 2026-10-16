@@ -35,25 +35,29 @@ var ErrForbidden = errors.New("approvals: forbidden")
 
 // Approval is the approval record.
 type Approval struct {
-	ID            uuid.UUID
-	Ref           string
-	EntityType    string
-	EntityID      uuid.UUID
-	RequestedBy   uuid.UUID
-	AmountMinor   int64
-	Currency      string
-	ApproverRole  string
-	ApproverID    *uuid.UUID
-	Status        Status
-	PolicyRef     string
-	DueAt         *time.Time
-	DecidedAt     *time.Time
-	DecidedBy     *uuid.UUID
-	Reason        string
-	Version       int
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	ArchivedAt    *time.Time
+	ID           uuid.UUID
+	Ref          string
+	EntityType   string
+	EntityID     uuid.UUID
+	RequestedBy  uuid.UUID
+	AmountMinor  int64
+	Currency     string
+	ApproverRole string
+	ApproverID   *uuid.UUID
+	Status       Status
+	PolicyRef    string
+	// ApprovalsRequired is how many distinct people must approve before the
+	// approval becomes approved (§3.3 both-CEO decisions). 1 for the ordinary
+	// case, 2 for a two-person rule.
+	ApprovalsRequired int
+	DueAt             *time.Time
+	DecidedAt         *time.Time
+	DecidedBy         *uuid.UUID
+	Reason            string
+	Version           int
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	ArchivedAt        *time.Time
 }
 
 // Request models creating an approval.
@@ -64,9 +68,12 @@ type Request struct {
 	AmountMinor  int64
 	Currency     string
 	ApproverRole string
-	ApproverID    *uuid.UUID
+	ApproverID   *uuid.UUID
 	PolicyRef    string
-	DueAt        *time.Time
+	// ApprovalsRequired overrides how many distinct approvals are needed. Zero
+	// means "decide from the policy, else one".
+	ApprovalsRequired int
+	DueAt             *time.Time
 }
 
 // Decide models an approve/decline action.
@@ -109,8 +116,21 @@ func (r Request) valid() error {
 	if r.Currency != "" && len(r.Currency) != 3 {
 		return fmt.Errorf("%w: currency must be a 3-letter code", ErrInvalid)
 	}
-	if r.ApproverRole == "" && r.ApproverID == nil {
-		return fmt.Errorf("%w: approver_role or approver_id required", ErrInvalid)
+	if r.ApprovalsRequired < 0 || r.ApprovalsRequired > 2 {
+		return fmt.Errorf("%w: approvals_required must be 1 or 2", ErrInvalid)
 	}
+	// approver_role / approver_id may be absent: the service resolves them from
+	// the approval policy (core.approval_policies) before it writes anything.
 	return nil
+}
+
+// Decision describes one approve/decline action against an approval.
+type Decision struct {
+	ApprovalID uuid.UUID
+	ActorID    uuid.UUID
+	Approve    bool
+	Reason     string
+	// Required is how many distinct approvals finalise the decision. It is read
+	// from the approval row and enforced in the store's transaction.
+	Required int
 }

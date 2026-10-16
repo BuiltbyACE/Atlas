@@ -1,13 +1,16 @@
 # To-do: finish foundation (backends/engines/orchestrations) so frontend can build on top
 
-The sequence follows: Notifications done (Go), Elixir notification handler done. Next: Approvals engine (full), integrate approvals↔notifications, worker sweeps, settings, files, audit views, exec dashboard v1. Also wire routes + worker expiry.
+The sequence follows: Notifications done (Go), Elixir notification handler done. Approvals engine now has policy lookup, four-eyes/two-person enforcement and notification fan-out. Next: worker sweeps, Elixir wiring, settings, files, audit views, exec dashboard v1.
 
-## A) Approvals engine — complete (high priority)
-- [ ] Service layer `internal/approvals/service.go`: create approval with policy checks, decide (approve/decline), escalate, cancel; optimistic concurrency; emits correct outbox events; writes audit in same tx where possible
-- [ ] HTTP layer `internal/approvals/http.go` + views (request, pending lists, approve/decline/escalate/cancel, get, history)
-- [ ] Wire approvals into router (`httpserver/router.go`) + api/main (`cmd/atlas-api/main.go`) with permissions
-- [ ] Unit tests: service logic (transitions), store (keyset), HTTP (authz)
-- [ ] Integration: approvals create notification intents (request → approvers, decide → requester, escalate → target)
+## A) Approvals engine — core complete
+- [x] Service layer `internal/approvals/service.go`: create approval with policy checks, decide (approve/decline), escalate, cancel; optimistic concurrency; emits correct outbox events; writes audit
+- [x] HTTP layer `internal/approvals/http.go` + views (request, pending lists, approve/decline/escalate/cancel, get, history)
+- [x] Wire approvals into router (`httpserver/router.go`) + api/main (`cmd/atlas-api/main.go`) with permissions
+- [x] Policy lookup (`Policy`/`LookupPolicy`, `core.approval_policies`): resolves approver role + required approvals when the caller omits them
+- [x] Separation of duties: `authz.FourEyes` on decide (no self-approval); `authz.TwoPersonRule` for two-person decisions
+- [x] Two-person decisions: `approvals_required` (migration 00007) + `core.approval_decisions`; first approval stays `pending`, second distinct person completes it
+- [x] Unit tests: policy rules (`policy_test.go`); integration tests: policy resolution, four-eyes, two-person, fan-out
+- [x] Integration: approvals create notification intents (request → approvers, decide → requester, escalate → target), best-effort after commit
 
 ## B) Worker sweeps (expiry/escalation)
 - [ ] Extend `atlas-worker` to run approvals sweeper: claim expired (`due_at < now()`, status requested/pending) with `FOR UPDATE SKIP LOCKED`, call `ExpireWithEvent`, emit `core.approval.expired.v1` + notifications
@@ -16,7 +19,7 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 
 ## C) Settings & policies
 - [ ] `internal/settings/` (typed settings, get/set, versioned, audited)
-- [ ] Approval policy lookup used by approvals service
+- [x] Approval policy lookup used by approvals service
 - [ ] Routes + tests
 
 ## D) Files
@@ -44,4 +47,4 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [ ] Metrics/logs for dispatcher + sweeps (attempts, failures, lag)
 - [ ] Contracts schema validation hook awareness (CI) — schemas already present
 
-Current status: A1,A2,A3,A4,A5 partial (skeleton). B–H remaining. Focus on A complete first, then B+C.
+Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests). B–H remaining. Next: B (worker expiry sweep), then G (Elixir wiring), C, D, E, F.

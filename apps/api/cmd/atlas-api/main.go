@@ -18,9 +18,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
-	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
@@ -82,8 +82,10 @@ func run() error {
 	notificationService := notifications.NewService(notifications.NewPGStore(pool), logger)
 	notificationHandler := notifications.NewHandler(notificationService, logger)
 
-	// Approvals engine
-	approvalService := approvals.NewService(approvals.NewPGStore(pool), audit.NewWriter(), logger)
+	// Approvals engine. Its fan-out records notification intents through the
+	// notifications engine after a state change has committed (§6.3, §6.4).
+	approvalService := approvals.NewService(approvals.NewPGStore(pool), audit.NewWriter(),
+		approvals.NewNotificationsAdapter(notificationService), logger)
 
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,

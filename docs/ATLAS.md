@@ -1017,11 +1017,15 @@ CREATE TABLE core.approval_policies (
 
 -- Reconciled with the approvals engine (migration 00006): `requested`/`declined`/
 -- `escalated` join the lifecycle, and the columns the engine needs are present.
+-- Migration 00007 adds `approvals_required` for the both-CEO rules in §3.3: an
+-- approval with 2 needs two distinct rows in core.approval_decisions before it
+-- becomes `approved`.
 CREATE TABLE core.approvals (
   id uuid PRIMARY KEY, entity_type text NOT NULL, entity_id uuid NOT NULL,
   requested_by uuid NOT NULL, policy_id uuid REFERENCES core.approval_policies(id),
   ref text, amount_minor bigint NOT NULL DEFAULT 0, currency char(3),
   approver_role text, approver_id uuid, policy_ref text, due_at timestamptz,
+  approvals_required smallint NOT NULL DEFAULT 1 CHECK (approvals_required BETWEEN 1 AND 2),
   status text NOT NULL CHECK (status IN
     ('requested','pending','approved','declined','escalated','cancelled','expired')),
   decided_at timestamptz, decided_by uuid, reason text,

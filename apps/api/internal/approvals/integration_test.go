@@ -2,7 +2,10 @@ package approvals
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,15 +48,48 @@ func testPool(t *testing.T) *pgxpool.Pool {
 }
 
 func newTestService(t *testing.T) (*Service, *pgxpool.Pool) {
+	svc, pool, _ := newTestServiceWithNotifier(t)
+	return svc, pool
+}
+
+// fakeNotifier records notification intents in memory so fan-out can be
+// asserted without an SMTP server or the notifications tables.
+type fakeNotifier struct {
+	mu   sync.Mutex
+	sent []Notification
+}
+
+func (f *fakeNotifier) Notify(_ context.Context, n Notification) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, n)
+	return nil
+}
+
+func (f *fakeNotifier) recipients(template string) []uuid.UUID {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []uuid.UUID
+	for _, n := range f.sent {
+		if template == "" || n.Template == template {
+			out = append(out, n.RecipientPersonID)
+		}
+	}
+	return out
+}
+
+func newTestServiceWithNotifier(t *testing.T) (*Service, *pgxpool.Pool, *fakeNotifier) {
 	t.Helper()
 
 	pool := testPool(t)
 	if _, err := pool.Exec(context.Background(),
-		`TRUNCATE core.approval_history, core.approval_decisions, core.approvals, outbox.events RESTART IDENTITY CASCADE`,
+		`TRUNCATE core.approval_history, core.approval_decisions, core.approvals,
+		 core.approval_policies, outbox.events RESTART IDENTITY CASCADE`,
 	); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
-	return NewService(NewPGStore(pool), nil, nil), pool
+	notifier := &fakeNotifier{}
+	return NewService(NewPGStore(pool), nil, notifier, nil), pool, notifier
 }
 
 func mustNewID(t *testing.T) uuid.UUID {
@@ -246,5 +282,263 @@ func TestApprovalExpirySweep(t *testing.T) {
 	}
 	if got.Status != StatusExpired {
 		t.Fatalf("after Expire: status = %q, want expired", got.Status)
+	}
+}
+
+// ── policy lookup and separation of duties ───────────────────
+
+// insertPolicy writes an approval policy and returns its id.
+func insertPolicy(t *testing.T, pool *pgxpool.Pool, decisionType, rule string, currency *string) uuid.UUID {
+	t.Helper()
+	id := mustNewID(t)
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO core.approval_policies
+		  (id, decision_type, min_amount_minor, max_amount_minor, currency, approver_rule, effective_from)
+		VALUES ($1,$2,NULL,NULL,$3,$4, now() - interval '1 hour')`,
+		id, decisionType, currency, rule); err != nil {
+		t.Fatalf("insert policy: %v", err)
+	}
+	return id
+}
+
+// seedPerson inserts a person and returns its id.
+func seedPerson(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
+	t.Helper()
+	id := mustNewID(t)
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO people.persons (id, full_name, work_email, employment_type)
+		VALUES ($1,$2,$3,'full_time')`,
+		id, "Test Person", fmt.Sprintf("person-%s@example.com", id)); err != nil {
+		t.Fatalf("insert person: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM people.persons WHERE id=$1`, id)
+	})
+	return id
+}
+
+// seedPersonWithRole inserts a person with an active user account and a company
+// grant of the given role, returning the person id. The caller passes a role
+// key unique to the test: fan-out notifies every holder of a role, so a shared
+// key (ceo_internal) would make the assertion depend on whatever grants the dev
+// database already holds. Everything is removed when the test ends.
+func seedPersonWithRole(t *testing.T, pool *pgxpool.Pool, role string) uuid.UUID {
+	t.Helper()
+	person := seedPerson(t, pool)
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO core.roles (key, name) VALUES ($1,$2)
+		ON CONFLICT (key) DO NOTHING`,
+		role, "Test Role"); err != nil {
+		t.Fatalf("insert role: %v", err)
+	}
+
+	account := mustNewID(t)
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO core.user_accounts (id, person_id, email, status)
+		VALUES ($1,$2,$3,'active')`,
+		account, person, fmt.Sprintf("account-%s@example.com", account)); err != nil {
+		t.Fatalf("insert user account: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO core.role_grants (id, user_id, role_key, scope_type, granted_by)
+		VALUES ($1,$2,$3,'company',$4)`,
+		mustNewID(t), account, role, person); err != nil {
+		t.Fatalf("insert role grant: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM core.role_grants WHERE user_id=$1`, account)
+		_, _ = pool.Exec(ctx, `DELETE FROM core.user_accounts WHERE id=$1`, account)
+		_, _ = pool.Exec(ctx, `DELETE FROM core.roles WHERE key=$1`, role)
+	})
+	return person
+}
+
+// TestApprovalPolicyResolvesApproverRole proves a policy can supply the
+// approver when the caller does not, and that the policy is attached.
+func TestApprovalPolicyResolvesApproverRole(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newTestService(t)
+	policyID := insertPolicy(t, pool, "consulting_expense", "ceo_internal", nil)
+
+	requester := mustNewID(t)
+	a, err := svc.Request(ctx, Request{
+		EntityType:  "consulting_expense",
+		EntityID:    mustNewID(t),
+		RequestedBy: requester,
+		AmountMinor: 250000,
+		Currency:    "KES",
+	}, &requester)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	if a.ApproverRole != "ceo_internal" {
+		t.Fatalf("approver_role = %q, want ceo_internal (from policy)", a.ApproverRole)
+	}
+	if a.PolicyRef != policyID.String() {
+		t.Fatalf("policy_ref = %q, want %s", a.PolicyRef, policyID)
+	}
+	if a.ApprovalsRequired != 1 {
+		t.Fatalf("approvals_required = %d, want 1", a.ApprovalsRequired)
+	}
+}
+
+// TestApprovalPolicyBothCEOsRequiresTwo checks that a two-person policy makes
+// the approval require two distinct approvals.
+func TestApprovalPolicyBothCEOsRequiresTwo(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newTestService(t)
+	insertPolicy(t, pool, "capex", RuleBothCEOs, nil)
+
+	requester := mustNewID(t)
+	a, err := svc.Request(ctx, Request{
+		EntityType:   "capex",
+		EntityID:     mustNewID(t),
+		RequestedBy:  requester,
+		ApproverRole: "ceo_internal",
+	}, &requester)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	if a.ApprovalsRequired != 2 {
+		t.Fatalf("approvals_required = %d, want 2", a.ApprovalsRequired)
+	}
+}
+
+// TestApprovalPolicyUnresolvableRuleIsCallerError checks that a rule which does
+// not name a single role (both_ceos) without an explicit approver is rejected
+// rather than silently defaulted.
+func TestApprovalPolicyUnresolvableRuleIsCallerError(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newTestService(t)
+	insertPolicy(t, pool, "capex", RuleBothCEOs, nil)
+
+	requester := mustNewID(t)
+	_, err := svc.Request(ctx, Request{
+		EntityType:  "capex",
+		EntityID:    mustNewID(t),
+		RequestedBy: requester,
+	}, &requester)
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Request with unresolvable rule: err = %v, want ErrInvalid", err)
+	}
+}
+
+// TestApprovalRejectsSelfApproval is the four-eyes rule: nobody approves their
+// own request (§3.3, §6.4).
+func TestApprovalRejectsSelfApproval(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService(t)
+
+	requester := mustNewID(t)
+	a, err := svc.Request(ctx, Request{
+		EntityType:   "invoice",
+		EntityID:     mustNewID(t),
+		RequestedBy:  requester,
+		ApproverRole: "ceo_internal",
+	}, &requester)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	err = svc.Decide(ctx, Decide{ApprovalID: a.ID, ActorID: requester, Approve: true})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("self-approval: err = %v, want ErrForbidden", err)
+	}
+}
+
+// TestTwoPersonApprovalNeedsTwoDistinctPeople covers the both-CEO decision: the
+// first approval leaves it pending, the same person cannot approve twice and a
+// different person completes it.
+func TestTwoPersonApprovalNeedsTwoDistinctPeople(t *testing.T) {
+	ctx := context.Background()
+	svc, pool, _ := newTestServiceWithNotifier(t)
+
+	requester := mustNewID(t)
+	first := mustNewID(t)
+	second := mustNewID(t)
+
+	a, err := svc.Request(ctx, Request{
+		EntityType:        "capex",
+		EntityID:          mustNewID(t),
+		RequestedBy:       requester,
+		ApproverRole:      "ceo_internal",
+		ApprovalsRequired: 2,
+	}, &requester)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+
+	if err := svc.Decide(ctx, Decide{ApprovalID: a.ID, ActorID: first, Approve: true, Reason: "first yes"}); err != nil {
+		t.Fatalf("first Decide: %v", err)
+	}
+	got, err := svc.Get(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("Get after first: %v", err)
+	}
+	if got.Status != StatusPending {
+		t.Fatalf("after first approval: status = %q, want pending", got.Status)
+	}
+	if n := countRows(t, pool, `SELECT count(*) FROM outbox.events WHERE type = $1`, outbox.TypeApprovalApprovedV1); n != 0 {
+		t.Fatalf("approved events after first = %d, want 0", n)
+	}
+
+	if err := svc.Decide(ctx, Decide{ApprovalID: a.ID, ActorID: first, Approve: true}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("same person approving twice: err = %v, want ErrForbidden", err)
+	}
+
+	if err := svc.Decide(ctx, Decide{ApprovalID: a.ID, ActorID: second, Approve: true, Reason: "second yes"}); err != nil {
+		t.Fatalf("second Decide: %v", err)
+	}
+	got, err = svc.Get(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("Get after second: %v", err)
+	}
+	if got.Status != StatusApproved {
+		t.Fatalf("after second approval: status = %q, want approved", got.Status)
+	}
+	if got.Version != 3 {
+		t.Fatalf("after second approval: version = %d, want 3", got.Version)
+	}
+	if n := countRows(t, pool, `SELECT count(*) FROM core.approval_decisions WHERE approval_id = $1 AND decision = 'approve'`, a.ID); n != 2 {
+		t.Fatalf("recorded approvals = %d, want 2", n)
+	}
+	if n := countRows(t, pool, `SELECT count(*) FROM outbox.events WHERE type = $1`, outbox.TypeApprovalApprovedV1); n != 1 {
+		t.Fatalf("approved events = %d, want 1", n)
+	}
+}
+
+// TestApprovalNotificationsFanOut covers request→approvers and decide→requester.
+func TestApprovalNotificationsFanOut(t *testing.T) {
+	ctx := context.Background()
+	svc, pool, notifier := newTestServiceWithNotifier(t)
+
+	roleKey := "test_role_" + mustNewID(t).String()
+	approver := seedPersonWithRole(t, pool, roleKey)
+	requester := seedPerson(t, pool)
+
+	a, err := svc.Request(ctx, Request{
+		EntityType:   "invoice",
+		EntityID:     mustNewID(t),
+		RequestedBy:  requester,
+		ApproverRole: roleKey,
+	}, &requester)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+
+	requested := notifier.recipients(TemplateRequested)
+	if len(requested) != 1 || requested[0] != approver {
+		t.Fatalf("requested notifications = %v, want [%s]", requested, approver)
+	}
+
+	decider := mustNewID(t)
+	if err := svc.Decide(ctx, Decide{ApprovalID: a.ID, ActorID: decider, Approve: true}); err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	approved := notifier.recipients(TemplateApproved)
+	if len(approved) != 1 || approved[0] != requester {
+		t.Fatalf("approved notifications = %v, want [%s]", approved, requester)
 	}
 }
