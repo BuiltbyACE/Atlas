@@ -36,6 +36,8 @@ var (
 	ErrInviteInvalid = errors.New("auth: invitation is not valid")
 	// ErrPasswordTooShort is returned when a new password fails policy.
 	ErrPasswordTooShort = errors.New("auth: password must be at least 12 characters")
+	// ErrUserNotFound is returned when a user id has no account row.
+	ErrUserNotFound = errors.New("auth: user not found")
 )
 
 // defaultPhoneCountry is prepended to a national number that omits its country
@@ -496,6 +498,21 @@ func (s *Service) RealtimeToken(principal *authz.Principal) (string, time.Time, 
 		return "", time.Time{}, err
 	}
 	return token, expires, nil
+}
+
+// CheckPermission reports whether a user holds a permission, for the
+// orchestrator's realtime channel-join checks (§7.5). Go stays the authority:
+// the orchestrator presents a user's id and the permission a topic requires,
+// and gets a yes/no back. Unknown users answer with ErrUserNotFound.
+func (s *Service) CheckPermission(ctx context.Context, userID uuid.UUID, permission string) (PermissionDecision, error) {
+	principal, err := s.store.LoadPrincipal(ctx, userID, uuid.Nil)
+	if err != nil {
+		return PermissionDecision{}, err
+	}
+	if principal.Can(permission) {
+		return PermissionDecision{Allowed: true, Reason: "granted"}, nil
+	}
+	return PermissionDecision{Allowed: false, Reason: "missing_permission"}, nil
 }
 
 // ResolveServiceToken verifies an internal token MintServiceToken produced.

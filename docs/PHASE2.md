@@ -114,9 +114,13 @@ tick an item only when its code, tests and migrations are in place.
 - [x] `AtlasOrchestrator.People.Signals`/`Handler`: route `people.*` to
       `<entity>.changed` signals on `user:{id}` (when the event names a person)
       and a `dashboard.changed` tile invalidation to `exec:dashboard`; tests
-- [ ] Mount the `work:project:{id}` channel with the join check via
-      `GET /internal/v1/authz/check` (§7.5, ADR-009) — the topic is broadcast to
-      now, but no channel is joined until this lands (frontend/real-time work)
+- [x] Go join check: `GET /internal/v1/authz/check?user_id=&permission=` (§7.5),
+      service-to-service and gated by `core.authz.check`; resolves the user's
+      effective permissions from their grants so the orchestrator can authorise
+      a topic join without knowing roles→permissions itself
+- [ ] Mount the `work:project:{id}` channel, calling the join check above
+      (§7.5, ADR-009) — the topic is broadcast to now, but no channel is joined
+      until the orchestrator has a service credential for the internal API
 
 ## 8. Frontend (after the backend above is complete and tested)
 
@@ -147,6 +151,12 @@ either a refinement or an open question, listed so the divergence is explicit.
 - **Approval events** (Phase 1) are finer-grained than §7.4's single
   `core.approval.decided.v1`: `core.approval.requested/approved/declined/
   escalated/cancelled/expired.v1`.
+- **Realtime join authorisation** (§7.5) is evaluated as the topic's read
+  permission (`work:project:{id}` → `work.task.read`, `exec:dashboard` →
+  `intel.dashboard.read`) rather than literal project membership. This matches
+  the REST visibility the frontend already has, and a signal carries ids, not
+  data (ADR-009). Narrowing a project channel to `work.project_members` would
+  make it stricter than the REST API; that refinement is deferred.
 - **L1-only escalation.** The ladder's E1-E3 windows are decision **D4** (open),
   so only level 1 is raised; the `level` column exists for L2/L3 once D4 lands.
 - **Realtime signal names** follow ADR-009's `{type: "<entity>.changed", id}`

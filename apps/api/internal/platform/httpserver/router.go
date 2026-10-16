@@ -166,6 +166,9 @@ func registerAuth(reg *routing.Registry, h *auth.Handler) {
 
 	reg.Public(http.MethodGet, "/internal/v1/.well-known/jwks.json",
 		"Public signing keys for realtime token verification", h.JWKS)
+
+	reg.Gated("core.authz.check", http.MethodGet, "/internal/v1/authz/check",
+		"Check whether a user may join a realtime topic (service-to-service)", h.Check)
 }
 
 // registerNotifications declares the notification surface (§6.4). The user

@@ -21,6 +21,11 @@ type fakeStore struct {
 	services map[string]*ServiceIdentity
 	recovery map[string]bool // key: hex(recovery hash), true while unused
 	attempts []time.Time
+
+	// principalErr, when set, is returned by LoadPrincipal (for the
+	// authorisation-check tests). permissions overrides the default set.
+	principalErr error
+	permissions  map[string]struct{}
 }
 
 func newFakeStore() *fakeStore {
@@ -63,13 +68,20 @@ func (f *fakeStore) FindAccountByID(ctx context.Context, userID uuid.UUID) (*Acc
 }
 
 func (f *fakeStore) LoadPrincipal(ctx context.Context, userID, sessionID uuid.UUID) (*authz.Principal, error) {
+	if f.principalErr != nil {
+		return nil, f.principalErr
+	}
+	permissions := f.permissions
+	if permissions == nil {
+		permissions = map[string]struct{}{"core.notification.read": {}}
+	}
 	return &authz.Principal{
 		Kind:        authz.KindUser,
 		Subject:     "user:" + userID.String(),
 		UserID:      userID,
 		SessionID:   sessionID,
 		Roles:       []string{"staff"},
-		Permissions: map[string]struct{}{"core.notification.read": {}},
+		Permissions: permissions,
 	}, nil
 }
 

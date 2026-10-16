@@ -60,6 +60,7 @@ var Permissions = []Permission{
 	{"core.file.read", "View file metadata and download files", false},
 	{"core.file.write", "Upload files and attach evidence", false},
 	{"core.service_identity.manage", "Manage service identities and credentials", false},
+	{"core.authz.check", "Check whether a user may join a realtime topic", false},
 	{"core.approval.read", "View approval requests", false},
 	{"core.approval.decide", "Approve or reject approval requests", false},
 	{"core.approval_policy.read", "View approval policies", false},

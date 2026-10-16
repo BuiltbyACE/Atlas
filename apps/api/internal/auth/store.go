@@ -222,12 +222,19 @@ func (s *PGStore) FindAccountByID(ctx context.Context, userID uuid.UUID) (*Accou
 
 // LoadPrincipal assembles the effective permission set for a user.
 func (s *PGStore) LoadPrincipal(ctx context.Context, userID, sessionID uuid.UUID) (*authz.Principal, error) {
-	var email, name string
+	var (
+		email    string
+		personID uuid.UUID
+		name     string
+	)
 	err := s.db.QueryRow(ctx, `
-		SELECT a.email, p.full_name
+		SELECT a.email, a.person_id, p.full_name
 		FROM core.user_accounts a
 		JOIN people.persons p ON p.id = a.person_id
-		WHERE a.id = $1`, userID).Scan(&email, &name)
+		WHERE a.id = $1`, userID).Scan(&email, &personID, &name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("auth: load principal: %w", err)
 	}
@@ -236,6 +243,7 @@ func (s *PGStore) LoadPrincipal(ctx context.Context, userID, sessionID uuid.UUID
 		Kind:        authz.KindUser,
 		Subject:     "user:" + userID.String(),
 		UserID:      userID,
+		PersonID:    personID,
 		Email:       email,
 		Name:        name,
 		Permissions: map[string]struct{}{},

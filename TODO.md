@@ -88,8 +88,11 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       (`AtlasOrchestrator.Work.Handler`/`Signals` → `work:project:{id}` +
       `user:{id}`) and `people.*` (`AtlasOrchestrator.People.Handler`/`Signals`
       → `user:{id}`), each with a `dashboard.changed` tile invalidation; tests
-- [ ] Mount the `work:project:{id}` channel (join check via
-      `GET /internal/v1/authz/check`) before the frontend goes live
+- [x] Go realtime join check: `GET /internal/v1/authz/check?user_id=&permission=`
+      (service-to-service, gated by `core.authz.check`); resolves a user's
+      roles→permissions so the orchestrator can authorise topic joins
+- [ ] Mount the `work:project:{id}` channel and call the join check above
+      (needs an orchestrator service credential for the internal API)
 - [ ] People §8.5 endpoints still missing: `GET /api/v1/people/availability?date=`
       and `POST /api/v1/people/{id}/offboard`
 - [ ] Frontend (after backend above is complete)
