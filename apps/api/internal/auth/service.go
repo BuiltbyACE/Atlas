@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -442,13 +443,20 @@ func (s *Service) VerifyMFA(ctx context.Context, challengeToken, code string, me
 		return nil, "", ErrMFANotEnrolled
 	}
 
+	// A readable TOTP secret is the normal path. If it cannot be decrypted —
+	// a rotated or missing ATLAS_ENCRYPTION_KEY, for example — do not lock the
+	// account out: recovery codes are independent of the TOTP secret and are
+	// the documented escape hatch (ATLAS.md §13.1). Log the fault rather than
+	// failing silently.
 	secret, err := s.sealer.Open(account.MFASecretEnc)
 	if err != nil {
-		return nil, "", fmt.Errorf("auth: open mfa secret: %w", err)
+		s.logger.ErrorContext(ctx, "open mfa secret; falling back to recovery code",
+			"error", err.Error(), "user_id", userID.String())
+		secret = nil
 	}
 
 	trimmed := strings.TrimSpace(code)
-	if !VerifyTOTP(string(secret), trimmed, s.now()) {
+	if len(secret) == 0 || !VerifyTOTP(string(secret), trimmed, s.now()) {
 		used, err := s.store.UseRecoveryCode(ctx, userID, recoveryHash(trimmed))
 		if err != nil {
 			return nil, "", err
@@ -637,7 +645,15 @@ func HashToken(raw string) []byte {
 }
 
 func recoveryHash(code string) []byte {
-	normalized := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(code), "-", ""))
+	// Match the client normalisation and the promise in the UI: recovery codes
+	// are compared case-insensitively and ignore spaces and dashes, so a code
+	// copied from a printed list or a password manager still works.
+	normalized := strings.Map(func(r rune) rune {
+		if r == '-' || unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, strings.ToUpper(strings.TrimSpace(code)))
 	return HashToken(normalized)
 }
 

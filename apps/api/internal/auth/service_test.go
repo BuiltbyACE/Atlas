@@ -16,9 +16,10 @@ import (
 
 // fakeStore is an in-memory auth.Store for exercising the service.
 type fakeStore struct {
-	accounts map[string]*Account // key: email, lowercase
-	sessions map[string]*Session // key: hex(token hash)
+	accounts map[string]*Account   // key: email, lowercase
+	sessions map[string]*Session   // key: hex(token hash)
 	services map[string]*ServiceIdentity
+	recovery map[string]bool // key: hex(recovery hash), true while unused
 	attempts []time.Time
 }
 
@@ -27,6 +28,7 @@ func newFakeStore() *fakeStore {
 		accounts: map[string]*Account{},
 		sessions: map[string]*Session{},
 		services: map[string]*ServiceIdentity{},
+		recovery: map[string]bool{},
 	}
 }
 
@@ -163,7 +165,12 @@ func (f *fakeStore) ActivateMFA(ctx context.Context, userID uuid.UUID, at time.T
 }
 
 func (f *fakeStore) UseRecoveryCode(ctx context.Context, userID uuid.UUID, hash []byte) (bool, error) {
-	return false, nil
+	key := hex.EncodeToString(hash)
+	if !f.recovery[key] {
+		return false, nil
+	}
+	f.recovery[key] = false // each code works once
+	return true, nil
 }
 
 func (f *fakeStore) FindService(ctx context.Context, id string) (*ServiceIdentity, error) {
@@ -246,6 +253,12 @@ func (h *harness) addAccount(t *testing.T, email, phone, password string, mfa bo
 		DisplayName:  "Test Person",
 	}
 	return h.store.put(account)
+}
+
+// addRecoveryCode registers a recovery code as unused for the account under
+// test, mirroring core.recovery_codes.
+func (h *harness) addRecoveryCode(code string) {
+	h.store.recovery[hex.EncodeToString(recoveryHash(code))] = true
 }
 
 // ── tests ────────────────────────────────────────────────────
@@ -337,6 +350,51 @@ func TestMFAChallengeAndVerify(t *testing.T) {
 	}
 	if session == nil || raw == "" {
 		t.Fatal("expected a session after MFA verification")
+	}
+}
+
+// A recovery code must still work when the stored TOTP secret cannot be
+// decrypted — a rotated or missing ATLAS_ENCRYPTION_KEY. Before this, that case
+// returned a 500 and locked the account out entirely.
+func TestVerifyMFAFallsBackToRecoveryCode(t *testing.T) {
+	h := newHarness(t)
+	account := h.addAccount(t, "ceo@safaristack.co.ke", "", "correct horse battery", true)
+	account.MFAActivated = true
+	// Bytes that are not a valid sealed secret: sealer.Open fails.
+	account.MFASecretEnc = []byte("not a valid sealed mfa secret")
+	h.addRecoveryCode("ABCDEFGHIJKLMNOP")
+
+	token, err := h.service.issueMFAToken(account.ID)
+	if err != nil {
+		t.Fatalf("issueMFAToken: %v", err)
+	}
+
+	session, raw, err := h.service.VerifyMFA(context.Background(), token, "abcd-efgh ijkl mnop", SessionMeta{})
+	if err != nil {
+		t.Fatalf("VerifyMFA with recovery code: %v", err)
+	}
+	if session == nil || raw == "" {
+		t.Fatal("expected a session after recovery-code verification")
+	}
+}
+
+// With the secret unreadable and an unknown recovery code, the failure is a
+// normal invalid-code error — never a server error.
+func TestVerifyMFAWrongRecoveryCodeIsRejected(t *testing.T) {
+	h := newHarness(t)
+	account := h.addAccount(t, "ceo@safaristack.co.ke", "", "correct horse battery", true)
+	account.MFAActivated = true
+	account.MFASecretEnc = []byte("not a valid sealed mfa secret")
+	h.addRecoveryCode("ABCDEFGHIJKLMNOP")
+
+	token, err := h.service.issueMFAToken(account.ID)
+	if err != nil {
+		t.Fatalf("issueMFAToken: %v", err)
+	}
+
+	_, _, err = h.service.VerifyMFA(context.Background(), token, "ZZZZZZZZZZZZZZZZ", SessionMeta{})
+	if err != ErrInvalidTOTP {
+		t.Fatalf("err = %v, want ErrInvalidTOTP", err)
 	}
 }
 
