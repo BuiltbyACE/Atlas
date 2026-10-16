@@ -9,6 +9,7 @@
 package work
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -198,6 +199,49 @@ type Blocker struct {
 	CreatedAt  time.Time
 }
 
+// Evidence is a row in work.evidence: a core.files file attached to a task or a
+// project, optionally verified by a reviewer (§Phase 2).
+type Evidence struct {
+	ID          uuid.UUID
+	TaskID      *uuid.UUID
+	ProjectID   *uuid.UUID
+	FileID      uuid.UUID
+	UploaderID  uuid.UUID
+	Kind        string
+	Description string
+	VerifiedBy  *uuid.UUID
+	VerifiedAt  *time.Time
+	CreatedAt   time.Time
+}
+
+// EvidenceInput is the payload for attaching a file as evidence. Exactly one of
+// TaskID / ProjectID must be set; when TaskID is set the project is derived.
+type EvidenceInput struct {
+	TaskID      *uuid.UUID
+	ProjectID   *uuid.UUID
+	FileID      uuid.UUID
+	Kind        string
+	Description string
+}
+
+// EvidenceFile is the minimal view of a stored file evidence needs. Keeping it
+// local means the work package does not depend on the files package.
+type EvidenceFile struct {
+	ID       uuid.UUID
+	Filename string
+	Status   string
+}
+
+// FileResolver resolves a stored file for evidence. The files service is
+// adapted to it in cmd wiring; a nil resolver disables availability checks.
+type FileResolver interface {
+	ResolveFile(ctx context.Context, id uuid.UUID) (*EvidenceFile, error)
+}
+
+// FileStatusAvailable is the core.files status a file must have to attach it as
+// evidence (a pending upload or a quarantined object may not be linked).
+const FileStatusAvailable = "available"
+
 // Dependency is a row in work.task_dependencies.
 type Dependency struct {
 	PredecessorID uuid.UUID
@@ -236,6 +280,13 @@ type ListTasksQuery struct {
 	Blocked     *bool
 	Overdue     bool
 	Now         time.Time
+}
+
+// ListEvidenceQuery filters an evidence listing. Filtering by TaskID or
+// ProjectID selects the evidence attached to that work item.
+type ListEvidenceQuery struct {
+	TaskID    *uuid.UUID
+	ProjectID *uuid.UUID
 }
 
 func trim(s string) string { return strings.TrimSpace(s) }

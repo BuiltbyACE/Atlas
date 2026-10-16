@@ -40,11 +40,15 @@ tick an item only when its code, tests and migrations are in place.
 - [x] Unit + DB integration tests (lifecycle, transitions, cycles, blockers,
       overdue filter, registry/permission-catalogue checks)
 
-## 3. Evidence (`work.evidence`)
+## 3. Evidence (`work.evidence`) — done
 
-- [ ] Link an available `core.files` row to a task/milestone; validate file is
-      `available`; `work.evidence.read`/`.write`
-- [ ] Review/verify fields (`verified_by`, `verified_at`)
+- [x] Link an available `core.files` row to a task or project; validate file is
+      `available` (a `pending`/`quarantined`/`deleted` file is rejected with
+      `ErrConflict`); `work.evidence.read`/`.write`; `work.evidence.added.v1`
+- [x] Review/verify fields (`verified_by`, `verified_at`); a submitter cannot
+      verify their own evidence (separation of duties, §3.3)
+- [x] File availability checked through `work.FileResolver`, adapted from the
+      files service in `cmd/atlas-api` (the work package does not import files)
 
 ## 4. Daily reports + absence
 
@@ -67,7 +71,8 @@ tick an item only when its code, tests and migrations are in place.
 ## 7. Elixir outbox wiring
 
 - [ ] Go-side event constructors are in `internal/outbox/work.go`
-      (`work.project.created/status_changed`, `work.task.created/status_changed/assigned/blocked/unblocked`)
+      (`work.project.created/status_changed`, `work.task.created/status_changed/assigned/blocked/unblocked`,
+      `work.evidence.added`)
 - [ ] Route `work.*` events to signals; push invalidation on `exec:dashboard`
       and named recipients; tests
 

@@ -17,12 +17,14 @@ const (
 	TypeTaskAssignedV1         = "work.task.assigned.v1"
 	TypeTaskBlockedV1          = "work.task.blocked.v1"
 	TypeTaskUnblockedV1        = "work.task.unblocked.v1"
+	TypeEvidenceAddedV1        = "work.evidence.added.v1"
 )
 
 // Aggregate types for work events.
 const (
-	AggregateProject = "project"
-	AggregateTask    = "task"
+	AggregateProject  = "project"
+	AggregateTask     = "task"
+	AggregateEvidence = "evidence"
 )
 
 // ProjectCreatedPayload is emitted when a project is created.
@@ -173,6 +175,30 @@ func NewTaskUnblocked(actorID *uuid.UUID, taskID, projectID, blockerID uuid.UUID
 		ResolvedBy: resolvedBy,
 		ResolvedAt: time.Now().UTC(),
 	})
+}
+
+// NewEvidenceAdded builds a work.evidence.added.v1 event.
+func NewEvidenceAdded(actorID *uuid.UUID, evidenceID, fileID uuid.UUID, taskID, projectID uuid.UUID, kind string, addedBy uuid.UUID) (Event, error) {
+	return buildEvent(TypeEvidenceAddedV1, AggregateEvidence, evidenceID, actorID, nil, EvidenceAddedPayload{
+		EvidenceID: evidenceID,
+		FileID:     fileID,
+		TaskID:     taskID,
+		ProjectID:  projectID,
+		Kind:       kind,
+		AddedBy:    addedBy,
+		AddedAt:    time.Now().UTC(),
+	})
+}
+
+// EvidenceAddedPayload is emitted when a file is attached as evidence.
+type EvidenceAddedPayload struct {
+	EvidenceID uuid.UUID `json:"evidence_id"`
+	FileID     uuid.UUID `json:"file_id"`
+	TaskID     uuid.UUID `json:"task_id,omitempty"`
+	ProjectID  uuid.UUID `json:"project_id,omitempty"`
+	Kind       string    `json:"kind,omitempty"`
+	AddedBy    uuid.UUID `json:"added_by,omitempty"`
+	AddedAt    time.Time `json:"added_at"`
 }
 
 // ProjectRef is the minimal project view the event builders need.

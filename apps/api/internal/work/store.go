@@ -50,6 +50,13 @@ type Store interface {
 	ResolveBlocker(ctx context.Context, blockerID uuid.UUID, resolvedBy uuid.UUID, ev *outbox.Event) (Blocker, error)
 	ListBlockers(ctx context.Context, taskID uuid.UUID, includeResolved bool) ([]Blocker, error)
 	CountOpenBlockers(ctx context.Context, taskID uuid.UUID) (int, error)
+
+	// Evidence.
+	CreateEvidence(ctx context.Context, e Evidence, ev *outbox.Event) (Evidence, error)
+	GetEvidence(ctx context.Context, id uuid.UUID) (*Evidence, error)
+	ListEvidence(ctx context.Context, q ListEvidenceQuery) ([]Evidence, error)
+	VerifyEvidence(ctx context.Context, id uuid.UUID, verifier uuid.UUID) (Evidence, error)
+	DeleteEvidence(ctx context.Context, id uuid.UUID) error
 }
 
 // PGStore implements Store over Postgres.
@@ -694,4 +701,122 @@ func (s *PGStore) CountOpenBlockers(ctx context.Context, taskID uuid.UUID) (int,
 		return 0, fmt.Errorf("work: count blockers: %w", err)
 	}
 	return n, nil
+}
+
+const evidenceCols = `id, task_id, project_id, file_id, uploader_person_id,
+	COALESCE(kind,''), COALESCE(description,''), verified_by_person_id, verified_at, created_at`
+
+func scanEvidence(row rowScanner) (Evidence, error) {
+	var e Evidence
+	if err := row.Scan(&e.ID, &e.TaskID, &e.ProjectID, &e.FileID, &e.UploaderID,
+		&e.Kind, &e.Description, &e.VerifiedBy, &e.VerifiedAt, &e.CreatedAt); err != nil {
+		return e, err
+	}
+	return e, nil
+}
+
+func (s *PGStore) CreateEvidence(ctx context.Context, e Evidence, ev *outbox.Event) (Evidence, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return Evidence{}, fmt.Errorf("work: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	created, err := scanEvidence(tx.QueryRow(ctx, `
+		INSERT INTO work.evidence (
+			id, task_id, project_id, file_id, uploader_person_id, kind, description,
+			verified_by_person_id, verified_at, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		RETURNING `+evidenceCols,
+		e.ID, e.TaskID, e.ProjectID, e.FileID, e.UploaderID, nullIfEmpty(e.Kind),
+		nullIfEmpty(e.Description), e.VerifiedBy, e.VerifiedAt, e.CreatedAt))
+	if err != nil {
+		return Evidence{}, fmt.Errorf("work: create evidence: %w", err)
+	}
+	if ev != nil {
+		if _, err := outbox.Write(ctx, tx, *ev); err != nil {
+			return Evidence{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Evidence{}, fmt.Errorf("work: commit: %w", err)
+	}
+	return created, nil
+}
+
+func (s *PGStore) GetEvidence(ctx context.Context, id uuid.UUID) (*Evidence, error) {
+	e, err := scanEvidence(s.db.QueryRow(ctx, `SELECT `+evidenceCols+` FROM work.evidence WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("work: get evidence: %w", err)
+	}
+	return &e, nil
+}
+
+func (s *PGStore) ListEvidence(ctx context.Context, q ListEvidenceQuery) ([]Evidence, error) {
+	where := make([]string, 0, 2)
+	args := make([]any, 0, 2)
+	if q.TaskID != nil {
+		args = append(args, *q.TaskID)
+		where = append(where, fmt.Sprintf("task_id = $%d", len(args)))
+	}
+	if q.ProjectID != nil {
+		args = append(args, *q.ProjectID)
+		where = append(where, fmt.Sprintf("project_id = $%d", len(args)))
+	}
+	sql := `SELECT ` + evidenceCols + ` FROM work.evidence`
+	if len(where) > 0 {
+		sql += " WHERE " + strings.Join(where, " AND ")
+	}
+	sql += " ORDER BY created_at DESC, id DESC"
+
+	rows, err := s.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("work: list evidence: %w", err)
+	}
+	defer rows.Close()
+	out := make([]Evidence, 0, 8)
+	for rows.Next() {
+		e, err := scanEvidence(rows)
+		if err != nil {
+			return nil, fmt.Errorf("work: scan evidence: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *PGStore) VerifyEvidence(ctx context.Context, id uuid.UUID, verifier uuid.UUID) (Evidence, error) {
+	updated, err := scanEvidence(s.db.QueryRow(ctx, `
+		UPDATE work.evidence
+		   SET verified_by_person_id = $2, verified_at = now()
+		 WHERE id = $1 AND verified_at IS NULL
+		RETURNING `+evidenceCols, id, verifier))
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		var exists bool
+		if gerr := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM work.evidence WHERE id = $1)`, id).Scan(&exists); gerr != nil {
+			return Evidence{}, fmt.Errorf("work: read evidence: %w", gerr)
+		}
+		if !exists {
+			return Evidence{}, fmt.Errorf("%w: evidence %s", ErrNotFound, id)
+		}
+		return Evidence{}, fmt.Errorf("%w: evidence is already verified", ErrConflict)
+	case err != nil:
+		return Evidence{}, fmt.Errorf("work: verify evidence: %w", err)
+	}
+	return updated, nil
+}
+
+func (s *PGStore) DeleteEvidence(ctx context.Context, id uuid.UUID) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM work.evidence WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("work: delete evidence: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: evidence %s", ErrNotFound, id)
+	}
+	return nil
 }

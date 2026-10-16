@@ -18,24 +18,27 @@ const (
 	EntityMilestone = "work.milestone"
 	EntityTask      = "work.task"
 	EntityBlocker   = "work.blocker"
+	EntityEvidence  = "work.evidence"
 )
 
 // Service coordinates work orchestration: validation, state transitions,
 // optimistic concurrency, auditing and events.
 type Service struct {
 	store  Store
+	files  FileResolver
 	audit  *audit.Writer
 	now    func() time.Time
 	logger *slog.Logger
 }
 
-// NewService builds the work service. aw may be nil in tests; changes are still
-// applied, only the global audit write is skipped.
-func NewService(store Store, aw *audit.Writer, logger *slog.Logger) *Service {
+// NewService builds the work service. files may be nil (evidence attachment then
+// skips the availability check); aw may be nil in tests, in which case changes
+// are still applied and only the global audit write is skipped.
+func NewService(store Store, files FileResolver, aw *audit.Writer, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{store: store, audit: aw, now: func() time.Time { return time.Now().UTC() }, logger: logger}
+	return &Service{store: store, files: files, audit: aw, now: func() time.Time { return time.Now().UTC() }, logger: logger}
 }
 
 // ProjectInput is the replacement payload for a project create/update (PUT

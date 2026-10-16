@@ -101,6 +101,19 @@ type memberView struct {
 	JoinedAt time.Time `json:"joined_at"`
 }
 
+type evidenceView struct {
+	ID          string     `json:"id"`
+	TaskID      string     `json:"task_id,omitempty"`
+	ProjectID   string     `json:"project_id,omitempty"`
+	FileID      string     `json:"file_id"`
+	UploaderID  string     `json:"uploader_person_id"`
+	Kind        string     `json:"kind,omitempty"`
+	Description string     `json:"description,omitempty"`
+	VerifiedBy  string     `json:"verified_by_person_id,omitempty"`
+	VerifiedAt  *time.Time `json:"verified_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
 // ── requests ────────────────────────────────────────────────────────────────
 
 type projectReq struct {
@@ -147,6 +160,12 @@ type dependencyReq struct {
 
 type blockerReq struct {
 	Reason string `json:"reason"`
+}
+
+type evidenceReq struct {
+	FileID      string `json:"file_id"`
+	Kind        string `json:"kind"`
+	Description string `json:"description"`
 }
 
 // ── projects ────────────────────────────────────────────────────────────────
@@ -705,6 +724,136 @@ func (h *Handler) ResolveBlocker(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, blockerOf(b))
 }
 
+// ── evidence ────────────────────────────────────────────────────────────────
+
+// AttachTaskEvidence handles POST /api/v1/work/tasks/{id}/evidence.
+func (h *Handler) AttachTaskEvidence(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	taskID, ok := h.idParam(w, r, "id", "task")
+	if !ok {
+		return
+	}
+	h.attachEvidence(w, r, principal.PersonID, &taskID, nil)
+}
+
+// AttachProjectEvidence handles POST /api/v1/work/projects/{id}/evidence.
+func (h *Handler) AttachProjectEvidence(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	projectID, ok := h.idParam(w, r, "id", "project")
+	if !ok {
+		return
+	}
+	h.attachEvidence(w, r, principal.PersonID, nil, &projectID)
+}
+
+func (h *Handler) attachEvidence(w http.ResponseWriter, r *http.Request, actor uuid.UUID, taskID, projectID *uuid.UUID) {
+	var req evidenceReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	fileID, err := uuid.Parse(strings.TrimSpace(req.FileID))
+	if err != nil {
+		httpx.WriteProblem(w, r, httpx.BadRequest("file_id is not a valid id."))
+		return
+	}
+	e, err := h.service.AttachEvidence(r.Context(), actor, EvidenceInput{
+		TaskID: taskID, ProjectID: projectID, FileID: fileID,
+		Kind: req.Kind, Description: req.Description,
+	})
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, evidenceOf(e))
+}
+
+// ListTaskEvidence handles GET /api/v1/work/tasks/{id}/evidence.
+func (h *Handler) ListTaskEvidence(w http.ResponseWriter, r *http.Request) {
+	taskID, ok := h.idParam(w, r, "id", "task")
+	if !ok {
+		return
+	}
+	h.listEvidence(w, r, ListEvidenceQuery{TaskID: &taskID})
+}
+
+// ListProjectEvidence handles GET /api/v1/work/projects/{id}/evidence.
+func (h *Handler) ListProjectEvidence(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := h.idParam(w, r, "id", "project")
+	if !ok {
+		return
+	}
+	h.listEvidence(w, r, ListEvidenceQuery{ProjectID: &projectID})
+}
+
+func (h *Handler) listEvidence(w http.ResponseWriter, r *http.Request, q ListEvidenceQuery) {
+	items, err := h.service.ListEvidence(r.Context(), q)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	views := make([]evidenceView, 0, len(items))
+	for _, e := range items {
+		views = append(views, evidenceOf(e))
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
+}
+
+// GetEvidence handles GET /api/v1/work/evidence/{id}.
+func (h *Handler) GetEvidence(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.idParam(w, r, "id", "evidence")
+	if !ok {
+		return
+	}
+	e, err := h.service.GetEvidence(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, evidenceOf(e))
+}
+
+// VerifyEvidence handles POST /api/v1/work/evidence/{id}/verify.
+func (h *Handler) VerifyEvidence(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "evidence")
+	if !ok {
+		return
+	}
+	e, err := h.service.VerifyEvidence(r.Context(), principal.PersonID, id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, evidenceOf(e))
+}
+
+// DeleteEvidence handles DELETE /api/v1/work/evidence/{id}.
+func (h *Handler) DeleteEvidence(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "evidence")
+	if !ok {
+		return
+	}
+	if err := h.service.DeleteEvidence(r.Context(), principal.PersonID, id); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (*authz.Principal, bool) {
@@ -934,6 +1083,28 @@ func blockerOf(b Blocker) blockerView {
 	}
 	if b.ResolvedBy != nil {
 		v.ResolvedBy = b.ResolvedBy.String()
+	}
+	return v
+}
+
+func evidenceOf(e Evidence) evidenceView {
+	v := evidenceView{
+		ID:          e.ID.String(),
+		FileID:      e.FileID.String(),
+		UploaderID:  e.UploaderID.String(),
+		Kind:        e.Kind,
+		Description: e.Description,
+		VerifiedAt:  e.VerifiedAt,
+		CreatedAt:   e.CreatedAt,
+	}
+	if e.TaskID != nil {
+		v.TaskID = e.TaskID.String()
+	}
+	if e.ProjectID != nil {
+		v.ProjectID = e.ProjectID.String()
+	}
+	if e.VerifiedBy != nil {
+		v.VerifiedBy = e.VerifiedBy.String()
 	}
 	return v
 }

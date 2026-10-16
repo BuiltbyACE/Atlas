@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
@@ -101,6 +102,7 @@ func run() error {
 	// events (§6.5). Storage is optional in local development: when no bucket
 	// is configured the file routes are simply not mounted.
 	var filesHandler *files.Handler
+	var fileService *files.Service
 	if cfg.ObjectStorageConfigured() {
 		objects, err := files.NewS3Store(ctx, files.S3Config{
 			Endpoint:  cfg.S3Endpoint,
@@ -113,7 +115,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		fileService := files.NewService(files.NewPGStore(pool), objects, files.NoopScanner{}, auditWriter, files.Config{
+		fileService = files.NewService(files.NewPGStore(pool), objects, files.NoopScanner{}, auditWriter, files.Config{
 			Bucket:      cfg.S3Bucket,
 			UploadTTL:   cfg.FileUploadTTL,
 			DownloadTTL: cfg.FileDownloadTTL,
@@ -127,8 +129,9 @@ func run() error {
 
 	// Work orchestration (Phase 2): projects, milestones, tasks, dependencies
 	// and blockers. Go is the authority; state changes emit work.* outbox events
-	// for the orchestrator to react to (ADR-009).
-	workService := work.NewService(work.NewPGStore(pool), auditWriter, logger)
+	// for the orchestrator to react to (ADR-009). Evidence attachment checks a
+	// file's availability through the files service, adapted to work.FileResolver.
+	workService := work.NewService(work.NewPGStore(pool), newFileResolver(fileService), auditWriter, logger)
 
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
@@ -227,6 +230,29 @@ func signingKey(cfg *config.Config, logger *slog.Logger) (*ed25519jwt.Key, error
 	}
 	logger.Warn("ATLAS_REALTIME_PRIVATE_KEY is empty; generated an ephemeral key (local development only)")
 	return ed25519jwt.Generate()
+}
+
+// fileResolver adapts the files service to work.FileResolver so the work domain
+// can check a file is available before attaching it as evidence without
+// depending on the files package. A nil service disables the check.
+type fileResolver struct{ service *files.Service }
+
+func newFileResolver(service *files.Service) work.FileResolver {
+	if service == nil {
+		return nil
+	}
+	return fileResolver{service: service}
+}
+
+func (r fileResolver) ResolveFile(ctx context.Context, id uuid.UUID) (*work.EvidenceFile, error) {
+	f, err := r.service.Get(ctx, id)
+	if errors.Is(err, files.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &work.EvidenceFile{ID: f.ID, Filename: f.Filename, Status: string(f.Status)}, nil
 }
 
 // secretSealer builds the AES-GCM sealer for short-lived secrets.

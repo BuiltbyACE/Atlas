@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/safaristack/atlas/apps/api/internal/outbox"
@@ -61,7 +62,7 @@ func TestServiceLifecycle(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
 	store := NewPGStore(pool)
-	svc := NewService(store, nil, nil)
+	svc := NewService(store, nil, nil, nil)
 	actor := mustPerson(t, pool)
 
 	project, err := svc.CreateProject(ctx, actor, ProjectInput{Name: "Apollo"})
@@ -200,7 +201,7 @@ func TestOverdueListing(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
 	store := NewPGStore(pool)
-	svc := NewService(store, nil, nil)
+	svc := NewService(store, nil, nil, nil)
 	actor := mustPerson(t, pool)
 
 	project, err := svc.CreateProject(ctx, actor, ProjectInput{Name: "Overdue test"})
@@ -227,5 +228,126 @@ func TestOverdueListing(t *testing.T) {
 	}
 	if len(overdue) != 1 || overdue[0].Title != "Late" {
 		t.Fatalf("overdue = %+v, want just Late", overdue)
+	}
+}
+
+// mustFile inserts a core.files row with the given status and removes it at the
+// end of the test.
+func mustFile(t *testing.T, pool *pgxpool.Pool, status string) uuid.UUID {
+	t.Helper()
+	id, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("new id: %v", err)
+	}
+	key := "test/" + id.String()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO core.files (id, bucket, object_key, filename, content_type, size_bytes, status)
+		 VALUES ($1, 'test', $2, 'proof.pdf', 'application/pdf', 10, $3)`,
+		id, key, status); err != nil {
+		t.Fatalf("insert file: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM core.files WHERE id = $1`, id)
+	})
+	return id
+}
+
+// dbFileResolver reads core.files directly so the test exercises the real
+// availability check without depending on the files package.
+type dbFileResolver struct{ pool *pgxpool.Pool }
+
+func (r dbFileResolver) ResolveFile(ctx context.Context, id uuid.UUID) (*EvidenceFile, error) {
+	var filename, status string
+	err := r.pool.QueryRow(ctx, `SELECT filename, status FROM core.files WHERE id = $1`, id).
+		Scan(&filename, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &EvidenceFile{ID: id, Filename: filename, Status: status}, nil
+}
+
+// TestEvidenceLifecycle covers attaching available files, rejecting files that
+// are not available, deriving the project from a task, separation of duties on
+// verification, listing and removal.
+func TestEvidenceLifecycle(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	store := NewPGStore(pool)
+	svc := NewService(store, dbFileResolver{pool: pool}, nil, nil)
+	actor := mustPerson(t, pool)
+	reviewer := mustPerson(t, pool)
+
+	project, err := svc.CreateProject(ctx, actor, ProjectInput{Name: "Evidence"})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	task, err := svc.CreateTask(ctx, actor, project.ID, TaskInput{Title: "Attach proof"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM work.projects WHERE id = $1`, project.ID)
+	})
+
+	available := mustFile(t, pool, "available")
+	pending := mustFile(t, pool, "pending")
+
+	// Attaching an available file to a task succeeds and derives the project.
+	ev, err := svc.AttachEvidence(ctx, actor, EvidenceInput{TaskID: &task.ID, FileID: available, Kind: "deliverable"})
+	if err != nil {
+		t.Fatalf("AttachEvidence: %v", err)
+	}
+	if ev.ProjectID == nil || *ev.ProjectID != project.ID {
+		t.Fatalf("project_id = %v, want %s", ev.ProjectID, project.ID)
+	}
+
+	// A file that is not available may not become evidence.
+	if _, err := svc.AttachEvidence(ctx, actor, EvidenceInput{TaskID: &task.ID, FileID: pending}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("attach pending: err = %v, want ErrConflict", err)
+	}
+
+	// Exactly one of task_id / project_id.
+	if _, err := svc.AttachEvidence(ctx, actor, EvidenceInput{TaskID: &task.ID, ProjectID: &project.ID, FileID: available}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("attach both: err = %v, want ErrInvalid", err)
+	}
+
+	// Project-level evidence.
+	if _, err := svc.AttachEvidence(ctx, actor, EvidenceInput{ProjectID: &project.ID, FileID: available}); err != nil {
+		t.Fatalf("AttachEvidence project: %v", err)
+	}
+
+	byTask, err := svc.ListEvidence(ctx, ListEvidenceQuery{TaskID: &task.ID})
+	if err != nil || len(byTask) != 1 {
+		t.Fatalf("ListEvidence task = %d, err = %v, want 1", len(byTask), err)
+	}
+	byProject, err := svc.ListEvidence(ctx, ListEvidenceQuery{ProjectID: &project.ID})
+	if err != nil || len(byProject) != 2 {
+		t.Fatalf("ListEvidence project = %d, err = %v, want 2", len(byProject), err)
+	}
+
+	// A submitter cannot verify their own evidence.
+	if _, err := svc.VerifyEvidence(ctx, actor, ev.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("self verify: err = %v, want ErrForbidden", err)
+	}
+	verified, err := svc.VerifyEvidence(ctx, reviewer, ev.ID)
+	if err != nil {
+		t.Fatalf("VerifyEvidence: %v", err)
+	}
+	if verified.VerifiedBy == nil || *verified.VerifiedBy != reviewer || verified.VerifiedAt == nil {
+		t.Fatalf("verified = %+v, want reviewer %s", verified, reviewer)
+	}
+	// Verification is once.
+	if _, err := svc.VerifyEvidence(ctx, reviewer, ev.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("double verify: err = %v, want ErrConflict", err)
+	}
+
+	if err := svc.DeleteEvidence(ctx, actor, ev.ID); err != nil {
+		t.Fatalf("DeleteEvidence: %v", err)
+	}
+	if _, err := svc.GetEvidence(ctx, ev.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetEvidence after delete: err = %v, want ErrNotFound", err)
 	}
 }

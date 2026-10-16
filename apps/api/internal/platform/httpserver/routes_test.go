@@ -65,7 +65,7 @@ func testDeps(t *testing.T) Deps {
 		Auth:    testService(t),
 		// Mounting work ensures its routes are covered by the registry and
 		// permission-catalogue checks above. The store is never called here.
-		Work: work.NewHandler(work.NewService(work.NewPGStore(nil), nil, logger), logger),
+		Work: work.NewHandler(work.NewService(work.NewPGStore(nil), nil, nil, logger), logger),
 	}
 }
 

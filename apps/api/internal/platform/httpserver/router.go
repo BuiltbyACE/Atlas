@@ -297,4 +297,20 @@ func registerWork(reg *routing.Registry, h *work.Handler) {
 		"Raise a blocker", h.RaiseBlocker)
 	reg.Gated("work.blocker.manage", http.MethodPost, "/api/v1/work/blockers/{id}/resolve",
 		"Resolve a blocker", h.ResolveBlocker)
+
+	// Evidence.
+	reg.Gated("work.evidence.read", http.MethodGet, "/api/v1/work/tasks/{id}/evidence",
+		"List a task's evidence", h.ListTaskEvidence)
+	reg.Gated("work.evidence.read", http.MethodGet, "/api/v1/work/projects/{id}/evidence",
+		"List a project's evidence", h.ListProjectEvidence)
+	reg.Gated("work.evidence.read", http.MethodGet, "/api/v1/work/evidence/{id}",
+		"Get an evidence record", h.GetEvidence)
+	reg.Gated("work.evidence.write", http.MethodPost, "/api/v1/work/tasks/{id}/evidence",
+		"Attach evidence to a task", h.AttachTaskEvidence)
+	reg.Gated("work.evidence.write", http.MethodPost, "/api/v1/work/projects/{id}/evidence",
+		"Attach evidence to a project", h.AttachProjectEvidence)
+	reg.Gated("work.evidence.write", http.MethodPost, "/api/v1/work/evidence/{id}/verify",
+		"Verify an evidence record", h.VerifyEvidence)
+	reg.Gated("work.evidence.write", http.MethodDelete, "/api/v1/work/evidence/{id}",
+		"Remove an evidence record", h.DeleteEvidence)
 }
