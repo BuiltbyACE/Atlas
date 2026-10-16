@@ -28,8 +28,10 @@ type EscalationRef struct {
 	Status     string
 	Reason     string
 	AssigneeID *uuid.UUID
-	RaisedBy   *uuid.UUID
-	ResolvedBy *uuid.UUID
+	// AssigneeUserID is the assignee's account id, resolved by the producer.
+	AssigneeUserID *uuid.UUID
+	RaisedBy       *uuid.UUID
+	ResolvedBy     *uuid.UUID
 }
 
 // EscalationRaisedPayload is emitted when an escalation is raised.
@@ -41,22 +43,26 @@ type EscalationRaisedPayload struct {
 	Level        int        `json:"level"`
 	Reason       string     `json:"reason,omitempty"`
 	AssigneeID   *uuid.UUID `json:"assignee_person_id,omitempty"`
-	RaisedBy     *uuid.UUID `json:"raised_by_person_id,omitempty"`
-	RaisedAt     time.Time  `json:"raised_at"`
+	// AssigneeUserID is the assignee's account id (§7.5), nil when the task is
+	// unassigned or the assignee has no account.
+	AssigneeUserID *uuid.UUID `json:"assignee_user_id,omitempty"`
+	RaisedBy       *uuid.UUID `json:"raised_by_person_id,omitempty"`
+	RaisedAt       time.Time  `json:"raised_at"`
 }
 
 // NewEscalationRaised builds a core.escalation.raised.v1 event.
 func NewEscalationRaised(actorID *uuid.UUID, e EscalationRef) (Event, error) {
 	return buildEvent(TypeEscalationRaisedV1, AggregateEscalation, e.ID, actorID, nil, EscalationRaisedPayload{
-		EscalationID: e.ID,
-		EntityType:   e.EntityType,
-		EntityID:     e.EntityID,
-		ProjectID:    e.ProjectID,
-		Level:        e.Level,
-		Reason:       e.Reason,
-		AssigneeID:   e.AssigneeID,
-		RaisedBy:     e.RaisedBy,
-		RaisedAt:     time.Now().UTC(),
+		EscalationID:   e.ID,
+		EntityType:     e.EntityType,
+		EntityID:       e.EntityID,
+		ProjectID:      e.ProjectID,
+		Level:          e.Level,
+		Reason:         e.Reason,
+		AssigneeID:     e.AssigneeID,
+		AssigneeUserID: e.AssigneeUserID,
+		RaisedBy:       e.RaisedBy,
+		RaisedAt:       time.Now().UTC(),
 	})
 }
 

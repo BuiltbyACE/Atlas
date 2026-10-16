@@ -15,6 +15,7 @@ import (
 // the write path asked it to persist.
 type fakeStore struct {
 	recipient *Recipient
+	account   *uuid.UUID
 	hasPref   bool
 	pref      Preference
 
@@ -32,6 +33,10 @@ type fakeStore struct {
 
 func (f *fakeStore) Recipient(context.Context, uuid.UUID) (*Recipient, error) {
 	return f.recipient, nil
+}
+
+func (f *fakeStore) AccountForPerson(context.Context, uuid.UUID) (*uuid.UUID, error) {
+	return f.account, nil
 }
 
 func (f *fakeStore) Preferences(_ context.Context, personID uuid.UUID) (Preference, error) {

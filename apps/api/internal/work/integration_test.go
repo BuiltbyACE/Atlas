@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -425,6 +426,67 @@ func TestEscalationSweep(t *testing.T) {
 	}
 	if raised, _, err := svc.Sweep(ctx, 10); err != nil || raised != 0 {
 		t.Fatalf("post-resolve sweep raised=%d err=%v, want 0", raised, err)
+	}
+}
+
+// mustAccount gives a person a login and returns the account id, so a test can
+// assert the realtime address an event carries.
+func mustAccount(t *testing.T, pool *pgxpool.Pool, personID uuid.UUID) uuid.UUID {
+	t.Helper()
+	id, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("new id: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO core.user_accounts (id, person_id, email, status) VALUES ($1, $2, $3, 'active')`,
+		id, personID, id.String()+"@example.test"); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM core.user_accounts WHERE id = $1`, id)
+	})
+	return id
+}
+
+// TestProjectCreatedCarriesOwnerUserID proves the producer resolves the owner's
+// account at write time: the event names both the person (the fact) and the
+// account realtime nudges are addressed to (§7.5, §10.1).
+func TestProjectCreatedCarriesOwnerUserID(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	svc := NewService(NewPGStore(pool), nil, nil, nil)
+
+	owner := mustPerson(t, pool)
+	accountID := mustAccount(t, pool, owner)
+
+	project, err := svc.CreateProject(ctx, owner, ProjectInput{Name: "Orion", OwnerPersonID: &owner})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM outbox.events WHERE aggregate_id = $1`, project.ID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM work.projects WHERE id = $1`, project.ID)
+	})
+
+	var raw []byte
+	if err := pool.QueryRow(ctx,
+		`SELECT payload FROM outbox.events WHERE aggregate_id = $1 AND type = 'work.project.created.v1'`,
+		project.ID).Scan(&raw); err != nil {
+		t.Fatalf("read event payload: %v", err)
+	}
+
+	var payload struct {
+		OwnerID     string `json:"owner_person_id"`
+		OwnerUserID string `json:"owner_user_id"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.OwnerUserID != accountID.String() {
+		t.Fatalf("owner_user_id = %q, want %q", payload.OwnerUserID, accountID.String())
+	}
+	if payload.OwnerID != owner.String() {
+		t.Fatalf("owner_person_id = %q, want %q", payload.OwnerID, owner.String())
 	}
 }
 

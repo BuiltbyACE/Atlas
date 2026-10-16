@@ -34,8 +34,11 @@ type ProjectCreatedPayload struct {
 	Name      string    `json:"name"`
 	Status    string    `json:"status"`
 	OwnerID   uuid.UUID `json:"owner_person_id,omitempty"`
-	CreatedBy uuid.UUID `json:"created_by,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	// OwnerUserID is the owner's account (core.user_accounts). The realtime bus
+	// is keyed by account (§10.1); nil when the owner has no account yet.
+	OwnerUserID *uuid.UUID `json:"owner_user_id,omitempty"`
+	CreatedBy   uuid.UUID  `json:"created_by,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // ProjectStatusChangedPayload is emitted when a project's status changes.
@@ -54,8 +57,11 @@ type TaskCreatedPayload struct {
 	Title      string    `json:"title"`
 	Status     string    `json:"status"`
 	AssigneeID uuid.UUID `json:"assignee_person_id,omitempty"`
-	CreatedBy  uuid.UUID `json:"created_by,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	// AssigneeUserID is the assignee's account id, resolved by the producer
+	// (§7.5); nil when the task is unassigned or the assignee has no account.
+	AssigneeUserID *uuid.UUID `json:"assignee_user_id,omitempty"`
+	CreatedBy      uuid.UUID  `json:"created_by,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // TaskStatusChangedPayload is emitted on a task status transition.
@@ -73,8 +79,10 @@ type TaskAssignedPayload struct {
 	TaskID     uuid.UUID `json:"task_id"`
 	ProjectID  uuid.UUID `json:"project_id"`
 	AssigneeID uuid.UUID `json:"assignee_person_id,omitempty"`
-	AssignedBy uuid.UUID `json:"assigned_by,omitempty"`
-	AssignedAt time.Time `json:"assigned_at"`
+	// AssigneeUserID is the new assignee's account id (§7.5), nil when unknown.
+	AssigneeUserID *uuid.UUID `json:"assignee_user_id,omitempty"`
+	AssignedBy     uuid.UUID  `json:"assigned_by,omitempty"`
+	AssignedAt     time.Time  `json:"assigned_at"`
 }
 
 // TaskBlockedPayload is emitted when a blocker is raised on a task.
@@ -98,25 +106,29 @@ type TaskUnblockedPayload struct {
 
 // TaskOverduePayload is emitted the first time a task passes its deadline.
 type TaskOverduePayload struct {
-	TaskID       uuid.UUID  `json:"task_id"`
-	ProjectID    uuid.UUID  `json:"project_id"`
-	Title        string     `json:"title"`
-	DueAt        time.Time  `json:"due_at"`
-	AssigneeID   *uuid.UUID `json:"assignee_person_id,omitempty"`
-	EscalationID uuid.UUID  `json:"escalation_id"`
-	Level        int        `json:"level"`
-	OverdueAt    time.Time  `json:"overdue_at"`
+	TaskID     uuid.UUID  `json:"task_id"`
+	ProjectID  uuid.UUID  `json:"project_id"`
+	Title      string     `json:"title"`
+	DueAt      time.Time  `json:"due_at"`
+	AssigneeID *uuid.UUID `json:"assignee_person_id,omitempty"`
+	// AssigneeUserID is the overdue assignee's account id (§7.5), nil when the
+	// task is unassigned or the assignee has no account.
+	AssigneeUserID *uuid.UUID `json:"assignee_user_id,omitempty"`
+	EscalationID   uuid.UUID  `json:"escalation_id"`
+	Level          int        `json:"level"`
+	OverdueAt      time.Time  `json:"overdue_at"`
 }
 
 // NewProjectCreated builds a work.project.created.v1 event.
 func NewProjectCreated(actorID *uuid.UUID, p ProjectRef) (Event, error) {
 	return buildEvent(TypeProjectCreatedV1, AggregateProject, p.ID, actorID, nil, ProjectCreatedPayload{
-		ProjectID: p.ID,
-		Name:      p.Name,
-		Status:    p.Status,
-		OwnerID:   p.OwnerID,
-		CreatedBy: p.CreatedBy,
-		CreatedAt: time.Now().UTC(),
+		ProjectID:   p.ID,
+		Name:        p.Name,
+		Status:      p.Status,
+		OwnerID:     p.OwnerID,
+		OwnerUserID: p.OwnerUserID,
+		CreatedBy:   p.CreatedBy,
+		CreatedAt:   time.Now().UTC(),
 	})
 }
 
@@ -134,13 +146,14 @@ func NewProjectStatusChanged(actorID *uuid.UUID, id uuid.UUID, from, to string, 
 // NewTaskCreated builds a work.task.created.v1 event.
 func NewTaskCreated(actorID *uuid.UUID, t TaskRef) (Event, error) {
 	return buildEvent(TypeTaskCreatedV1, AggregateTask, t.ID, actorID, nil, TaskCreatedPayload{
-		TaskID:     t.ID,
-		ProjectID:  t.ProjectID,
-		Title:      t.Title,
-		Status:     t.Status,
-		AssigneeID: t.AssigneeID,
-		CreatedBy:  t.CreatedBy,
-		CreatedAt:  time.Now().UTC(),
+		TaskID:         t.ID,
+		ProjectID:      t.ProjectID,
+		Title:          t.Title,
+		Status:         t.Status,
+		AssigneeID:     t.AssigneeID,
+		AssigneeUserID: t.AssigneeUserID,
+		CreatedBy:      t.CreatedBy,
+		CreatedAt:      time.Now().UTC(),
 	})
 }
 
@@ -156,14 +169,17 @@ func NewTaskStatusChanged(actorID *uuid.UUID, id, projectID uuid.UUID, from, to 
 	})
 }
 
-// NewTaskAssigned builds a work.task.assigned.v1 event.
-func NewTaskAssigned(actorID *uuid.UUID, id, projectID, assignee uuid.UUID, assignedBy uuid.UUID) (Event, error) {
+// NewTaskAssigned builds a work.task.assigned.v1 event. assigneeUserID is the
+// new assignee's account id (nil when the assignee has no account), already
+// resolved by the caller so the event carries the realtime address (§7.5).
+func NewTaskAssigned(actorID *uuid.UUID, id, projectID, assignee uuid.UUID, assignedBy uuid.UUID, assigneeUserID *uuid.UUID) (Event, error) {
 	return buildEvent(TypeTaskAssignedV1, AggregateTask, id, actorID, nil, TaskAssignedPayload{
-		TaskID:     id,
-		ProjectID:  projectID,
-		AssigneeID: assignee,
-		AssignedBy: assignedBy,
-		AssignedAt: time.Now().UTC(),
+		TaskID:         id,
+		ProjectID:      projectID,
+		AssigneeID:     assignee,
+		AssigneeUserID: assigneeUserID,
+		AssignedBy:     assignedBy,
+		AssignedAt:     time.Now().UTC(),
 	})
 }
 
@@ -192,26 +208,29 @@ func NewTaskUnblocked(actorID *uuid.UUID, taskID, projectID, blockerID uuid.UUID
 
 // TaskOverdueRef is the minimal view the overdue event builder needs.
 type TaskOverdueRef struct {
-	ID           uuid.UUID
-	ProjectID    uuid.UUID
-	Title        string
-	DueAt        time.Time
-	AssigneeID   *uuid.UUID
-	EscalationID uuid.UUID
-	Level        int
+	ID         uuid.UUID
+	ProjectID  uuid.UUID
+	Title      string
+	DueAt      time.Time
+	AssigneeID *uuid.UUID
+	// AssigneeUserID is the assignee's account id, resolved by the producer.
+	AssigneeUserID *uuid.UUID
+	EscalationID   uuid.UUID
+	Level          int
 }
 
 // NewTaskOverdue builds a work.task.overdue.v1 event.
 func NewTaskOverdue(actorID *uuid.UUID, t TaskOverdueRef) (Event, error) {
 	return buildEvent(TypeTaskOverdueV1, AggregateTask, t.ID, actorID, nil, TaskOverduePayload{
-		TaskID:       t.ID,
-		ProjectID:    t.ProjectID,
-		Title:        t.Title,
-		DueAt:        t.DueAt,
-		AssigneeID:   t.AssigneeID,
-		EscalationID: t.EscalationID,
-		Level:        t.Level,
-		OverdueAt:    time.Now().UTC(),
+		TaskID:         t.ID,
+		ProjectID:      t.ProjectID,
+		Title:          t.Title,
+		DueAt:          t.DueAt,
+		AssigneeID:     t.AssigneeID,
+		AssigneeUserID: t.AssigneeUserID,
+		EscalationID:   t.EscalationID,
+		Level:          t.Level,
+		OverdueAt:      time.Now().UTC(),
 	})
 }
 
@@ -241,11 +260,13 @@ type EvidenceAddedPayload struct {
 
 // ProjectRef is the minimal project view the event builders need.
 type ProjectRef struct {
-	ID        uuid.UUID
-	Name      string
-	Status    string
-	OwnerID   uuid.UUID
-	CreatedBy uuid.UUID
+	ID      uuid.UUID
+	Name    string
+	Status  string
+	OwnerID uuid.UUID
+	// OwnerUserID is the owner's account id, resolved by the producer (§7.5).
+	OwnerUserID *uuid.UUID
+	CreatedBy   uuid.UUID
 }
 
 // TaskRef is the minimal task view the event builders need.
@@ -255,5 +276,7 @@ type TaskRef struct {
 	Title      string
 	Status     string
 	AssigneeID uuid.UUID
-	CreatedBy  uuid.UUID
+	// AssigneeUserID is the assignee's account id, resolved by the producer.
+	AssigneeUserID *uuid.UUID
+	CreatedBy      uuid.UUID
 }

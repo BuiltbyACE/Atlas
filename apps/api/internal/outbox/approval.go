@@ -29,8 +29,11 @@ type ApprovalRequestedPayload struct {
 	Currency     string    `json:"currency,omitempty"`
 	ApproverRole string    `json:"approver_role,omitempty"`
 	ApproverID   uuid.UUID `json:"approver_id,omitempty"`
-	DueAt        time.Time `json:"due_at,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	// ApproverUserID is the named approver's account id (§7.5), nil for a
+	// role-based approval nobody is named on.
+	ApproverUserID *uuid.UUID `json:"approver_user_id,omitempty"`
+	DueAt          time.Time  `json:"due_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // ApprovalDecidedPayload is emitted on approve/decline.
@@ -44,14 +47,17 @@ type ApprovalDecidedPayload struct {
 
 // ApprovalEscalatedPayload is emitted when escalated.
 type ApprovalEscalatedPayload struct {
-	ApprovalID  uuid.UUID `json:"approval_id"`
-	Ref         string    `json:"ref"`
-	FromRole    string    `json:"from_role,omitempty"`
-	ToRole      string    `json:"to_role,omitempty"`
-	ToPersonID  uuid.UUID `json:"to_person_id,omitempty"`
-	EscalatedBy uuid.UUID `json:"escalated_by,omitempty"`
-	Reason      string    `json:"reason,omitempty"`
-	EscalatedAt time.Time `json:"escalated_at"`
+	ApprovalID uuid.UUID `json:"approval_id"`
+	Ref        string    `json:"ref"`
+	FromRole   string    `json:"from_role,omitempty"`
+	ToRole     string    `json:"to_role,omitempty"`
+	ToPersonID uuid.UUID `json:"to_person_id,omitempty"`
+	// ToUserID is the escalation target's account id (§7.5), nil when the
+	// escalation named a role rather than a person.
+	ToUserID    *uuid.UUID `json:"to_user_id,omitempty"`
+	EscalatedBy uuid.UUID  `json:"escalated_by,omitempty"`
+	Reason      string     `json:"reason,omitempty"`
+	EscalatedAt time.Time  `json:"escalated_at"`
 }
 
 // ApprovalCancelledPayload is emitted on cancel.
@@ -72,17 +78,18 @@ type ApprovalExpiredPayload struct {
 
 func NewApprovalRequested(actorID *uuid.UUID, a ApprovalRef) (Event, error) {
 	return buildEvent(TypeApprovalRequestedV1, AggregateApproval, a.ID, actorID, nil, ApprovalRequestedPayload{
-		ApprovalID:   a.ID,
-		Ref:          a.Ref,
-		EntityType:   a.EntityType,
-		EntityID:     a.EntityID,
-		RequestedBy:  a.RequestedBy,
-		AmountMinor:  a.AmountMinor,
-		Currency:     a.Currency,
-		ApproverRole: a.ApproverRole,
-		ApproverID:   a.ApproverID,
-		DueAt:        a.DueAt,
-		CreatedAt:    time.Now().UTC(),
+		ApprovalID:     a.ID,
+		Ref:            a.Ref,
+		EntityType:     a.EntityType,
+		EntityID:       a.EntityID,
+		RequestedBy:    a.RequestedBy,
+		AmountMinor:    a.AmountMinor,
+		Currency:       a.Currency,
+		ApproverRole:   a.ApproverRole,
+		ApproverID:     a.ApproverID,
+		ApproverUserID: a.ApproverUserID,
+		DueAt:          a.DueAt,
+		CreatedAt:      time.Now().UTC(),
 	})
 }
 
@@ -106,13 +113,14 @@ func NewApprovalDeclined(actorID *uuid.UUID, id uuid.UUID, ref, reason string, d
 	})
 }
 
-func NewApprovalEscalated(actorID *uuid.UUID, id uuid.UUID, ref, fromRole, toRole string, toPerson uuid.UUID, escalatedBy uuid.UUID, reason string) (Event, error) {
+func NewApprovalEscalated(actorID *uuid.UUID, id uuid.UUID, ref, fromRole, toRole string, toPerson uuid.UUID, toUserID *uuid.UUID, escalatedBy uuid.UUID, reason string) (Event, error) {
 	return buildEvent(TypeApprovalEscalatedV1, AggregateApproval, id, actorID, nil, ApprovalEscalatedPayload{
 		ApprovalID:  id,
 		Ref:         ref,
 		FromRole:    fromRole,
 		ToRole:      toRole,
 		ToPersonID:  toPerson,
+		ToUserID:    toUserID,
 		EscalatedBy: escalatedBy,
 		Reason:      reason,
 		EscalatedAt: time.Now().UTC(),
@@ -148,5 +156,8 @@ type ApprovalRef struct {
 	Currency     string
 	ApproverRole string
 	ApproverID   uuid.UUID
-	DueAt        time.Time
+	// ApproverUserID is the named approver's account id, resolved by the
+	// producer; nil for a role-based request.
+	ApproverUserID *uuid.UUID
+	DueAt          time.Time
 }

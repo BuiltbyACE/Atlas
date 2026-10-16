@@ -39,7 +39,7 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
       type: "core.notification.requested.v1",
       seq: 2,
       payload: %{
-        "recipient_person_id" => recipient,
+        "recipient_user_id" => recipient,
         "notification_ids" => [Ecto.UUID.generate()],
         "template" => "core.approval.requested",
         "critical" => false,
@@ -108,7 +108,7 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
       id: Ecto.UUID.generate(),
       type: "people.leave.approved.v1",
       seq: 6,
-      payload: %{"leave_request_id" => Ecto.UUID.generate(), "person_id" => person},
+      payload: %{"leave_request_id" => Ecto.UUID.generate(), "person_user_id" => person},
       occurred_at: ~U[2026-10-16 10:00:00.000000Z]
     }
 

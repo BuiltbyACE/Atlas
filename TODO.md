@@ -97,13 +97,14 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] Mount the `work:project:{id}` channel and call the join check above with
       `ATLAS_SERVICE_TOKEN` (`AtlasOrchestrator.Realtime.ProjectChannel` →
       `AtlasOrchestrator.Authz` + `Authz.HTTP`, brief cache, fail closed; tests)
-- [ ] **Realtime `user:{id}` topics use a person id but the socket id is the
-      account id.** Producers (work/people/approvals/notifications) push to
-      `user:{person_id}` (from the outbox payloads), while `UserSocket` assigns
-      the id from the token `sub` = `core.user_accounts.id` (what
-      `CheckPermission` needs). So personal nudges currently reach no joined
-      channel. Needs a decision: carry the account id in the events, or let the
-      token/socket address persons. See the note below.
+- [x] **Realtime `user:{id}` topics now carry the account id.** Producers
+      (work/people/approvals/notifications) resolve person→account at write
+      time through `internal/identity` and add a nullable `*_user_id` next to
+      the person id in the outbox payload, nil when the person has no login.
+      Handlers push `user:{account_id}` — the id a socket is addressed by
+      (`UserSocket` `sub` = `core.user_accounts.id`, §7.5/§10.1). Contracts,
+      handler maps and tests updated; `internal/identity` + a work producer
+      integration test pin the bridge.
 - [ ] People §8.5 endpoints still missing: `GET /api/v1/people/availability?date=`
       and `POST /api/v1/people/{id}/offboard`
 - [ ] Frontend (after backend above is complete)
@@ -112,8 +113,8 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       not Elixir Oban timers + a Go internal command API (§5.8)
       (daily reports/leave moved to `people` in migration 00013 — resolved)
 
-Current status: Phase 1 (A-H) complete. Phase 2 backend (work core, evidence,
-people module: daily reports + leave, escalation ladder, exec work tile) and the
-Elixir outbox wiring complete (Go schema 13; §8.5 routes wired; Go tests green;
-45 Elixir tests green). Next: mount the `work:project:{id}` channel, the two
-remaining §8.5 people endpoints, then the frontend.
+Current status: Phase 1 (A-H) complete. Phase 2 backend (work, people,
+escalations, exec dashboard) is done, including the Elixir outbox wiring, the Go
+realtime join check, the static service credential, and account-addressed
+personal `user:{id}` topics. Next: the two remaining §8.5 people endpoints, then
+the frontend.

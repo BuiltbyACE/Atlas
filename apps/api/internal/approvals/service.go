@@ -38,6 +38,15 @@ func NewService(store Store, aw *audit.Writer, notifier Notifier, logger *slog.L
 	}
 }
 
+// accountForPerson resolves an optional person to the account realtime nudges
+// are addressed to (nil in, nil out), for the events that name a person (§7.5).
+func (s *Service) accountForPerson(ctx context.Context, personID *uuid.UUID) (*uuid.UUID, error) {
+	if personID == nil {
+		return nil, nil
+	}
+	return s.store.AccountForPerson(ctx, *personID)
+}
+
 // Request creates an approval and emits core.approval.requested.v1.
 //
 // When the caller does not name an approver, the approval policy that governs
@@ -120,17 +129,23 @@ func (s *Service) Request(ctx context.Context, in Request, actor *uuid.UUID) (*A
 		ToStatus:   string(StatusRequested),
 	}
 
+	approverUserID, err := s.accountForPerson(ctx, a.ApproverID)
+	if err != nil {
+		return nil, err
+	}
+
 	ev, err := outbox.NewApprovalRequested(actor, outbox.ApprovalRef{
-		ID:           a.ID,
-		Ref:          a.Ref,
-		EntityType:   a.EntityType,
-		EntityID:     a.EntityID,
-		RequestedBy:  a.RequestedBy,
-		AmountMinor:  a.AmountMinor,
-		Currency:     a.Currency,
-		ApproverRole: a.ApproverRole,
-		ApproverID:   zeroIfNil(a.ApproverID),
-		DueAt:        zeroTime(a.DueAt),
+		ID:             a.ID,
+		Ref:            a.Ref,
+		EntityType:     a.EntityType,
+		EntityID:       a.EntityID,
+		RequestedBy:    a.RequestedBy,
+		AmountMinor:    a.AmountMinor,
+		Currency:       a.Currency,
+		ApproverRole:   a.ApproverRole,
+		ApproverID:     zeroIfNil(a.ApproverID),
+		ApproverUserID: approverUserID,
+		DueAt:          zeroTime(a.DueAt),
 	})
 	if err != nil {
 		return nil, err
@@ -252,7 +267,11 @@ func (s *Service) Escalate(ctx context.Context, in Escalate) error {
 	if in.ToPersonID != nil {
 		toPerson = *in.ToPersonID
 	}
-	ev, err := outbox.NewApprovalEscalated(&in.ActorID, in.ApprovalID, "", "", in.ToRole, toPerson, in.ActorID, in.Reason)
+	toUserID, err := s.accountForPerson(ctx, in.ToPersonID)
+	if err != nil {
+		return err
+	}
+	ev, err := outbox.NewApprovalEscalated(&in.ActorID, in.ApprovalID, "", "", in.ToRole, toPerson, toUserID, in.ActorID, in.Reason)
 	if err != nil {
 		return err
 	}

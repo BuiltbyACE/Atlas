@@ -104,7 +104,11 @@ func (s *Service) Request(ctx context.Context, in Request) ([]Notification, erro
 	for i := range drafts {
 		ids[i] = drafts[i].ID
 	}
-	ev, err := outbox.NewNotificationRequested(in.ActorID, nil, in.RecipientPersonID, ids, in.Template, in.Critical)
+	recipientUserID, err := s.store.AccountForPerson(ctx, in.RecipientPersonID)
+	if err != nil {
+		return nil, err
+	}
+	ev, err := outbox.NewNotificationRequested(in.ActorID, nil, in.RecipientPersonID, recipientUserID, ids, in.Template, in.Critical)
 	if err != nil {
 		return nil, err
 	}

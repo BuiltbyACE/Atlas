@@ -12,6 +12,7 @@
     "from_role": { "type": "string", "maxLength": 80 },
     "to_role": { "type": "string", "maxLength": 80 },
     "to_person_id": { "type": "string", "format": "uuid" },
+    "to_user_id": { "type": "string", "format": "uuid" },
     "escalated_by": { "type": "string", "format": "uuid" },
     "reason": { "type": "string", "maxLength": 500 },
     "escalated_at": { "type": "string", "format": "date-time" }

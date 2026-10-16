@@ -98,11 +98,16 @@ func (s *Service) DecideLeaveRequest(ctx context.Context, actor, requestID uuid.
 		next.CancelReason = trim(reason)
 	}
 
+	requesterUserID, err := s.accountForPerson(ctx, current.PersonID)
+	if err != nil {
+		return LeaveRequest{}, err
+	}
+
 	var ev outbox.Event
 	if approve {
-		ev, err = outbox.NewLeaveApproved(&actor, current.ID, current.PersonID, actor)
+		ev, err = outbox.NewLeaveApproved(&actor, current.ID, current.PersonID, actor, requesterUserID)
 	} else {
-		ev, err = outbox.NewLeaveDeclined(&actor, current.ID, current.PersonID, actor, trim(reason))
+		ev, err = outbox.NewLeaveDeclined(&actor, current.ID, current.PersonID, actor, trim(reason), requesterUserID)
 	}
 	if err != nil {
 		return LeaveRequest{}, err
@@ -136,7 +141,12 @@ func (s *Service) CancelLeaveRequest(ctx context.Context, actor, requestID uuid.
 	next.Status = LeaveCancelled
 	next.CancelReason = trim(reason)
 
-	ev, err := outbox.NewLeaveCancelled(&actor, current.ID, current.PersonID, actor, trim(reason))
+	requesterUserID, err := s.accountForPerson(ctx, current.PersonID)
+	if err != nil {
+		return LeaveRequest{}, err
+	}
+
+	ev, err := outbox.NewLeaveCancelled(&actor, current.ID, current.PersonID, actor, trim(reason), requesterUserID)
 	if err != nil {
 		return LeaveRequest{}, err
 	}

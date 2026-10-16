@@ -16,6 +16,7 @@
     "currency": { "type": "string", "minLength": 3, "maxLength": 3 },
     "approver_role": { "type": "string", "maxLength": 80 },
     "approver_id": { "type": "string", "format": "uuid" },
+    "approver_user_id": { "type": "string", "format": "uuid" },
     "due_at": { "type": "string", "format": "date-time" },
     "created_at": { "type": "string", "format": "date-time" }
   }

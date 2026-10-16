@@ -69,19 +69,26 @@ func (s *Service) ResolveEscalation(ctx context.Context, actor, id uuid.UUID) (E
 // decision needs configuration, not schema.
 func (s *Service) Sweep(ctx context.Context, limit int) (raised, resolved int, err error) {
 	raisedEsc, err := s.store.SweepOverdueTasks(ctx, limit, func(t OverdueTask, esc Escalation) ([]outbox.Event, error) {
+		assigneeUser, err := s.accountForPerson(ctx, t.AssigneeID)
+		if err != nil {
+			return nil, err
+		}
 		overdue, err := outbox.NewTaskOverdue(nil, outbox.TaskOverdueRef{
-			ID:           t.ID,
-			ProjectID:    t.ProjectID,
-			Title:        t.Title,
-			DueAt:        t.DueAt,
-			AssigneeID:   t.AssigneeID,
-			EscalationID: esc.ID,
-			Level:        esc.Level,
+			ID:             t.ID,
+			ProjectID:      t.ProjectID,
+			Title:          t.Title,
+			DueAt:          t.DueAt,
+			AssigneeID:     t.AssigneeID,
+			AssigneeUserID: assigneeUser,
+			EscalationID:   esc.ID,
+			Level:          esc.Level,
 		})
 		if err != nil {
 			return nil, err
 		}
-		raised, err := outbox.NewEscalationRaised(nil, escalationRef(esc))
+		ref := escalationRef(esc)
+		ref.AssigneeUserID = assigneeUser
+		raised, err := outbox.NewEscalationRaised(nil, ref)
 		if err != nil {
 			return nil, err
 		}

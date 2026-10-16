@@ -4,7 +4,8 @@ defmodule AtlasOrchestrator.Notifications.Handler do
 
   Consumes `core.notification.requested.v1` (emitted by Go in the same
   transaction as the notification rows). On receipt it publishes a
-  `notification.changed` signal to `user:{recipient_person_id}` (ADR-009).
+  `notification.changed` signal to `user:{recipient_user_id}`, the recipient's
+  *account* id (§7.5, §10.1), which is what a socket is addressed by (ADR-009).
   """
 
   require Logger
@@ -54,15 +55,15 @@ defmodule AtlasOrchestrator.Notifications.Handler do
 
   def handle_event(_event, _meta), do: :ok
 
-  defp extract_recipient(%{"recipient_person_id" => id}) when is_binary(id) and id != "" do
+  defp extract_recipient(%{"recipient_user_id" => id}) when is_binary(id) and id != "" do
     {:ok, id}
   end
 
-  defp extract_recipient(%{recipient_person_id: id}) when is_binary(id) and id != "" do
+  defp extract_recipient(%{recipient_user_id: id}) when is_binary(id) and id != "" do
     {:ok, id}
   end
 
-  defp extract_recipient(_), do: {:error, "missing recipient_person_id"}
+  defp extract_recipient(_), do: {:error, "missing recipient_user_id"}
 
   defp extract_notification_ids(%{"notification_ids" => ids}) when is_list(ids) do
     {:ok, ids}

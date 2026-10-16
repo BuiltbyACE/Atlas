@@ -46,12 +46,15 @@ func NewDailyReportSubmitted(actorID *uuid.UUID, reportID, reporterID uuid.UUID,
 type LeaveRequestPayload struct {
 	LeaveRequestID uuid.UUID `json:"leave_request_id"`
 	PersonID       uuid.UUID `json:"person_id"`
-	Type           string    `json:"leave_type,omitempty"`
-	FromDate       string    `json:"from_date,omitempty"`
-	ToDate         string    `json:"to_date,omitempty"`
-	By             uuid.UUID `json:"by,omitempty"`
-	Reason         string    `json:"reason,omitempty"`
-	Occurred       time.Time `json:"occurred_at"`
+	// PersonUserID is the requester's account id, resolved by the producer when
+	// the event nudges them (§7.5); nil when the person has no account.
+	PersonUserID *uuid.UUID `json:"person_user_id,omitempty"`
+	Type         string     `json:"leave_type,omitempty"`
+	FromDate     string     `json:"from_date,omitempty"`
+	ToDate       string     `json:"to_date,omitempty"`
+	By           uuid.UUID  `json:"by,omitempty"`
+	Reason       string     `json:"reason,omitempty"`
+	Occurred     time.Time  `json:"occurred_at"`
 }
 
 // NewLeaveRequested builds a people.leave.requested.v1 event.
@@ -67,20 +70,22 @@ func NewLeaveRequested(actorID *uuid.UUID, leaveID, personID uuid.UUID, leaveTyp
 }
 
 // NewLeaveApproved builds a people.leave.approved.v1 event.
-func NewLeaveApproved(actorID *uuid.UUID, leaveID, personID uuid.UUID, approvedBy uuid.UUID) (Event, error) {
+func NewLeaveApproved(actorID *uuid.UUID, leaveID, personID uuid.UUID, approvedBy uuid.UUID, personUserID *uuid.UUID) (Event, error) {
 	return buildEvent(TypeLeaveApprovedV1, AggregateLeaveRequest, leaveID, actorID, nil, LeaveRequestPayload{
 		LeaveRequestID: leaveID,
 		PersonID:       personID,
+		PersonUserID:   personUserID,
 		By:             approvedBy,
 		Occurred:       time.Now().UTC(),
 	})
 }
 
 // NewLeaveDeclined builds a people.leave.declined.v1 event.
-func NewLeaveDeclined(actorID *uuid.UUID, leaveID, personID uuid.UUID, declinedBy uuid.UUID, reason string) (Event, error) {
+func NewLeaveDeclined(actorID *uuid.UUID, leaveID, personID uuid.UUID, declinedBy uuid.UUID, reason string, personUserID *uuid.UUID) (Event, error) {
 	return buildEvent(TypeLeaveDeclinedV1, AggregateLeaveRequest, leaveID, actorID, nil, LeaveRequestPayload{
 		LeaveRequestID: leaveID,
 		PersonID:       personID,
+		PersonUserID:   personUserID,
 		By:             declinedBy,
 		Reason:         reason,
 		Occurred:       time.Now().UTC(),
@@ -88,10 +93,11 @@ func NewLeaveDeclined(actorID *uuid.UUID, leaveID, personID uuid.UUID, declinedB
 }
 
 // NewLeaveCancelled builds a people.leave.cancelled.v1 event.
-func NewLeaveCancelled(actorID *uuid.UUID, leaveID, personID uuid.UUID, cancelledBy uuid.UUID, reason string) (Event, error) {
+func NewLeaveCancelled(actorID *uuid.UUID, leaveID, personID uuid.UUID, cancelledBy uuid.UUID, reason string, personUserID *uuid.UUID) (Event, error) {
 	return buildEvent(TypeLeaveCancelledV1, AggregateLeaveRequest, leaveID, actorID, nil, LeaveRequestPayload{
 		LeaveRequestID: leaveID,
 		PersonID:       personID,
+		PersonUserID:   personUserID,
 		By:             cancelledBy,
 		Reason:         reason,
 		Occurred:       time.Now().UTC(),

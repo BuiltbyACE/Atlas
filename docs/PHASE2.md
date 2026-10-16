@@ -127,6 +127,13 @@ tick an item only when its code, tests and migrations are in place.
       owns the call: a brief decision cache (30s) over an injectable client
       (`Authz.HTTP`, `ATLAS_SERVICE_TOKEN`), failing closed on any fault; tests
       cover the cache, the fail-closed paths and the channel join
+- [x] Personal realtime topics address the **account**, not the person (§7.5,
+      §10.1): producers resolve person→account at write time through
+      `internal/identity` and carry a nullable `*_user_id` beside the person id
+      in the outbox payload (nil when the person has no login); handlers push
+      `user:{account_id}`, the id `UserSocket` assigns from the token `sub`.
+      Payloads, handler maps, contracts and tests updated across
+      work/people/approvals/notifications
 
 ## 8. Frontend (after the backend above is complete and tested)
 

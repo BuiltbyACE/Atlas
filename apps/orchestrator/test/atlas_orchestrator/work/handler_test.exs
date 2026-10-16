@@ -26,7 +26,7 @@ defmodule AtlasOrchestrator.Work.HandlerTest do
                event("work.task.created.v1", %{
                  "task_id" => "01999999-9999-7999-9999-999999999999",
                  "project_id" => @project,
-                 "assignee_person_id" => @assignee
+                 "assignee_user_id" => @assignee
                })
              )
 
@@ -62,7 +62,7 @@ defmodule AtlasOrchestrator.Work.HandlerTest do
                  "project_id" => @project,
                  # uuid.UUID is an array, so Go cannot omit it: unset arrives as
                  # the nil UUID, not a missing key.
-                 "assignee_person_id" => @nil_uuid
+                 "assignee_user_id" => @nil_uuid
                })
              )
 
@@ -81,7 +81,7 @@ defmodule AtlasOrchestrator.Work.HandlerTest do
                event("core.escalation.raised.v1", %{
                  "escalation_id" => Ecto.UUID.generate(),
                  "project_id" => @project,
-                 "assignee_person_id" => @assignee,
+                 "assignee_user_id" => @assignee,
                  "level" => 1
                })
              )

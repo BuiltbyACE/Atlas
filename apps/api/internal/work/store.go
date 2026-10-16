@@ -11,11 +11,16 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/safaristack/atlas/apps/api/internal/identity"
 	"github.com/safaristack/atlas/apps/api/internal/outbox"
 )
 
 // Store is the work persistence interface.
 type Store interface {
+	// AccountForPerson resolves a person to the user account a realtime nudge
+	// is addressed to, or nil when the person has no account (§7.5).
+	AccountForPerson(ctx context.Context, personID uuid.UUID) (*uuid.UUID, error)
+
 	// Projects.
 	CreateProject(ctx context.Context, p Project, ev *outbox.Event) (Project, error)
 	GetProject(ctx context.Context, id uuid.UUID) (*Project, error)
@@ -77,6 +82,12 @@ type PGStore struct{ db *pgxpool.Pool }
 
 // NewPGStore builds a store over the pool.
 func NewPGStore(db *pgxpool.Pool) *PGStore { return &PGStore{db: db} }
+
+// AccountForPerson resolves the person's account via the shared identity
+// bridge, so events carry the realtime address rather than the domain id.
+func (s *PGStore) AccountForPerson(ctx context.Context, personID uuid.UUID) (*uuid.UUID, error) {
+	return identity.AccountForPerson(ctx, s.db, personID)
+}
 
 // rowScanner is satisfied by both pgx.Row and pgx.Rows.
 type rowScanner interface {

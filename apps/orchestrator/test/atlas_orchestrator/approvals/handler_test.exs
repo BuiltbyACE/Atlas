@@ -25,7 +25,7 @@ defmodule AtlasOrchestrator.Approvals.HandlerTest do
                event("core.approval.requested.v1", %{
                  "approval_id" => "01999999-9999-7999-9999-999999999999",
                  "ref" => "APR-2026-000000000001",
-                 "approver_id" => @approver
+                 "approver_user_id" => @approver
                })
              )
 
@@ -49,8 +49,8 @@ defmodule AtlasOrchestrator.Approvals.HandlerTest do
                event("core.approval.requested.v1", %{
                  "approval_id" => Ecto.UUID.generate(),
                  "ref" => "APR-1",
-                 # uuid.UUID is an array, so Go cannot omit it: unset arrives as
-                 # the nil UUID, not a missing key.
+                 # A role-based request names no person, so Go leaves the
+                 # account field out entirely (a pointer, omitted when nil).
                  "approver_id" => @nil_uuid
                })
              )
@@ -66,7 +66,7 @@ defmodule AtlasOrchestrator.Approvals.HandlerTest do
                event("core.approval.escalated.v1", %{
                  "approval_id" => Ecto.UUID.generate(),
                  "ref" => "APR-2",
-                 "to_person_id" => @target
+                 "to_user_id" => @target
                })
              )
 

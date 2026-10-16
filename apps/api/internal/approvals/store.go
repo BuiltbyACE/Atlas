@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/safaristack/atlas/apps/api/internal/identity"
 	"github.com/safaristack/atlas/apps/api/internal/outbox"
 )
 
@@ -22,6 +23,10 @@ type Cursor struct {
 
 // Store is the approvals persistence interface.
 type Store interface {
+	// AccountForPerson resolves a person to the user account a realtime nudge
+	// is addressed to, or nil when the person has no account (§7.5).
+	AccountForPerson(ctx context.Context, personID uuid.UUID) (*uuid.UUID, error)
+
 	// CreateWithEvent writes approval, history and outbox event in one tx.
 	CreateWithEvent(ctx context.Context, a Approval, hist []History, ev outbox.Event) error
 	Get(ctx context.Context, id uuid.UUID) (*Approval, error)
@@ -73,6 +78,12 @@ type History struct {
 type PGStore struct{ db *pgxpool.Pool }
 
 func NewPGStore(db *pgxpool.Pool) *PGStore { return &PGStore{db: db} }
+
+// AccountForPerson resolves the person's account through the shared identity
+// bridge, so approval events carry a routable realtime address.
+func (s *PGStore) AccountForPerson(ctx context.Context, personID uuid.UUID) (*uuid.UUID, error) {
+	return identity.AccountForPerson(ctx, s.db, personID)
+}
 
 const approvalCols = `id, ref, entity_type, entity_id, requested_by, amount_minor, currency,
 	approver_role, approver_id, status, policy_ref, approvals_required, due_at, decided_at, decided_by,

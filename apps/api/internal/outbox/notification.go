@@ -29,11 +29,14 @@ const AggregateNotification = "notification"
 // It is a signal (ADR-009): just enough for Elixir to push on the recipient's
 // channel and, later, decide fan-out. No business data beyond ids.
 type NotificationRequestedPayload struct {
-	RecipientPersonID uuid.UUID   `json:"recipient_person_id"`
-	NotificationIDs   []uuid.UUID `json:"notification_ids"`
-	Template          string      `json:"template,omitempty"`
-	Critical          bool        `json:"critical"`
-	RequestedAt       time.Time   `json:"requested_at"`
+	RecipientPersonID uuid.UUID `json:"recipient_person_id"`
+	// RecipientUserID is the recipient's account id (§7.5), resolved by the
+	// producer; nil when the person has no account to push to.
+	RecipientUserID *uuid.UUID  `json:"recipient_user_id,omitempty"`
+	NotificationIDs []uuid.UUID `json:"notification_ids"`
+	Template        string      `json:"template,omitempty"`
+	Critical        bool        `json:"critical"`
+	RequestedAt     time.Time   `json:"requested_at"`
 }
 
 // NotificationSentPayload is the body of core.notification.sent.v1.
@@ -55,8 +58,12 @@ type NotificationFailedPayload struct {
 // NewNotificationRequested builds a core.notification.requested.v1 event. The
 // aggregate is the notification stream: the aggregate id is the first
 // notification id, with every id carried in the payload.
+//
+// recipient is the person the notifications are for; recipientUserID is that
+// person's account id when they have one, already resolved by the caller so the
+// event can be routed to the right realtime topic (§7.5).
 func NewNotificationRequested(actorID, correlationID *uuid.UUID,
-	recipient uuid.UUID, ids []uuid.UUID, template string, critical bool) (Event, error) {
+	recipient uuid.UUID, recipientUserID *uuid.UUID, ids []uuid.UUID, template string, critical bool) (Event, error) {
 
 	anchor := recipient
 	if len(ids) > 0 {
@@ -65,6 +72,7 @@ func NewNotificationRequested(actorID, correlationID *uuid.UUID,
 	return buildEvent(TypeNotificationRequestedV1, AggregateNotification, anchor, actorID, correlationID,
 		NotificationRequestedPayload{
 			RecipientPersonID: recipient,
+			RecipientUserID:   recipientUserID,
 			NotificationIDs:   ids,
 			Template:          template,
 			Critical:          critical,

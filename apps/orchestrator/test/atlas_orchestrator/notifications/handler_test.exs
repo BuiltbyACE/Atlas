@@ -6,7 +6,7 @@ defmodule AtlasOrchestrator.Notifications.HandlerTest do
   @event %{
     type: "core.notification.requested.v1",
     payload: %{
-      "recipient_person_id" => "01999999-9999-7999-9999-999999999999",
+      "recipient_user_id" => "01999999-9999-7999-9999-999999999999",
       "notification_ids" => ["01999999-9999-8999-9999-999999999998"],
       "template" => "work.task.assigned",
       "critical" => false,
@@ -19,7 +19,7 @@ defmodule AtlasOrchestrator.Notifications.HandlerTest do
   end
 
   test "skips events with missing recipient" do
-    bad = put_in(@event.payload["recipient_person_id"], "")
+    bad = put_in(@event.payload["recipient_user_id"], "")
     assert :ok = Handler.handle_event(bad, %{})
   end
 

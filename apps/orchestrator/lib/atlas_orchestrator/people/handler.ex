@@ -26,14 +26,16 @@ defmodule AtlasOrchestrator.People.Handler do
 
   @dashboard_topic "exec:dashboard"
 
-  # Event type => {entity, id key, person key}. The keys mirror the Go payloads
-  # in internal/outbox/people.go; a nil person key means no individual is nudged.
+  # Event type => {entity, id key, user key}. The keys mirror the Go payloads in
+  # internal/outbox/people.go; a nil user key means no individual is nudged. The
+  # nudge target is the person's account id (`*_user_id`), which is what a
+  # socket is addressed by (§7.5, §10.1).
   @events %{
     "people.daily_report.submitted.v1" => {"daily_report", "report_id", nil},
     "people.leave.requested.v1" => {"leave_request", "leave_request_id", nil},
-    "people.leave.approved.v1" => {"leave_request", "leave_request_id", "person_id"},
-    "people.leave.declined.v1" => {"leave_request", "leave_request_id", "person_id"},
-    "people.leave.cancelled.v1" => {"leave_request", "leave_request_id", "person_id"}
+    "people.leave.approved.v1" => {"leave_request", "leave_request_id", "person_user_id"},
+    "people.leave.declined.v1" => {"leave_request", "leave_request_id", "person_user_id"},
+    "people.leave.cancelled.v1" => {"leave_request", "leave_request_id", "person_user_id"}
   }
 
   # uuid.UUID is an array, so Go cannot omit an unset one: it arrives as the nil
@@ -44,13 +46,13 @@ defmodule AtlasOrchestrator.People.Handler do
   @spec handle_event(map()) :: :ok
   def handle_event(%{type: type, payload: payload} = event) do
     case Map.fetch(@events, type) do
-      {:ok, {entity, id_key, person_key}} ->
+      {:ok, {entity, id_key, user_key}} ->
         occurred_at = Map.get(event, :occurred_at)
-        person_id = person_key && uuid(payload, person_key)
+        user_id = user_key && uuid(payload, user_key)
 
         signal = Signals.entity_changed(entity, payload_value(payload, id_key), occurred_at)
 
-        Enum.each(person_topics(person_id), &push(&1, signal["type"], signal, type))
+        Enum.each(user_topics(user_id), &push(&1, signal["type"], signal, type))
 
         dashboard = DashboardSignals.dashboard_changed(type, occurred_at)
         push(@dashboard_topic, dashboard["type"], dashboard, type)
@@ -80,9 +82,9 @@ defmodule AtlasOrchestrator.People.Handler do
     end
   end
 
-  # A named person is nudged directly.
-  defp person_topics(nil), do: []
-  defp person_topics(person_id), do: ["user:#{person_id}"]
+  # A named person is nudged on their own account channel (§10.1).
+  defp user_topics(nil), do: []
+  defp user_topics(user_id), do: ["user:#{user_id}"]
 
   defp uuid(payload, key) do
     case payload_value(payload, key) do

@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/safaristack/atlas/apps/api/internal/identity"
 	"github.com/safaristack/atlas/apps/api/internal/outbox"
 )
 
@@ -26,6 +27,11 @@ type Cursor struct {
 // read/write half; Dispatcher uses the queue half.
 type Store interface {
 	Recipient(ctx context.Context, personID uuid.UUID) (*Recipient, error)
+
+	// AccountForPerson resolves a person to the user account a realtime nudge is
+	// addressed to, or nil when the person has no account (§7.5). The engine
+	// writes it into the requested event so the consumer can route the push.
+	AccountForPerson(ctx context.Context, personID uuid.UUID) (*uuid.UUID, error)
 	Preferences(ctx context.Context, personID uuid.UUID) (Preference, error)
 	SavePreferences(ctx context.Context, personID uuid.UUID, p Preference) error
 
@@ -54,6 +60,12 @@ type PGStore struct{ db *pgxpool.Pool }
 
 // NewPGStore builds a Store over a connection pool.
 func NewPGStore(db *pgxpool.Pool) *PGStore { return &PGStore{db: db} }
+
+// AccountForPerson resolves the person's account through the shared identity
+// bridge, so the requested event carries a routable realtime address.
+func (s *PGStore) AccountForPerson(ctx context.Context, personID uuid.UUID) (*uuid.UUID, error) {
+	return identity.AccountForPerson(ctx, s.db, personID)
+}
 
 // notificationCols matches scanNotification, in order.
 const notificationCols = `id, recipient_person_id, channel, COALESCE(template, ''),

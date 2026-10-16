@@ -29,22 +29,24 @@ defmodule AtlasOrchestrator.Work.Handler do
 
   @dashboard_topic "exec:dashboard"
 
-  # Event type => {entity, id key, project key, person key}. The keys mirror the
+  # Event type => {entity, id key, project key, user key}. The keys mirror the
   # Go payloads in internal/outbox/work.go and escalation.go; a nil project key
-  # means the record is not project-scoped, a nil person key means no individual
-  # is nudged. `core.escalation.*` is produced by the same work engine.
+  # means the record is not project-scoped, a nil user key means no individual
+  # is nudged. The nudge target is the person's *account* id (`*_user_id`),
+  # which is what a socket is addressed by (§7.5, §10.1). `core.escalation.*`
+  # is produced by the same work engine.
   @events %{
-    "work.project.created.v1" => {"project", "project_id", nil, "owner_person_id"},
+    "work.project.created.v1" => {"project", "project_id", nil, "owner_user_id"},
     "work.project.status_changed.v1" => {"project", "project_id", nil, nil},
-    "work.task.created.v1" => {"task", "task_id", "project_id", "assignee_person_id"},
+    "work.task.created.v1" => {"task", "task_id", "project_id", "assignee_user_id"},
     "work.task.status_changed.v1" => {"task", "task_id", "project_id", nil},
-    "work.task.assigned.v1" => {"task", "task_id", "project_id", "assignee_person_id"},
+    "work.task.assigned.v1" => {"task", "task_id", "project_id", "assignee_user_id"},
     "work.task.blocked.v1" => {"task", "task_id", "project_id", nil},
     "work.task.unblocked.v1" => {"task", "task_id", "project_id", nil},
-    "work.task.overdue.v1" => {"task", "task_id", "project_id", "assignee_person_id"},
+    "work.task.overdue.v1" => {"task", "task_id", "project_id", "assignee_user_id"},
     "work.evidence.added.v1" => {"evidence", "evidence_id", "project_id", nil},
-    "core.escalation.raised.v1" => {"escalation", "escalation_id", "project_id", "assignee_person_id"},
-    "core.escalation.resolved.v1" => {"escalation", "escalation_id", "project_id", "assignee_person_id"}
+    "core.escalation.raised.v1" => {"escalation", "escalation_id", "project_id", "assignee_user_id"},
+    "core.escalation.resolved.v1" => {"escalation", "escalation_id", "project_id", "assignee_user_id"}
   }
 
   # uuid.UUID is an array, so Go cannot omit an unset one: it arrives as the nil
@@ -55,15 +57,15 @@ defmodule AtlasOrchestrator.Work.Handler do
   @spec handle_event(map()) :: :ok
   def handle_event(%{type: type, payload: payload} = event) do
     case Map.fetch(@events, type) do
-      {:ok, {entity, id_key, project_key, person_key}} ->
+      {:ok, {entity, id_key, project_key, user_key}} ->
         occurred_at = Map.get(event, :occurred_at)
         project_id = project_key && uuid(payload, project_key)
-        person_id = person_key && uuid(payload, person_key)
+        user_id = user_key && uuid(payload, user_key)
 
         signal =
           Signals.entity_changed(entity, payload_value(payload, id_key), project_id, occurred_at)
 
-        Enum.each(entity_topics(project_id, person_id), &push(&1, signal["type"], signal, type))
+        Enum.each(entity_topics(project_id, user_id), &push(&1, signal["type"], signal, type))
 
         dashboard = DashboardSignals.dashboard_changed(type, occurred_at)
         push(@dashboard_topic, dashboard["type"], dashboard, type)
@@ -93,11 +95,12 @@ defmodule AtlasOrchestrator.Work.Handler do
     end
   end
 
-  # Project members watch the board; a named person is nudged directly.
-  defp entity_topics(project_id, person_id) do
+  # Project members watch the board; a named person is nudged on their own
+  # account channel — the socket id is the account, not the person (§10.1).
+  defp entity_topics(project_id, user_id) do
     [
       project_id && "work:project:#{project_id}",
-      person_id && "user:#{person_id}"
+      user_id && "user:#{user_id}"
     ]
     |> Enum.reject(&is_nil/1)
   end

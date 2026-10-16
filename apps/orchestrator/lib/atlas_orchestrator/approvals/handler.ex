@@ -86,15 +86,15 @@ defmodule AtlasOrchestrator.Approvals.Handler do
   # named target. Everything else is an aggregate concern (the dashboard) — the
   # requester is nudged via the notifications engine.
   defp topics("core.approval.requested.v1", payload),
-    do: with_dashboard(uuid(payload, "approver_id"))
+    do: with_dashboard(uuid(payload, "approver_user_id"))
 
   defp topics("core.approval.escalated.v1", payload),
-    do: with_dashboard(uuid(payload, "to_person_id"))
+    do: with_dashboard(uuid(payload, "to_user_id"))
 
   defp topics(_type, _payload), do: [@dashboard_topic]
 
   defp with_dashboard(nil), do: [@dashboard_topic]
-  defp with_dashboard(person_id), do: ["user:" <> person_id, @dashboard_topic]
+  defp with_dashboard(user_id), do: ["user:" <> user_id, @dashboard_topic]
 
   defp uuid(payload, key) do
     case payload_value(payload, key) do

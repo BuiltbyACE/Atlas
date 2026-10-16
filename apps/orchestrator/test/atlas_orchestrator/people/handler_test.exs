@@ -22,7 +22,7 @@ defmodule AtlasOrchestrator.People.HandlerTest do
              Handler.handle_event(
                event("people.leave.approved.v1", %{
                  "leave_request_id" => Ecto.UUID.generate(),
-                 "person_id" => @person
+                 "person_user_id" => @person
                })
              )
 

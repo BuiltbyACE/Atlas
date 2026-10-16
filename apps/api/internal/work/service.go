@@ -42,6 +42,16 @@ func NewService(store Store, files FileResolver, aw *audit.Writer, logger *slog.
 	return &Service{store: store, files: files, audit: aw, now: func() time.Time { return time.Now().UTC() }, logger: logger}
 }
 
+// accountForPerson resolves an optional person to the account realtime nudges
+// are addressed to (nil in, nil out). Nil means either no person or a person
+// with no account, and both simply cannot be nudged (§7.5).
+func (s *Service) accountForPerson(ctx context.Context, personID *uuid.UUID) (*uuid.UUID, error) {
+	if personID == nil {
+		return nil, nil
+	}
+	return s.store.AccountForPerson(ctx, *personID)
+}
+
 // ProjectInput is the replacement payload for a project create/update (PUT
 // semantics: omitted fields become their zero value).
 type ProjectInput struct {
@@ -114,9 +124,14 @@ func (s *Service) CreateProject(ctx context.Context, actor uuid.UUID, in Project
 		p.CompletedAt = &now
 	}
 
+	ownerUserID, err := s.accountForPerson(ctx, p.OwnerPersonID)
+	if err != nil {
+		return Project{}, err
+	}
+
 	ev, err := outbox.NewProjectCreated(&actor, outbox.ProjectRef{
 		ID: p.ID, Name: p.Name, Status: string(p.Status),
-		OwnerID: uuidOrZero(p.OwnerPersonID), CreatedBy: actor,
+		OwnerID: uuidOrZero(p.OwnerPersonID), OwnerUserID: ownerUserID, CreatedBy: actor,
 	})
 	if err != nil {
 		return Project{}, err
@@ -345,9 +360,14 @@ func (s *Service) CreateTask(ctx context.Context, actor, projectID uuid.UUID, in
 	t.CreatedAt, t.UpdatedAt = now, now
 	applyTaskTimestamps(&t, Task{}, now)
 
+	assigneeUserID, err := s.accountForPerson(ctx, t.AssigneePersonID)
+	if err != nil {
+		return Task{}, err
+	}
+
 	ev, err := outbox.NewTaskCreated(&actor, outbox.TaskRef{
 		ID: t.ID, ProjectID: t.ProjectID, Title: t.Title, Status: string(t.Status),
-		AssigneeID: uuidOrZero(t.AssigneePersonID), CreatedBy: actor,
+		AssigneeID: uuidOrZero(t.AssigneePersonID), AssigneeUserID: assigneeUserID, CreatedBy: actor,
 	})
 	if err != nil {
 		return Task{}, err
@@ -432,7 +452,11 @@ func (s *Service) UpdateTask(ctx context.Context, actor uuid.UUID, id uuid.UUID,
 		}
 		ev = &built
 	case assigneeChanged:
-		built, err := outbox.NewTaskAssigned(&actor, id, cur.ProjectID, uuidOrZero(next.AssigneePersonID), actor)
+		assigneeUserID, err := s.accountForPerson(ctx, next.AssigneePersonID)
+		if err != nil {
+			return Task{}, err
+		}
+		built, err := outbox.NewTaskAssigned(&actor, id, cur.ProjectID, uuidOrZero(next.AssigneePersonID), actor, assigneeUserID)
 		if err != nil {
 			return Task{}, err
 		}

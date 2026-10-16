@@ -34,6 +34,12 @@ func NewService(store Store, aw *audit.Writer, logger *slog.Logger) *Service {
 	return &Service{store: store, audit: aw, now: func() time.Time { return time.Now().UTC() }, logger: logger}
 }
 
+// accountForPerson resolves a person to the account realtime nudges are
+// addressed to, or nil when the person has no account (§7.5).
+func (s *Service) accountForPerson(ctx context.Context, personID uuid.UUID) (*uuid.UUID, error) {
+	return s.store.AccountForPerson(ctx, personID)
+}
+
 // writeAudit records a state change. A nil writer makes it a no-op.
 func (s *Service) writeAudit(ctx context.Context, actor uuid.UUID, action, entityType string, entityID uuid.UUID, before, after any) {
 	if s.audit == nil {
