@@ -1,6 +1,6 @@
 # To-do: finish foundation (backends/engines/orchestrations) so frontend can build on top
 
-The sequence follows: Notifications done (Go), Elixir notification handler done. Approvals engine now has policy lookup, four-eyes/two-person enforcement, notification fan-out and a worker expiry sweep, and the Elixir outbox consumer routes notification and approval events to realtime signals. Settings and files are done. Next: audit views, exec dashboard v1.
+The sequence follows: Notifications done (Go), Elixir notification handler done. Approvals engine now has policy lookup, four-eyes/two-person enforcement, notification fan-out and a worker expiry sweep, and the Elixir outbox consumer routes notification and approval events to realtime signals. Settings and files are done. Next: exec dashboard v1.
 
 ## A) Approvals engine — core complete
 - [x] Service layer `internal/approvals/service.go`: create approval with policy checks, decide (approve/decline), escalate, cancel; optimistic concurrency; emits correct outbox events; writes audit
@@ -30,9 +30,9 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] Events (`core.file.uploaded.v1`, `core.file.deleted.v1`) written in the same tx as the change + best-effort audit; unit, DB integration, and env-gated S3 round-trip tests
 
 ## E) Audit views
-- [ ] Global audit list (auditor/CEOs), per-record history endpoints
-- [ ] Redaction enforcement
-- [ ] Tests
+- [x] Global list `GET /api/v1/audit` (filters: `entity_type`, `entity_id`, `actor_type`, `actor_id`, `action`, `since`, `until`; keyset cursor) and per-record history `GET /api/v1/audit/{entity_type}/{entity_id}`; both gated by `core.audit.read` (auditor + both CEOs, §6.3)
+- [x] Redaction enforcement: the Writer redacts sensitive fields before insert (§6.2), so the stored row and every view are already redacted; the read side returns the stored JSON verbatim with no bypass. Migration `00010` adds `(occurred_at DESC, id DESC)` and `(entity_type, entity_id, occurred_at DESC, id DESC)` keyset indexes and drops the two subsumed originals
+- [x] Tests: handler contract (envelope, limit+1 paging, cursor/filter/id validation), service defaults, and DB integration (redaction in the raw column and via the reader, newest-first ordering, keyset pagination without overlap, actor/action/time filters); verified live: both routes mounted and 401 unauthenticated
 
 ## F) Exec dashboard v1
 - [ ] Tiles: pipeline, approvals pending, incidents, overdue work
@@ -49,4 +49,4 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [ ] Metrics/logs for dispatcher + sweeps (attempts, failures, lag)
 - [ ] Contracts schema validation hook awareness (CI) — schemas already present
 
-Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests), B complete (worker expiry sweep, configurable poll/batch, tests) and G complete (Elixir outbox routing + approval signals). C (settings) and D (files) are complete; E, F and H remain. Next: E (audit views), F (exec dashboard).
+Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests), B complete (worker expiry sweep, configurable poll/batch, tests) and G complete (Elixir outbox routing + approval signals). C (settings), D (files) and E (audit views) are complete; F and H remain. Next: F (exec dashboard).

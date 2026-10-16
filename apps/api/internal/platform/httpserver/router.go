@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
+	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
@@ -42,6 +43,8 @@ type Deps struct {
 	Notifications *notifications.Handler
 	Approvals     *approvals.Handler
 	Settings      *settings.Handler
+	// Audit is the read side of the audit trail (§6.3); mounted when present.
+	Audit *audit.Handler
 	// Files is optional, and only mounted when object storage is configured
 	// (local development may run without a bucket).
 	Files *files.Handler
@@ -92,6 +95,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Settings != nil {
 		registerSettings(reg, d.Settings)
+	}
+
+	if d.Audit != nil {
+		registerAudit(reg, d.Audit)
 	}
 
 	if d.Files != nil {
@@ -203,4 +210,14 @@ func registerFiles(reg *routing.Registry, h *files.Handler) {
 		"Confirm an upload", h.Complete)
 	reg.Gated("core.file.write", http.MethodDelete, "/api/v1/files/{id}",
 		"Delete your file", h.Archive)
+}
+
+// registerAudit declares the audit read surface (§6.3). Both routes need
+// core.audit.read, which the auditor role and both CEOs hold: the trail is
+// global for exactly those principals, and viewable per record for them too.
+func registerAudit(reg *routing.Registry, h *audit.Handler) {
+	reg.Gated("core.audit.read", http.MethodGet, "/api/v1/audit",
+		"List audit events", h.List)
+	reg.Gated("core.audit.read", http.MethodGet, "/api/v1/audit/{entity_type}/{entity_id}",
+		"Get a record's audit history", h.History)
 }

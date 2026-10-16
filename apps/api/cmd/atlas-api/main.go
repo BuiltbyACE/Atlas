@@ -121,6 +121,8 @@ func run() error {
 		logger.Warn("S3_BUCKET is not set; file routes are disabled")
 	}
 
+	auditService := audit.NewService(audit.NewPGStore(pool), logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -130,6 +132,7 @@ func run() error {
 		Notifications: notificationHandler,
 		Approvals:     approvals.NewHandler(approvalService, logger),
 		Settings:      settings.NewHandler(settingsService, logger),
+		Audit:         audit.NewHandler(auditService, logger),
 		Files:         filesHandler,
 	})
 
