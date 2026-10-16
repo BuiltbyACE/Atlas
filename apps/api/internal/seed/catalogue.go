@@ -159,6 +159,7 @@ var Permissions = []Permission{
 	{"intel.brief.read", "View briefs", false},
 	{"intel.brief.manage", "Create and manage briefs", false},
 	{"intel.metric.read", "View metric snapshots", false},
+	{"intel.dashboard.read", "View the executive dashboard", false},
 
 	// integrations
 	{"integrations.registry.read", "View the integration registry", false},

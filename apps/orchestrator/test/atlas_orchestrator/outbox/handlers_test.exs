@@ -68,6 +68,20 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "approval.changed"}
   end
 
+  test "a file event is routed to the dashboard handler" do
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "core.file.uploaded.v1",
+      seq: 4,
+      payload: %{"file_id" => Ecto.UUID.generate()},
+      occurred_at: ~U[2026-10-16 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
   test "an unknown event type is ignored, not failed" do
     assert :ok = Handlers.dispatch(%Event{id: Ecto.UUID.generate(), type: "x.y.z.v1", payload: %{}})
     refute_receive %Phoenix.Socket.Broadcast{}, 50

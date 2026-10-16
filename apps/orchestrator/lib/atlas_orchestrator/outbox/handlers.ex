@@ -8,7 +8,9 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
     * `core.notification.requested.v1` — push `notification.changed` to the
       recipient's channel;
     * `core.approval.*.v1` — push `approval.changed` to the dashboard and any
-      named approver/escalation target.
+      named approver/escalation target;
+    * `core.file.*.v1` — push `dashboard.changed` to the dashboard, because a
+      file upload or archive moves the recent-highlights tile.
 
   Reacting means *signalling*, never writing business data (ADR-009): Go remains
   the authority, the orchestrator nudges.
@@ -16,6 +18,7 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   require Logger
 
   alias AtlasOrchestrator.Approvals.Handler, as: ApprovalsHandler
+  alias AtlasOrchestrator.Dashboard.Handler, as: DashboardHandler
   alias AtlasOrchestrator.Notifications.Handler, as: NotificationsHandler
   alias AtlasOrchestrator.Outbox.Event
 
@@ -29,6 +32,10 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
 
   def dispatch(%Event{type: "core.approval." <> _} = event) do
     ApprovalsHandler.handle_event(event)
+  end
+
+  def dispatch(%Event{type: "core.file." <> _} = event) do
+    DashboardHandler.handle_event(event)
   end
 
   def dispatch(%Event{type: type}) do

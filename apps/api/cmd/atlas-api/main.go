@@ -21,6 +21,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
@@ -133,7 +134,9 @@ func run() error {
 		Approvals:     approvals.NewHandler(approvalService, logger),
 		Settings:      settings.NewHandler(settingsService, logger),
 		Audit:         audit.NewHandler(auditService, logger),
-		Files:         filesHandler,
+		Dashboard: dashboard.NewHandler(
+			dashboard.NewService(dashboard.NewPGStore(pool), audit.NewPGStore(pool), logger), logger),
+		Files: filesHandler,
 	})
 
 	srv := &http.Server{

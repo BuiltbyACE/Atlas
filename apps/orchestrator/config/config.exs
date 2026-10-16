@@ -39,6 +39,18 @@ config :phoenix, :json_library, Jason
 
 config :logger, :console,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :event_id, :seq, :topic, :type, :reason, :error, :url]
+  metadata: [
+    :request_id,
+    :event_id,
+    :seq,
+    :topic,
+    :type,
+    :reason,
+    :error,
+    :url,
+    :result,
+    :event_type,
+    :payload_keys
+  ]
 
 import_config "#{config_env()}.exs"

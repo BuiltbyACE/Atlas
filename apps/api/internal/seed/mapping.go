@@ -37,7 +37,7 @@ var RolePermissions = map[string][]string{
 			"finance.budget.read", "finance.expense.read", "finance.invoice.read",
 			"finance.payment.read", "finance.report.read", "finance.amount.sensitive.read",
 			"intel.decision.read", "intel.decision.manage", "intel.risk.read", "intel.risk.manage",
-			"intel.brief.read", "intel.brief.manage", "intel.metric.read",
+			"intel.brief.read", "intel.brief.manage", "intel.metric.read", "intel.dashboard.read",
 		),
 	),
 
@@ -72,7 +72,7 @@ var RolePermissions = map[string][]string{
 			"finance.budget.read", "finance.expense.read", "finance.invoice.read",
 			"finance.payment.read", "finance.report.read", "finance.amount.sensitive.read",
 			"intel.decision.read", "intel.decision.manage", "intel.risk.read", "intel.risk.manage",
-			"intel.brief.read", "intel.brief.manage", "intel.metric.read",
+			"intel.brief.read", "intel.brief.manage", "intel.metric.read", "intel.dashboard.read",
 		),
 	),
 

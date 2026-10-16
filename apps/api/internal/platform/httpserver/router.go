@@ -19,6 +19,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
@@ -45,6 +46,8 @@ type Deps struct {
 	Settings      *settings.Handler
 	// Audit is the read side of the audit trail (§6.3); mounted when present.
 	Audit *audit.Handler
+	// Dashboard is the executive dashboard read model (§8.8); mounted when present.
+	Dashboard *dashboard.Handler
 	// Files is optional, and only mounted when object storage is configured
 	// (local development may run without a bucket).
 	Files *files.Handler
@@ -99,6 +102,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Audit != nil {
 		registerAudit(reg, d.Audit)
+	}
+
+	if d.Dashboard != nil {
+		registerDashboard(reg, d.Dashboard)
 	}
 
 	if d.Files != nil {
@@ -220,4 +227,12 @@ func registerAudit(reg *routing.Registry, h *audit.Handler) {
 		"List audit events", h.List)
 	reg.Gated("core.audit.read", http.MethodGet, "/api/v1/audit/{entity_type}/{entity_id}",
 		"Get a record's audit history", h.History)
+}
+
+// registerDashboard declares the executive dashboard (§8.8). The tiles span
+// people, approvals and the audit trail, so the single read route is gated by
+// intel.dashboard.read, held by both CEOs.
+func registerDashboard(reg *routing.Registry, h *dashboard.Handler) {
+	reg.Gated("intel.dashboard.read", http.MethodGet, "/api/v1/dashboard/executive",
+		"Executive dashboard tiles", h.Summary)
 }
