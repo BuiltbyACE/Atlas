@@ -19,9 +19,10 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [ ] Escalation sweep (auto-escalate before expiry) — deferred to Phase 2 work orchestration
 
 ## C) Settings & policies
-- [ ] `internal/settings/` (typed settings, get/set, versioned, audited)
+- [x] `internal/settings/` (typed settings, get/set, versioned, audited): `definitions` catalogue (string/bool/int/enum/string_list), `Store` (List/Get/Set/History) with `FOR UPDATE` optimistic concurrency, `Service` (validate + best-effort audit). Migration `00008` adds `core.settings.version` + `core.setting_changes`
 - [x] Approval policy lookup used by approvals service
-- [ ] Routes + tests
+- [x] Routes + tests: `GET /api/v1/settings`, `GET/PUT /api/v1/settings/{key}` (ETag/If-Match → 428/412), `GET /api/v1/settings/{key}/history` (cursor); read-only `GET /api/v1/approval-policies`; gated by `core.settings.read`/`core.settings.manage`/`core.approval_policy.read`
+- [ ] Policy **change** workflow (request → both-CEO approval → apply), and seeding real thresholds — deferred to Phase 2 (depends on decision D4; §6.7)
 
 ## D) Files
 - [ ] `internal/files/` metadata, pre-signed upload URLs, classification

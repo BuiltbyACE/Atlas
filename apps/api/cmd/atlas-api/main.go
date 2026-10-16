@@ -28,6 +28,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/httpserver"
 	"github.com/safaristack/atlas/apps/api/internal/platform/logging"
 	"github.com/safaristack/atlas/apps/api/internal/platform/telemetry"
+	"github.com/safaristack/atlas/apps/api/internal/settings"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -84,8 +85,13 @@ func run() error {
 
 	// Approvals engine. Its fan-out records notification intents through the
 	// notifications engine after a state change has committed (§6.3, §6.4).
-	approvalService := approvals.NewService(approvals.NewPGStore(pool), audit.NewWriter(pool),
+	auditWriter := audit.NewWriter(pool)
+	approvalService := approvals.NewService(approvals.NewPGStore(pool), auditWriter,
 		approvals.NewNotificationsAdapter(notificationService), logger)
+
+	// Settings are read through the API and changed by administrators; every
+	// write is versioned and audited (§6.7).
+	settingsService := settings.NewService(settings.NewPGStore(pool), auditWriter, logger)
 
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
@@ -95,6 +101,7 @@ func run() error {
 		Auth:          authService,
 		Notifications: notificationHandler,
 		Approvals:     approvals.NewHandler(approvalService, logger),
+		Settings:      settings.NewHandler(settingsService, logger),
 	})
 
 	srv := &http.Server{

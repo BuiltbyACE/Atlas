@@ -31,6 +31,9 @@ type Store interface {
 	// LookupPolicy returns the most specific active policy for a decision, or
 	// nil when none matches.
 	LookupPolicy(ctx context.Context, q PolicyQuery) (*Policy, error)
+	// ListPolicies returns every policy, newest first (keyset by
+	// effective_from then id), for the configuration screen.
+	ListPolicies(ctx context.Context, limit int, before *Cursor) ([]Policy, error)
 	// PeopleWithRole resolves a role key to the active people who hold it, for
 	// notification fan-out.
 	PeopleWithRole(ctx context.Context, role string) ([]uuid.UUID, error)
@@ -395,6 +398,51 @@ func (s *PGStore) LookupPolicy(ctx context.Context, q PolicyQuery) (*Policy, err
 	}
 	p.Currency = currency
 	return &p, nil
+}
+
+// ListPolicies returns approval policies newest-first, using
+// (effective_from, id) as the keyset — the same shape the lookup orders by.
+func (s *PGStore) ListPolicies(ctx context.Context, limit int, before *Cursor) ([]Policy, error) {
+	var (
+		beforeTS *time.Time
+		beforeID uuid.UUID
+	)
+	if before != nil {
+		ts := before.At.UTC()
+		beforeTS = &ts
+		beforeID = before.ID
+	}
+
+	rows, err := s.db.Query(ctx, `
+		SELECT id, decision_type, min_amount_minor, max_amount_minor,
+		       COALESCE(currency, ''), approver_rule, effective_from, effective_to
+		FROM core.approval_policies
+		WHERE ($1::timestamptz IS NULL OR (effective_from, id) < ($1::timestamptz, $2::uuid))
+		ORDER BY effective_from DESC, id DESC
+		LIMIT $3
+	`, beforeTS, beforeID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("approvals: list policies: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]Policy, 0, limit)
+	for rows.Next() {
+		var (
+			p        Policy
+			currency string
+		)
+		if err := rows.Scan(&p.ID, &p.DecisionType, &p.MinAmountMinor, &p.MaxAmountMinor,
+			&currency, &p.ApproverRule, &p.EffectiveFrom, &p.EffectiveTo); err != nil {
+			return nil, fmt.Errorf("approvals: scan policy: %w", err)
+		}
+		p.Currency = currency
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // PeopleWithRole resolves a role key to the active people who hold it. A grant

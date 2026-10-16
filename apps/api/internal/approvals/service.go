@@ -331,6 +331,15 @@ func (s *Service) ListRequestedBy(ctx context.Context, requestedBy uuid.UUID, li
 	return s.store.ListRequestedBy(ctx, requestedBy, limit, before)
 }
 
+// ListPolicies returns a page of approval policies, newest first. Policies are
+// configuration; a change is itself an approval (§3.3), so this is read-only.
+func (s *Service) ListPolicies(ctx context.Context, limit int, before *Cursor) ([]Policy, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	return s.store.ListPolicies(ctx, limit, before)
+}
+
 func (s *Service) writeAudit(ctx context.Context, actor *uuid.UUID, action, entityType string, entityID uuid.UUID, before, after any) error {
 	if s.audit == nil {
 		return nil

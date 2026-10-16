@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/safaristack/atlas/apps/api/internal/settings"
 )
 
 // Report summarises what a seed run wrote.
@@ -49,6 +51,14 @@ func Validate() error {
 	for _, r := range Roles {
 		if _, ok := RolePermissions[r.Key]; !ok {
 			return fmt.Errorf("seed: role %q has no permission mapping", r.Key)
+		}
+	}
+
+	// Seeded settings must be settings the API knows: a typo here would write a
+	// row the settings engine cannot type or validate (§6.7).
+	for key := range SettingDefaults {
+		if _, ok := settings.DefinitionFor(key); !ok {
+			return fmt.Errorf("seed: setting default %q has no definition in the settings catalogue", key)
 		}
 	}
 	return nil

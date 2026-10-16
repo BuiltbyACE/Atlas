@@ -74,6 +74,30 @@ type approvalView struct {
 	CreatedAt         time.Time  `json:"created_at"`
 }
 
+type policyView struct {
+	ID             string     `json:"id"`
+	DecisionType   string     `json:"decision_type"`
+	MinAmountMinor *int64     `json:"min_amount_minor,omitempty"`
+	MaxAmountMinor *int64     `json:"max_amount_minor,omitempty"`
+	Currency       string     `json:"currency,omitempty"`
+	ApproverRule   string     `json:"approver_rule"`
+	EffectiveFrom  time.Time  `json:"effective_from"`
+	EffectiveTo    *time.Time `json:"effective_to,omitempty"`
+}
+
+func viewOfPolicy(p Policy) policyView {
+	return policyView{
+		ID:             p.ID.String(),
+		DecisionType:   p.DecisionType,
+		MinAmountMinor: p.MinAmountMinor,
+		MaxAmountMinor: p.MaxAmountMinor,
+		Currency:       p.Currency,
+		ApproverRule:   p.ApproverRule,
+		EffectiveFrom:  p.EffectiveFrom,
+		EffectiveTo:    p.EffectiveTo,
+	}
+}
+
 // RequestApproval handles POST /api/v1/approvals.
 func (h *Handler) RequestApproval(w http.ResponseWriter, r *http.Request) {
 	principal, ok := h.principal(w, r)
@@ -217,6 +241,40 @@ func (h *Handler) MyRequested(w http.ResponseWriter, r *http.Request) {
 	views := make([]approvalView, 0, len(items))
 	for _, a := range items {
 		views = append(views, viewOf(a))
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewPage(views, next, limit))
+}
+
+// ListPolicies handles GET /api/v1/approval-policies (§3.3). Policies are
+// configuration; a change to them is itself an approval, so this is read-only.
+func (h *Handler) ListPolicies(w http.ResponseWriter, r *http.Request) {
+	limit, cursor, err := httpx.ParsePage(r)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	var before *Cursor
+	if cursor != "" {
+		before, err = decodeCursor(cursor)
+		if err != nil {
+			httpx.WriteProblem(w, r, httpx.BadRequest("cursor is not valid."))
+			return
+		}
+	}
+	items, err := h.service.ListPolicies(r.Context(), limit+1, before)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	next := ""
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[len(items)-1]
+		next = encodeCursor(last.EffectiveFrom, last.ID)
+	}
+	views := make([]policyView, 0, len(items))
+	for _, p := range items {
+		views = append(views, viewOfPolicy(p))
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.NewPage(views, next, limit))
 }

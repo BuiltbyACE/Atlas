@@ -23,6 +23,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/health"
 	"github.com/safaristack/atlas/apps/api/internal/platform/httpx"
 	"github.com/safaristack/atlas/apps/api/internal/platform/routing"
+	"github.com/safaristack/atlas/apps/api/internal/settings"
 )
 
 // Deps are the collaborators the router needs. Passing them explicitly keeps
@@ -39,6 +40,7 @@ type Deps struct {
 	// authenticated). When nil the notification routes are absent.
 	Notifications *notifications.Handler
 	Approvals     *approvals.Handler
+	Settings      *settings.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -82,6 +84,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Approvals != nil {
 		registerApprovals(reg, d.Approvals)
+	}
+
+	if d.Settings != nil {
+		registerSettings(reg, d.Settings)
 	}
 
 	reg.Mount(r, gate)
@@ -154,4 +160,20 @@ func registerApprovals(reg *routing.Registry, h *approvals.Handler) {
 	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/decline", "Decline an approval", h.Decline)
 	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/escalate", "Escalate an approval", h.Escalate)
 	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/cancel", "Cancel an approval", h.Cancel)
+	reg.Gated("core.approval_policy.read", http.MethodGet, "/api/v1/approval-policies",
+		"List approval policies", h.ListPolicies)
+}
+
+// registerSettings declares the configuration store (§6.7). Reading needs
+// core.settings.read; writing needs core.settings.manage and carries the
+// version it read in If-Match.
+func registerSettings(reg *routing.Registry, h *settings.Handler) {
+	reg.Gated("core.settings.read", http.MethodGet, "/api/v1/settings",
+		"List company settings", h.List)
+	reg.Gated("core.settings.read", http.MethodGet, "/api/v1/settings/{key}",
+		"Get one setting", h.Get)
+	reg.Gated("core.settings.read", http.MethodGet, "/api/v1/settings/{key}/history",
+		"List a setting's changes", h.History)
+	reg.Gated("core.settings.manage", http.MethodPut, "/api/v1/settings/{key}",
+		"Change a setting", h.Set)
 }

@@ -677,3 +677,34 @@ func TestApprovalNotificationsFanOut(t *testing.T) {
 		t.Fatalf("approved notifications = %v, want [%s]", approved, requester)
 	}
 }
+
+// TestListPoliciesReturnsPolicies covers the read path the configuration screen
+// uses: every policy, with the keyset limit honoured.
+func TestListPoliciesReturnsPolicies(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newTestService(t)
+
+	insertPolicy(t, pool, "expense", "ceo_commercial", nil)
+	insertPolicy(t, pool, "purchase", "ceo_internal", nil)
+
+	got, err := svc.ListPolicies(ctx, 10, nil)
+	if err != nil {
+		t.Fatalf("ListPolicies: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("policies = %d, want 2", len(got))
+	}
+	for _, p := range got {
+		if p.DecisionType == "" || p.ApproverRule == "" {
+			t.Fatalf("policy did not round-trip: %+v", p)
+		}
+	}
+
+	page, err := svc.ListPolicies(ctx, 1, nil)
+	if err != nil {
+		t.Fatalf("ListPolicies page: %v", err)
+	}
+	if len(page) != 1 {
+		t.Fatalf("paged policies = %d, want 1", len(page))
+	}
+}
