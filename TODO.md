@@ -52,8 +52,11 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 ## Phase 2 - Work orchestration (backend; plan in docs/PHASE2.md)
 
 - [x] Migration 00011: `work` schema - projects, project_members, milestones,
-      tasks, task_dependencies, blockers, evidence, reviews, handovers,
-      daily_reports, absences (goose StatementBegin/End; schema_version 11)
+      tasks, task_dependencies, blockers, evidence, reviews, handovers
+      (goose StatementBegin/End; schema_version 11)
+- [x] Migration 00013: move daily reports + leave into the `people` schema
+      (`people.daily_reports`, `people.leave_requests`), people-owned touch
+      trigger; schema_version 13
 - [x] `internal/outbox/work.go` - work.* event constructors (project
       created/status_changed; task created/status_changed/assigned/blocked/unblocked)
 - [x] Work core: types + validation, PGStore (versioned CRUD, keyset listing,
@@ -65,11 +68,12 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] Evidence: link an available core.files row to a task/project
       (work.evidence.read/.write, work.evidence.added.v1); verify fields with
       separation of duties (cannot verify own evidence)
-- [x] Daily reports: submit/list/get, one per person per day (unique key,
-      re-submit updates an unreviewed day), work.daily_report.submitted.v1;
-      D5 policy intentionally not enforced (open decision)
-- [x] Absences: request/list/get/decide/cancel, overlap rejection, no
-      self-decision (work.absence.requested/approved/declined/cancelled.v1)
+- [x] `internal/people` module: daily reports (submit/list/get/today, one per
+      person per day, re-submit updates an unreviewed day,
+      people.daily_report.submitted.v1) and leave (request/list/get/decide/cancel,
+      overlap rejection, no self-decision, people.leave.requested/approved/
+      declined/cancelled.v1); D5 policy intentionally not enforced (open
+      decision); §8.5 routes
 - [x] Overdue escalation: migration 00012 `work.escalations` (schema 12; work
       schema re-owned by atlas_migrator so `task migrate` works), sweep in
       atlas-worker (config `ATLAS_WORK_SWEEP_INTERVAL`/`ATLAS_WORK_SWEEP_BATCH`),
@@ -80,20 +84,22 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] Exec dashboard "overdue work" tile (overdue tasks + open escalations)
 
 ### Remaining Phase 2 (next)
-- [x] Elixir outbox wiring for work.* + core.escalation.* events
-      (`AtlasOrchestrator.Work.Handler`/`Signals`): `<entity>.changed` on
-      `work:project:{id}` + `user:{id}`, and `dashboard.changed` on
-      `exec:dashboard`; tests
+- [x] Elixir outbox wiring: `work.*` + `core.escalation.*`
+      (`AtlasOrchestrator.Work.Handler`/`Signals` → `work:project:{id}` +
+      `user:{id}`) and `people.*` (`AtlasOrchestrator.People.Handler`/`Signals`
+      → `user:{id}`), each with a `dashboard.changed` tile invalidation; tests
 - [ ] Mount the `work:project:{id}` channel (join check via
       `GET /internal/v1/authz/check`) before the frontend goes live
+- [ ] People §8.5 endpoints still missing: `GET /api/v1/people/availability?date=`
+      and `POST /api/v1/people/{id}/offboard`
 - [ ] Frontend (after backend above is complete)
 - [ ] L2/L3 ladder timing + notification fan-out for escalations (blocked on D4)
-- [ ] Blueprint deviations recorded in docs/PHASE2.md §9 need a decision:
-      (a) daily reports/leave/absence sit in the `work` schema/events but the
-      blueprint puts them under `people`; (b) escalation timing is a Go worker
-      sweep, not Elixir Oban timers + a Go internal command API (§5.8)
+- [ ] Blueprint deviation still open: escalation timing is a Go worker sweep,
+      not Elixir Oban timers + a Go internal command API (§5.8)
+      (daily reports/leave moved to `people` in migration 00013 — resolved)
 
 Current status: Phase 1 (A-H) complete. Phase 2 backend (work core, evidence,
-daily reports, absences, escalation ladder, exec work tile) and the Elixir
-outbox wiring complete (Go schema 12; routes wired; Go tests green; 43 Elixir
-tests green). Next: the two blueprint deviations above, then the frontend.
+people module: daily reports + leave, escalation ladder, exec work tile) and the
+Elixir outbox wiring complete (Go schema 13; §8.5 routes wired; Go tests green;
+45 Elixir tests green). Next: mount the `work:project:{id}` channel, the two
+remaining §8.5 people endpoints, then the frontend.

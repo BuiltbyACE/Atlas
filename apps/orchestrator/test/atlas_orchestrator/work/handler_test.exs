@@ -97,43 +97,6 @@ defmodule AtlasOrchestrator.Work.HandlerTest do
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
   end
 
-  test "an absence decision nudges the person and the dashboard, with no project topic" do
-    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "user:#{@assignee}")
-    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "exec:dashboard")
-
-    assert :ok =
-             Handler.handle_event(
-               event("work.absence.approved.v1", %{
-                 "absence_id" => Ecto.UUID.generate(),
-                 "person_id" => @assignee
-               })
-             )
-
-    assert_receive %Phoenix.Socket.Broadcast{topic: "user:#{@assignee}", event: "absence.changed"}
-
-    assert_receive %Phoenix.Socket.Broadcast{
-      topic: "exec:dashboard",
-      event: "dashboard.changed",
-      payload: dashboard
-    }
-
-    assert dashboard["reason"] == "work.absence.approved.v1"
-    refute_receive %Phoenix.Socket.Broadcast{topic: "work:project:" <> _}, 50
-  end
-
-  test "a daily report only invalidates the dashboard" do
-    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "exec:dashboard")
-
-    assert :ok =
-             Handler.handle_event(
-               event("work.daily_report.submitted.v1", %{"report_id" => Ecto.UUID.generate()})
-             )
-
-    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
-    refute_receive %Phoenix.Socket.Broadcast{topic: "work:project:" <> _}, 50
-    refute_receive %Phoenix.Socket.Broadcast{topic: "user:" <> _}, 50
-  end
-
   test "an unknown work event type is ignored, not failed" do
     assert :ok = Handler.handle_event(event("work.task.reopened.v1", %{}))
     assert :ok = Handler.handle_event(%{})

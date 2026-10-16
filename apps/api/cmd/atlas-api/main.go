@@ -25,6 +25,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
+	"github.com/safaristack/atlas/apps/api/internal/people"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
 	"github.com/safaristack/atlas/apps/api/internal/platform/ed25519jwt"
@@ -133,6 +134,11 @@ func run() error {
 	// file's availability through the files service, adapted to work.FileResolver.
 	workService := work.NewService(work.NewPGStore(pool), newFileResolver(fileService), auditWriter, logger)
 
+	// People & accountability (Phase 2): daily reports and leave. These belong
+	// to the people module (§8.5, §10.1) and emit people.* outbox events for the
+	// orchestrator to react to (ADR-009).
+	peopleService := people.NewService(people.NewPGStore(pool), auditWriter, logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -145,8 +151,9 @@ func run() error {
 		Audit:         audit.NewHandler(auditService, logger),
 		Dashboard: dashboard.NewHandler(
 			dashboard.NewService(dashboard.NewPGStore(pool), audit.NewPGStore(pool), logger), logger),
-		Files: filesHandler,
-		Work:  work.NewHandler(workService, logger),
+		Files:  filesHandler,
+		Work:   work.NewHandler(workService, logger),
+		People: people.NewHandler(peopleService, logger),
 	})
 
 	srv := &http.Server{

@@ -22,6 +22,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
+	"github.com/safaristack/atlas/apps/api/internal/people"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/health"
 	"github.com/safaristack/atlas/apps/api/internal/platform/httpx"
@@ -55,6 +56,9 @@ type Deps struct {
 	// Work is the Phase 2 work-orchestration surface (projects, milestones,
 	// tasks, dependencies, blockers); mounted when present.
 	Work *work.Handler
+	// People is the people & accountability surface (daily reports, leave);
+	// mounted when present.
+	People *people.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -118,6 +122,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Work != nil {
 		registerWork(reg, d.Work)
+	}
+
+	if d.People != nil {
+		registerPeople(reg, d.People)
 	}
 
 	reg.Mount(r, gate)
@@ -314,28 +322,6 @@ func registerWork(reg *routing.Registry, h *work.Handler) {
 	reg.Gated("work.evidence.write", http.MethodDelete, "/api/v1/work/evidence/{id}",
 		"Remove an evidence record", h.DeleteEvidence)
 
-	// Daily reports (one per person per day).
-	reg.Gated("people.daily_report.read", http.MethodGet, "/api/v1/work/daily-reports",
-		"List daily reports", h.ListDailyReports)
-	reg.Gated("people.daily_report.read", http.MethodGet, "/api/v1/work/daily-reports/{id}",
-		"Get a daily report", h.GetDailyReport)
-	reg.Gated("people.daily_report.submit", http.MethodPost, "/api/v1/work/daily-reports",
-		"Submit a daily report", h.SubmitDailyReport)
-
-	// Absences (leave).
-	reg.Gated("people.leave.read", http.MethodGet, "/api/v1/work/absences",
-		"List absences", h.ListAbsences)
-	reg.Gated("people.leave.read", http.MethodGet, "/api/v1/work/absences/{id}",
-		"Get an absence", h.GetAbsence)
-	reg.Gated("people.leave.request", http.MethodPost, "/api/v1/work/absences",
-		"Request leave", h.RequestAbsence)
-	reg.Gated("people.leave.request", http.MethodPost, "/api/v1/work/absences/{id}/cancel",
-		"Cancel your leave request", h.CancelAbsence)
-	reg.Gated("people.leave.manage", http.MethodPost, "/api/v1/work/absences/{id}/approve",
-		"Approve leave", h.ApproveAbsence)
-	reg.Gated("people.leave.manage", http.MethodPost, "/api/v1/work/absences/{id}/decline",
-		"Decline leave", h.DeclineAbsence)
-
 	// Escalations (overdue work).
 	reg.Gated("work.task.read", http.MethodGet, "/api/v1/work/escalations",
 		"List escalations", h.ListEscalations)
@@ -343,4 +329,33 @@ func registerWork(reg *routing.Registry, h *work.Handler) {
 		"Get an escalation", h.GetEscalation)
 	reg.Gated("work.task.review", http.MethodPost, "/api/v1/work/escalations/{id}/resolve",
 		"Resolve an escalation", h.ResolveEscalation)
+}
+
+// registerPeople declares the people & accountability surface (§8.5): daily
+// reports and leave. Daily reports live at the top level per §8.5; leave is
+// nested under /people. Reads need people.daily_report.read / people.leave.read;
+// writes need the submit/request/manage permission. Every write carries the
+// version it read in If-Match (§6.6).
+func registerPeople(reg *routing.Registry, h *people.Handler) {
+	// Daily reports (one per person per day).
+	reg.Gated("people.daily_report.read", http.MethodGet, "/api/v1/daily-reports",
+		"List daily reports", h.ListDailyReports)
+	reg.Gated("people.daily_report.read", http.MethodGet, "/api/v1/daily-reports/today",
+		"Get the caller's daily report for today", h.GetTodayDailyReport)
+	reg.Gated("people.daily_report.read", http.MethodGet, "/api/v1/daily-reports/{id}",
+		"Get a daily report", h.GetDailyReport)
+	reg.Gated("people.daily_report.submit", http.MethodPost, "/api/v1/daily-reports",
+		"Submit a daily report", h.SubmitDailyReport)
+
+	// Leave requests.
+	reg.Gated("people.leave.read", http.MethodGet, "/api/v1/people/leave-requests",
+		"List leave requests", h.ListLeaveRequests)
+	reg.Gated("people.leave.read", http.MethodGet, "/api/v1/people/leave-requests/{id}",
+		"Get a leave request", h.GetLeaveRequest)
+	reg.Gated("people.leave.request", http.MethodPost, "/api/v1/people/leave-requests",
+		"Request leave", h.RequestLeave)
+	reg.Gated("people.leave.request", http.MethodPost, "/api/v1/people/leave-requests/{id}/cancel",
+		"Cancel your leave request", h.CancelLeaveRequest)
+	reg.Gated("people.leave.manage", http.MethodPost, "/api/v1/people/leave-requests/{id}/decide",
+		"Approve or decline leave", h.DecideLeaveRequest)
 }

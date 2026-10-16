@@ -42,11 +42,6 @@ defmodule AtlasOrchestrator.Work.Handler do
     "work.task.unblocked.v1" => {"task", "task_id", "project_id", nil},
     "work.task.overdue.v1" => {"task", "task_id", "project_id", "assignee_person_id"},
     "work.evidence.added.v1" => {"evidence", "evidence_id", "project_id", nil},
-    "work.daily_report.submitted.v1" => {"daily_report", "report_id", nil, nil},
-    "work.absence.requested.v1" => {"absence", "absence_id", nil, nil},
-    "work.absence.approved.v1" => {"absence", "absence_id", nil, "person_id"},
-    "work.absence.declined.v1" => {"absence", "absence_id", nil, "person_id"},
-    "work.absence.cancelled.v1" => {"absence", "absence_id", nil, "person_id"},
     "core.escalation.raised.v1" => {"escalation", "escalation_id", "project_id", "assignee_person_id"},
     "core.escalation.resolved.v1" => {"escalation", "escalation_id", "project_id", "assignee_person_id"}
   }

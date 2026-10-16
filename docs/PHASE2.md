@@ -16,7 +16,8 @@ tick an item only when its code, tests and migrations are in place.
 - Optimistic concurrency: `version` column + `If-Match`/ETag on writes (§6.6).
 - Keyset cursor pagination on listings (§6.6).
 - No seeded business data; no mock data.
-- Schema-per-module: the work tables live in schema `work` (migration 00011).
+- Schema-per-module: work tables live in schema `work` (migration 00011); the
+  people tables (daily reports, leave) live in schema `people` (migration 00013).
 
 ## 1. Schema (migration 00011 — done)
 
@@ -24,7 +25,8 @@ tick an item only when its code, tests and migrations are in place.
 - [x] `work.milestones`
 - [x] `work.tasks`, `work.task_dependencies`, `work.blockers`
 - [x] `work.evidence` (FK to `core.files`), `work.reviews`, `work.handovers`
-- [x] `work.daily_reports`, `work.absences`
+- [x] `people.daily_reports`, `people.leave_requests` — moved into the `people`
+      schema from `work` in migration `00013` (module ownership, §10.1)
 - [x] Indexes for status/assignee/due_at/project; `touch_updated_at` triggers
 
 ## 2. Work core (`internal/work`) — projects, milestones, tasks
@@ -50,17 +52,24 @@ tick an item only when its code, tests and migrations are in place.
 - [x] File availability checked through `work.FileResolver`, adapted from the
       files service in `cmd/atlas-api` (the work package does not import files)
 
-## 4. Daily reports + absence — done
+## 4. Daily reports + leave (`internal/people`) — done
 
-- [x] `internal/work` daily reports: submit/list/get, one per person per day
-      (unique key; re-submitting updates an unreviewed day, an already-reviewed
-      day is immutable); emits `work.daily_report.submitted.v1`. The report
-      time/deadline policy (D5) is deliberately not enforced — it is open
-      configuration, so any date is accepted for now.
-- [x] Absence: request/list/get/decide/cancel (dedicated flow, not the approvals
+- [x] `internal/people` module (migration `00013` moves the tables home):
+      daily reports: submit/list/get + `GET /api/v1/daily-reports/today`, one per
+      person per day (unique key; re-submitting updates an unreviewed day, an
+      already-reviewed day is immutable); emits
+      `people.daily_report.submitted.v1`. The report time/deadline policy (D5) is
+      deliberately not enforced — it is open configuration, so any date is
+      accepted for now.
+- [x] Leave: request/list/get/decide/cancel (dedicated flow, not the approvals
       engine); overlapping active leave is rejected; a requester cannot decide
-      their own absence, and only the requester may cancel theirs
-- [x] Events `work.absence.requested/approved/declined/cancelled.v1`
+      their own request, and only the requester may cancel theirs
+- [x] Events `people.leave.requested/approved/declined/cancelled.v1`
+- [x] Routes per §8.5: `POST/GET /api/v1/daily-reports`,
+      `GET /api/v1/daily-reports/{id}`, `GET /api/v1/daily-reports/today`,
+      `POST/GET /api/v1/people/leave-requests`, `GET /api/v1/people/leave-requests/{id}`,
+      `POST /api/v1/people/leave-requests/{id}/decide`,
+      `POST /api/v1/people/leave-requests/{id}/cancel`
 - [x] Permissions already catalogued (`people.daily_report.read/.submit`,
       `people.leave.read/.request/.manage`)
 
@@ -93,14 +102,18 @@ tick an item only when its code, tests and migrations are in place.
 
 ## 7. Elixir outbox wiring
 
-- [x] Go-side event constructors are in `internal/outbox/work.go`
+- [x] Go-side event constructors: `internal/outbox/work.go`
       (`work.project.created/status_changed`, `work.task.created/status_changed/assigned/blocked/unblocked/overdue`,
-      `work.evidence.added`, `work.daily_report.submitted`, `work.absence.*`) and
+      `work.evidence.added`) and `internal/outbox/people.go`
+      (`people.daily_report.submitted`, `people.leave.*`), plus
       `internal/outbox/escalation.go` (`core.escalation.raised/resolved.v1`)
 - [x] `AtlasOrchestrator.Work.Signals`/`Handler`: route `work.*` and
       `core.escalation.*` to `<entity>.changed` signals (ADR-009 shape:
       `{type, id}`) on `work:project:{id}` and `user:{id}`, plus a
       `dashboard.changed` tile invalidation to `exec:dashboard`; tests
+- [x] `AtlasOrchestrator.People.Signals`/`Handler`: route `people.*` to
+      `<entity>.changed` signals on `user:{id}` (when the event names a person)
+      and a `dashboard.changed` tile invalidation to `exec:dashboard`; tests
 - [ ] Mount the `work:project:{id}` channel with the join check via
       `GET /internal/v1/authz/check` (§7.5, ADR-009) — the topic is broadcast to
       now, but no channel is joined until this lands (frontend/real-time work)
@@ -123,12 +136,14 @@ either a refinement or an open question, listed so the divergence is explicit.
   events (`work.task.overdue.v1`, `core.escalation.raised.v1`) are identical
   either way, so the frontend is unaffected; revisiting this is a matter of
   moving the *clock*, not the data.
-- **Daily reports and leave/absence placement.** §7.4 catalogues
+- **Daily reports and leave/absence placement — resolved.** §7.4 catalogues
   `people.daily_report.submitted.v1` and `people.leave.*`, and the §10.1 table
-  gives those tables to the `people` module, but they live in the `work` schema
-  (`work.daily_reports`, `work.absences`, migration 00011) and emit `work.*`
-  events. Permissions are already `people.daily_report.*`/`people.leave.*`, so
-  the permission namespace and the event namespace currently disagree.
+  gives those tables to the `people` module; migration `00013` moves
+  `work.daily_reports`/`work.absences` into `people` (`people.daily_reports`,
+  `people.leave_requests`), the `internal/people` package owns them, and the
+  events are emitted as `people.*`. Permission and event namespaces now agree.
+  Two §8.5 people endpoints are still to come (tracked in `TODO.md`):
+  `GET /api/v1/people/availability?date=` and `POST /api/v1/people/{id}/offboard`.
 - **Approval events** (Phase 1) are finer-grained than §7.4's single
   `core.approval.decided.v1`: `core.approval.requested/approved/declined/
   escalated/cancelled/expired.v1`.

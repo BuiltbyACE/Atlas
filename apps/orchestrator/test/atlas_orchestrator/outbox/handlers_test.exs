@@ -100,6 +100,25 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
   end
 
+  test "a people event is routed to the people handler" do
+    person = Ecto.UUID.generate()
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "user:#{person}")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "people.leave.approved.v1",
+      seq: 6,
+      payload: %{"leave_request_id" => Ecto.UUID.generate(), "person_id" => person},
+      occurred_at: ~U[2026-10-16 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: topic, event: "leave_request.changed"}
+    assert topic == "user:#{person}"
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
   test "an escalation event is routed to the work handler" do
     event = %Event{
       id: Ecto.UUID.generate(),

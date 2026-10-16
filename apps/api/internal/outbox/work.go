@@ -19,20 +19,13 @@ const (
 	TypeTaskUnblockedV1        = "work.task.unblocked.v1"
 	TypeTaskOverdueV1          = "work.task.overdue.v1"
 	TypeEvidenceAddedV1        = "work.evidence.added.v1"
-	TypeDailyReportSubmittedV1 = "work.daily_report.submitted.v1"
-	TypeAbsenceRequestedV1     = "work.absence.requested.v1"
-	TypeAbsenceApprovedV1      = "work.absence.approved.v1"
-	TypeAbsenceDeclinedV1      = "work.absence.declined.v1"
-	TypeAbsenceCancelledV1     = "work.absence.cancelled.v1"
 )
 
 // Aggregate types for work events.
 const (
-	AggregateProject     = "project"
-	AggregateTask        = "task"
-	AggregateEvidence    = "evidence"
-	AggregateDailyReport = "daily_report"
-	AggregateAbsence     = "absence"
+	AggregateProject  = "project"
+	AggregateTask     = "task"
+	AggregateEvidence = "evidence"
 )
 
 // ProjectCreatedPayload is emitted when a project is created.
@@ -263,78 +256,4 @@ type TaskRef struct {
 	Status     string
 	AssigneeID uuid.UUID
 	CreatedBy  uuid.UUID
-}
-
-// DailyReportSubmittedPayload is emitted when a daily report is submitted (§11).
-type DailyReportSubmittedPayload struct {
-	ReportID    uuid.UUID `json:"report_id"`
-	ReporterID  uuid.UUID `json:"reporter_person_id"`
-	ReportDate  string    `json:"report_date"`
-	SubmittedAt time.Time `json:"submitted_at"`
-}
-
-// NewDailyReportSubmitted builds a work.daily_report.submitted.v1 event.
-func NewDailyReportSubmitted(actorID *uuid.UUID, reportID, reporterID uuid.UUID, reportDate string) (Event, error) {
-	return buildEvent(TypeDailyReportSubmittedV1, AggregateDailyReport, reportID, actorID, nil, DailyReportSubmittedPayload{
-		ReportID:    reportID,
-		ReporterID:  reporterID,
-		ReportDate:  reportDate,
-		SubmittedAt: time.Now().UTC(),
-	})
-}
-
-// AbsencePayload is the common shape for absence lifecycle events.
-type AbsencePayload struct {
-	AbsenceID uuid.UUID `json:"absence_id"`
-	PersonID  uuid.UUID `json:"person_id"`
-	Type      string    `json:"absence_type"`
-	FromDate  string    `json:"from_date"`
-	ToDate    string    `json:"to_date"`
-	By        uuid.UUID `json:"by,omitempty"`
-	Reason    string    `json:"reason,omitempty"`
-	Occurred  time.Time `json:"occurred_at"`
-}
-
-// NewAbsenceRequested builds a work.absence.requested.v1 event.
-func NewAbsenceRequested(actorID *uuid.UUID, absenceID, personID uuid.UUID, absenceType, from, to string) (Event, error) {
-	return buildEvent(TypeAbsenceRequestedV1, AggregateAbsence, absenceID, actorID, nil, AbsencePayload{
-		AbsenceID: absenceID,
-		PersonID:  personID,
-		Type:      absenceType,
-		FromDate:  from,
-		ToDate:    to,
-		Occurred:  time.Now().UTC(),
-	})
-}
-
-// NewAbsenceApproved builds a work.absence.approved.v1 event.
-func NewAbsenceApproved(actorID *uuid.UUID, absenceID, personID uuid.UUID, approvedBy uuid.UUID) (Event, error) {
-	return buildEvent(TypeAbsenceApprovedV1, AggregateAbsence, absenceID, actorID, nil, AbsencePayload{
-		AbsenceID: absenceID,
-		PersonID:  personID,
-		By:        approvedBy,
-		Occurred:  time.Now().UTC(),
-	})
-}
-
-// NewAbsenceDeclined builds a work.absence.declined.v1 event.
-func NewAbsenceDeclined(actorID *uuid.UUID, absenceID, personID uuid.UUID, declinedBy uuid.UUID, reason string) (Event, error) {
-	return buildEvent(TypeAbsenceDeclinedV1, AggregateAbsence, absenceID, actorID, nil, AbsencePayload{
-		AbsenceID: absenceID,
-		PersonID:  personID,
-		By:        declinedBy,
-		Reason:    reason,
-		Occurred:  time.Now().UTC(),
-	})
-}
-
-// NewAbsenceCancelled builds a work.absence.cancelled.v1 event.
-func NewAbsenceCancelled(actorID *uuid.UUID, absenceID, personID uuid.UUID, cancelledBy uuid.UUID, reason string) (Event, error) {
-	return buildEvent(TypeAbsenceCancelledV1, AggregateAbsence, absenceID, actorID, nil, AbsencePayload{
-		AbsenceID: absenceID,
-		PersonID:  personID,
-		By:        cancelledBy,
-		Reason:    reason,
-		Occurred:  time.Now().UTC(),
-	})
 }

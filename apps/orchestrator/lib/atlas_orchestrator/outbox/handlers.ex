@@ -13,7 +13,9 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
       file upload or archive moves the recent-highlights tile;
     * `work.*.v1` and `core.escalation.*.v1` — push `<entity>.changed` to the
       project board and any named person, plus `dashboard.changed` to the
-      dashboard (task/board and overdue-work tiles).
+      dashboard (task/board and overdue-work tiles);
+    * `people.*.v1` — push `<entity>.changed` to any named person plus
+      `dashboard.changed` to the dashboard (daily-report and leave tiles).
 
   Reacting means *signalling*, never writing business data (ADR-009): Go remains
   the authority, the orchestrator nudges.
@@ -24,6 +26,7 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   alias AtlasOrchestrator.Dashboard.Handler, as: DashboardHandler
   alias AtlasOrchestrator.Notifications.Handler, as: NotificationsHandler
   alias AtlasOrchestrator.Outbox.Event
+  alias AtlasOrchestrator.People.Handler, as: PeopleHandler
   alias AtlasOrchestrator.Work.Handler, as: WorkHandler
 
   @doc "Handles one event. Unknown types are logged and ignored, not failed."
@@ -44,6 +47,10 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
 
   def dispatch(%Event{type: "work." <> _} = event) do
     WorkHandler.handle_event(event)
+  end
+
+  def dispatch(%Event{type: "people." <> _} = event) do
+    PeopleHandler.handle_event(event)
   end
 
   def dispatch(%Event{type: "core.escalation." <> _} = event) do
