@@ -34,19 +34,19 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] Redaction enforcement: the Writer redacts sensitive fields before insert (§6.2), so the stored row and every view are already redacted; the read side returns the stored JSON verbatim with no bypass. Migration `00010` adds `(occurred_at DESC, id DESC)` and `(entity_type, entity_id, occurred_at DESC, id DESC)` keyset indexes and drops the two subsumed originals
 - [x] Tests: handler contract (envelope, limit+1 paging, cursor/filter/id validation), service defaults, and DB integration (redaction in the raw column and via the reader, newest-first ordering, keyset pagination without overlap, actor/action/time filters); verified live: both routes mounted and 401 unauthenticated
 
-## F) Exec dashboard v1
-- [ ] Tiles: pipeline, approvals pending, incidents, overdue work
-- [ ] Fed via queries + realtime invalidations
-- [ ] Events for tile changes
+## F) Exec dashboard v1 (Phase 1)
+- [x] Tiles: staff status (people by status), pending approvals (requested/pending + overdue + by role), escalated approvals, recent audit highlights (10 newest) — as implemented per ATLAS.md Phase 1
+- [x] Fed via queries (Go read model `internal/dashboard`) + realtime invalidations: approvals events push `dashboard.changed` on `exec:dashboard`; file events push `dashboard.changed` on `exec:dashboard` (Elixir wiring)
+- [x] Events for tile changes via outbox → orchestrator → `exec:dashboard` channel
 
 ## G) Elixir outbox consumer wiring (complete)
-- [x] Register handlers in `Outbox.Handlers.dispatch/1`: `core.notification.requested.v1` routes to `Notifications.Handler`, `core.approval.*.v1` to `Approvals.Handler`
-- [x] `AtlasOrchestrator.Approvals.Signals` (`approval.changed`) + `Approvals.Handler`: dashboard on every approval event, named approver on request, named target on escalation (requester/role nudges already come via the notifications engine)
-- [x] Tests: signals shape, handler routing/topics, and router dispatch for notification + approval events (24 orchestrator tests)
+- [x] Register handlers in `Outbox.Handlers.dispatch/1`: `core.notification.requested.v1` routes to `Notifications.Handler`, `core.approval.*.v1` to `Approvals.Handler`, `core.file.*.v1` routes to `Dashboard.Handler`
+- [x] `AtlasOrchestrator.Approvals.Signals` (`approval.changed`) + `Approvals.Handler`: dashboard on every approval event, named approver on request, named target on escalation; `AtlasOrchestrator.Dashboard.Signals`/`Handler` broadcasts `dashboard.changed` to `exec:dashboard` on file events
+- [x] Tests: signals shape, handler routing/topics, and router dispatch (32 orchestrator tests)
 
-## H) Operational/infra polish
-- [x] Worker process docs/runbook update; ensure task to run api+worker+orchestrator+web (runbook documents api:worker; Taskfile has `api:worker`, `api:run`, `orch:serve`, `web:dev`)
-- [x] Metrics/logs for dispatcher + sweeps (attempts, failures, lag): structured logging in dispatcher (batch/poll/concurrency, drain/completion failures, per-attempt outcomes, circuit-breaker actions), sweeper (start/stop, sweep failures, `expired approvals` counts). Lag tracking/telemetry metrics deferred to Phase 2.
-- [x] Contracts schema validation hook awareness (CI) — schemas already present (no change required)
+## H) Operational/infra polish (complete)
+- [x] Worker process docs/runbook update; ensure task to run api+worker+orchestrator+web
+- [x] Structured metrics/logs for dispatcher + sweeps (attempts, failures); lag/telemetry deferred to Phase 2
+- [x] Contracts schema validation hook awareness (CI) — schemas already present
 
 Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests), B complete (worker expiry sweep, configurable poll/batch, tests) and G complete (Elixir outbox routing + approval signals). C (settings), D (files), E (audit views), F (exec dashboard) and H (operational polish) are complete. Next: Phase 2.
