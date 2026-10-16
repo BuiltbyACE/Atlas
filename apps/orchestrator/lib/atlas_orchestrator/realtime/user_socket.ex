@@ -14,6 +14,7 @@ defmodule AtlasOrchestrator.Realtime.UserSocket do
   # changed" payloads, never business data.
   channel "user:*", AtlasOrchestrator.Realtime.UserChannel
   channel "exec:dashboard", AtlasOrchestrator.Realtime.DashboardChannel
+  channel "work:project:*", AtlasOrchestrator.Realtime.ProjectChannel
 
   @impl true
   def connect(%{"token" => token}, socket, _connect_info) do

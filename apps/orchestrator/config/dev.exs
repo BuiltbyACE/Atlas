@@ -18,4 +18,13 @@ config :atlas_orchestrator, :realtime,
   issuer: "atlas",
   audience: "atlas-realtime"
 
+# The orchestrator calls Go's internal API as a service (§7.5), for example the
+# realtime join check. ATLAS_SERVICE_TOKEN is minted by `atlas-cli service token`
+# (see docs/runbooks/local-development.md); an empty token disables the calls,
+# which then fail closed.
+config :atlas_orchestrator, :internal,
+  base_url: System.get_env("ATLAS_API_INTERNAL_URL", "http://localhost:8080"),
+  service_token: System.get_env("ATLAS_SERVICE_TOKEN", ""),
+  cache_ms: 30_000
+
 config :logger, level: :debug

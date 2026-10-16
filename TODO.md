@@ -94,8 +94,16 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] Static service credential tooling: `atlas-cli service create` (upsert
       `svc:orchestrator`) and `atlas-cli service token` (mint `ATLAS_SERVICE_TOKEN`,
       30-day TTL), backed by `auth.EnsureService`; mint→resolve round-trip test
-- [ ] Mount the `work:project:{id}` channel and call the join check above with
-      `ATLAS_SERVICE_TOKEN`
+- [x] Mount the `work:project:{id}` channel and call the join check above with
+      `ATLAS_SERVICE_TOKEN` (`AtlasOrchestrator.Realtime.ProjectChannel` →
+      `AtlasOrchestrator.Authz` + `Authz.HTTP`, brief cache, fail closed; tests)
+- [ ] **Realtime `user:{id}` topics use a person id but the socket id is the
+      account id.** Producers (work/people/approvals/notifications) push to
+      `user:{person_id}` (from the outbox payloads), while `UserSocket` assigns
+      the id from the token `sub` = `core.user_accounts.id` (what
+      `CheckPermission` needs). So personal nudges currently reach no joined
+      channel. Needs a decision: carry the account id in the events, or let the
+      token/socket address persons. See the note below.
 - [ ] People §8.5 endpoints still missing: `GET /api/v1/people/availability?date=`
       and `POST /api/v1/people/{id}/offboard`
 - [ ] Frontend (after backend above is complete)

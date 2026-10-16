@@ -41,5 +41,20 @@ if config_env() == :prod do
     issuer: System.get_env("ATLAS_REALTIME_ISSUER", "atlas"),
     audience: System.get_env("ATLAS_REALTIME_AUDIENCE", "atlas-realtime")
 
+  # The orchestrator calls Go's internal API as a service (§7.5), for example
+  # the realtime join check. The static token is minted by
+  # `atlas-cli service token` and signed with the API's key.
+  internal_url =
+    System.get_env("ATLAS_API_INTERNAL_URL") ||
+      raise "ATLAS_API_INTERNAL_URL is not set (the Go internal API for join checks)."
+
+  service_token =
+    System.get_env("ATLAS_SERVICE_TOKEN") ||
+      raise "ATLAS_SERVICE_TOKEN is not set (mint one with `atlas-cli service token`)."
+
+  config :atlas_orchestrator, :internal,
+    base_url: internal_url,
+    service_token: service_token
+
   config :logger, level: :info
 end

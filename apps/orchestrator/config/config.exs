@@ -50,7 +50,10 @@ config :logger, :console,
     :url,
     :result,
     :event_type,
-    :payload_keys
+    :payload_keys,
+    :user_id,
+    :permission,
+    :allowed
   ]
 
 import_config "#{config_env()}.exs"

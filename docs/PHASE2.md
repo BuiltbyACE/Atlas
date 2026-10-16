@@ -122,9 +122,11 @@ tick an item only when its code, tests and migrations are in place.
       `svc:orchestrator` identity and its permissions) and `atlas-cli service
       token` (mint a long-lived token signed with the API key, `ATLAS_SERVICE_TOKEN`),
       plus `auth.EnsureService`; integration test of the mint→resolve round trip
-- [ ] Mount the `work:project:{id}` channel, calling the join check above
-      (§7.5, ADR-009) — the topic is broadcast to now, but no channel is joined
-      until the orchestrator calls the internal API with `ATLAS_SERVICE_TOKEN`
+- [x] `work:project:{id}` channel mounted (`Realtime.ProjectChannel`), joined only
+      after Go's internal join check agrees (§7.5, ADR-009). `AtlasOrchestrator.Authz`
+      owns the call: a brief decision cache (30s) over an injectable client
+      (`Authz.HTTP`, `ATLAS_SERVICE_TOKEN`), failing closed on any fault; tests
+      cover the cache, the fail-closed paths and the channel join
 
 ## 8. Frontend (after the backend above is complete and tested)
 

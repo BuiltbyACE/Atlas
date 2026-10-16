@@ -43,6 +43,7 @@ defmodule AtlasOrchestrator.Application do
       []
     else
       jwks_children() ++
+        authz_children() ++
         [
           {Oban, Application.fetch_env!(:atlas_orchestrator, Oban)},
           AtlasOrchestrator.Endpoint,
@@ -62,6 +63,16 @@ defmodule AtlasOrchestrator.Application do
 
       _ ->
         []
+    end
+  end
+
+  # The join-check cache is started only when Go's internal API is configured.
+  # Without it every join fails closed (which is safe, but silently so), so a
+  # missing URL is the one case worth not starting a process for.
+  defp authz_children do
+    case Application.get_env(:atlas_orchestrator, :internal, [])[:base_url] do
+      url when is_binary(url) and url != "" -> [AtlasOrchestrator.Authz]
+      _ -> []
     end
   end
 end

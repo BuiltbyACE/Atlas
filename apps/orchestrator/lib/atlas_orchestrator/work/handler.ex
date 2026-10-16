@@ -6,8 +6,9 @@ defmodule AtlasOrchestrator.Work.Handler do
   Go owns work state; this handler only nudges the views that changed:
 
     * `work:project:{id}` — task/board changes, for project members and CEOs
-      (§7.5). The channel is not mounted yet, so this is currently a no-op that
-      documents the contract; the pub/sub topic and payload are already right.
+      (§7.5). Joining the channel is authorised by Go's internal join check
+      (`AtlasOrchestrator.Realtime.ProjectChannel` → `AtlasOrchestrator.Authz`),
+      so the orchestrator never resolves roles→permissions itself.
     * `user:{id}` — a *named* person the event is about (an assignee who just got
       work, or an owner an escalation landed on).
     * `exec:dashboard` — a `dashboard.changed` tile invalidation on every event,
