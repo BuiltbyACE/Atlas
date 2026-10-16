@@ -31,6 +31,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/logging"
 	"github.com/safaristack/atlas/apps/api/internal/platform/telemetry"
 	"github.com/safaristack/atlas/apps/api/internal/settings"
+	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -124,6 +125,11 @@ func run() error {
 
 	auditService := audit.NewService(audit.NewPGStore(pool), logger)
 
+	// Work orchestration (Phase 2): projects, milestones, tasks, dependencies
+	// and blockers. Go is the authority; state changes emit work.* outbox events
+	// for the orchestrator to react to (ADR-009).
+	workService := work.NewService(work.NewPGStore(pool), auditWriter, logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -137,6 +143,7 @@ func run() error {
 		Dashboard: dashboard.NewHandler(
 			dashboard.NewService(dashboard.NewPGStore(pool), audit.NewPGStore(pool), logger), logger),
 		Files: filesHandler,
+		Work:  work.NewHandler(workService, logger),
 	})
 
 	srv := &http.Server{

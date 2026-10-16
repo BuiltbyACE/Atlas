@@ -27,6 +27,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/httpx"
 	"github.com/safaristack/atlas/apps/api/internal/platform/routing"
 	"github.com/safaristack/atlas/apps/api/internal/settings"
+	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
 // Deps are the collaborators the router needs. Passing them explicitly keeps
@@ -51,6 +52,9 @@ type Deps struct {
 	// Files is optional, and only mounted when object storage is configured
 	// (local development may run without a bucket).
 	Files *files.Handler
+	// Work is the Phase 2 work-orchestration surface (projects, milestones,
+	// tasks, dependencies, blockers); mounted when present.
+	Work *work.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -110,6 +114,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Files != nil {
 		registerFiles(reg, d.Files)
+	}
+
+	if d.Work != nil {
+		registerWork(reg, d.Work)
 	}
 
 	reg.Mount(r, gate)
@@ -235,4 +243,58 @@ func registerAudit(reg *routing.Registry, h *audit.Handler) {
 func registerDashboard(reg *routing.Registry, h *dashboard.Handler) {
 	reg.Gated("intel.dashboard.read", http.MethodGet, "/api/v1/dashboard/executive",
 		"Executive dashboard tiles", h.Summary)
+}
+
+// registerWork declares the Phase 2 work-orchestration surface. Reads need
+// work.project.read / work.task.read / work.blocker.read; writes need the
+// matching manage/write permission. Every write carries the version it read in
+// If-Match (§6.6).
+func registerWork(reg *routing.Registry, h *work.Handler) {
+	// Projects.
+	reg.Gated("work.project.read", http.MethodGet, "/api/v1/work/projects",
+		"List projects", h.ListProjects)
+	reg.Gated("work.project.read", http.MethodGet, "/api/v1/work/projects/{id}",
+		"Get a project", h.GetProject)
+	reg.Gated("work.project.manage", http.MethodPost, "/api/v1/work/projects",
+		"Create a project", h.CreateProject)
+	reg.Gated("work.project.manage", http.MethodPut, "/api/v1/work/projects/{id}",
+		"Update a project", h.UpdateProject)
+	reg.Gated("work.project.read", http.MethodGet, "/api/v1/work/projects/{id}/members",
+		"List a project's members", h.ListMembers)
+	reg.Gated("work.project.manage", http.MethodPost, "/api/v1/work/projects/{id}/members",
+		"Add a project member", h.AddMember)
+	reg.Gated("work.project.manage", http.MethodDelete, "/api/v1/work/projects/{id}/members/{person_id}",
+		"Remove a project member", h.RemoveMember)
+
+	// Milestones.
+	reg.Gated("work.project.read", http.MethodGet, "/api/v1/work/projects/{id}/milestones",
+		"List a project's milestones", h.ListMilestones)
+	reg.Gated("work.project.read", http.MethodGet, "/api/v1/work/milestones/{id}",
+		"Get a milestone", h.GetMilestone)
+	reg.Gated("work.project.manage", http.MethodPost, "/api/v1/work/projects/{id}/milestones",
+		"Create a milestone", h.CreateMilestone)
+	reg.Gated("work.project.manage", http.MethodPut, "/api/v1/work/milestones/{id}",
+		"Update a milestone", h.UpdateMilestone)
+
+	// Tasks.
+	reg.Gated("work.task.read", http.MethodGet, "/api/v1/work/tasks",
+		"List tasks", h.ListTasks)
+	reg.Gated("work.task.read", http.MethodGet, "/api/v1/work/tasks/{id}",
+		"Get a task", h.GetTask)
+	reg.Gated("work.task.write", http.MethodPost, "/api/v1/work/projects/{id}/tasks",
+		"Create a task", h.CreateTask)
+	reg.Gated("work.task.write", http.MethodPut, "/api/v1/work/tasks/{id}",
+		"Update a task", h.UpdateTask)
+	reg.Gated("work.task.write", http.MethodPost, "/api/v1/work/tasks/{id}/dependencies",
+		"Add a task dependency", h.AddDependency)
+	reg.Gated("work.task.write", http.MethodDelete, "/api/v1/work/tasks/{id}/dependencies/{predecessor_id}",
+		"Remove a task dependency", h.RemoveDependency)
+
+	// Blockers.
+	reg.Gated("work.blocker.read", http.MethodGet, "/api/v1/work/tasks/{id}/blockers",
+		"List a task's blockers", h.ListBlockers)
+	reg.Gated("work.blocker.manage", http.MethodPost, "/api/v1/work/tasks/{id}/blockers",
+		"Raise a blocker", h.RaiseBlocker)
+	reg.Gated("work.blocker.manage", http.MethodPost, "/api/v1/work/blockers/{id}/resolve",
+		"Resolve a blocker", h.ResolveBlocker)
 }

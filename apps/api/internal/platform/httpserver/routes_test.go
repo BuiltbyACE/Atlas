@@ -14,6 +14,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/ed25519jwt"
 	"github.com/safaristack/atlas/apps/api/internal/platform/routing"
 	"github.com/safaristack/atlas/apps/api/internal/seed"
+	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
 // emptyStore satisfies auth.Store without a database; these tests never call
@@ -49,6 +50,7 @@ func testService(t *testing.T) *auth.Service {
 
 func testDeps(t *testing.T) Deps {
 	t.Helper()
+	logger := discardLogger()
 	return Deps{
 		Cfg: &config.Config{
 			Env:               config.EnvLocal,
@@ -58,9 +60,12 @@ func testDeps(t *testing.T) Deps {
 			DatabaseURL:       "postgres://test",
 			SessionCookieName: "atlas_session",
 		},
-		Logger:  discardLogger(),
+		Logger:  logger,
 		Version: "test",
 		Auth:    testService(t),
+		// Mounting work ensures its routes are covered by the registry and
+		// permission-catalogue checks above. The store is never called here.
+		Work: work.NewHandler(work.NewService(work.NewPGStore(nil), nil, logger), logger),
 	}
 }
 

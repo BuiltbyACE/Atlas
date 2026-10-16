@@ -49,4 +49,28 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] Structured metrics/logs for dispatcher + sweeps (attempts, failures); lag/telemetry deferred to Phase 2
 - [x] Contracts schema validation hook awareness (CI) — schemas already present
 
-Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests), B complete (worker expiry sweep, configurable poll/batch, tests) and G complete (Elixir outbox routing + approval signals). C (settings), D (files), E (audit views), F (exec dashboard) and H (operational polish) are complete. Next: Phase 2.
+## Phase 2 - Work orchestration (backend; plan in docs/PHASE2.md)
+
+- [x] Migration 00011: `work` schema - projects, project_members, milestones,
+      tasks, task_dependencies, blockers, evidence, reviews, handovers,
+      daily_reports, absences (goose StatementBegin/End; schema_version 11)
+- [x] `internal/outbox/work.go` - work.* event constructors (project
+      created/status_changed; task created/status_changed/assigned/blocked/unblocked)
+- [x] Work core: types + validation, PGStore (versioned CRUD, keyset listing,
+      dependency cycle prevention, blockers), Service (transitions, audit +
+      outbox in-tx), Handler + gated routes (work.project/task/blocker), wired
+      into router + cmd/atlas-api
+- [x] Tests: unit (validation, transitions) + DB integration (lifecycle,
+      cycles, blockers, overdue filter) + registry/permission-catalogue checks
+
+### Remaining Phase 2 (next)
+- [ ] Evidence: link an available core.files row to a task (work.evidence.*)
+- [ ] Daily reports + leave/absence (D5 policy config open)
+- [ ] Overdue escalation ladder + worker sweep (feeds exec dashboard)
+- [ ] Exec dashboard "overdue work" tile
+- [ ] Elixir outbox wiring for work.* events (signals + dashboard invalidation)
+- [ ] Frontend (after backend above is complete)
+
+Current status: Phase 1 (A-H) complete. Phase 2 work core complete (schema 11,
+outbox constructors, projects/milestones/tasks/dependencies/blockers with tests,
+routes wired). Next: evidence, then daily reports/leave, escalation ladder.
