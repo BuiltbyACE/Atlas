@@ -1,6 +1,6 @@
 # To-do: finish foundation (backends/engines/orchestrations) so frontend can build on top
 
-The sequence follows: Notifications done (Go), Elixir notification handler done. Approvals engine now has policy lookup, four-eyes/two-person enforcement, notification fan-out and a worker expiry sweep, and the Elixir outbox consumer routes notification and approval events to realtime signals. Settings and files are done. Next: exec dashboard v1.
+The sequence follows: Notifications done (Go), Elixir notification handler done. Approvals engine has policy lookup, four-eyes/two-person enforcement, notification fan-out and a worker expiry sweep; the Elixir outbox consumer routes notification/approval/file events to realtime signals. Settings, files, audit views and exec dashboard are done; worker/runbook/logging polished. Next: Phase 2.
 
 ## A) Approvals engine — core complete
 - [x] Service layer `internal/approvals/service.go`: create approval with policy checks, decide (approve/decline), escalate, cancel; optimistic concurrency; emits correct outbox events; writes audit
@@ -45,8 +45,8 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] Tests: signals shape, handler routing/topics, and router dispatch for notification + approval events (24 orchestrator tests)
 
 ## H) Operational/infra polish
-- [ ] Worker process docs/runbook update; ensure task to run api+worker+orchestrator+web
-- [ ] Metrics/logs for dispatcher + sweeps (attempts, failures, lag)
-- [ ] Contracts schema validation hook awareness (CI) — schemas already present
+- [x] Worker process docs/runbook update; ensure task to run api+worker+orchestrator+web (runbook documents api:worker; Taskfile has `api:worker`, `api:run`, `orch:serve`, `web:dev`)
+- [x] Metrics/logs for dispatcher + sweeps (attempts, failures, lag): structured logging in dispatcher (batch/poll/concurrency, drain/completion failures, per-attempt outcomes, circuit-breaker actions), sweeper (start/stop, sweep failures, `expired approvals` counts). Lag tracking/telemetry metrics deferred to Phase 2.
+- [x] Contracts schema validation hook awareness (CI) — schemas already present (no change required)
 
-Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests), B complete (worker expiry sweep, configurable poll/batch, tests) and G complete (Elixir outbox routing + approval signals). C (settings), D (files) and E (audit views) are complete; F and H remain. Next: F (exec dashboard).
+Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests), B complete (worker expiry sweep, configurable poll/batch, tests) and G complete (Elixir outbox routing + approval signals). C (settings), D (files), E (audit views), F (exec dashboard) and H (operational polish) are complete. Next: Phase 2.
