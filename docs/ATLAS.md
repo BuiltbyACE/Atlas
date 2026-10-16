@@ -1015,12 +1015,25 @@ CREATE TABLE core.approval_policies (
   effective_from timestamptz NOT NULL, effective_to timestamptz
 );
 
+-- Reconciled with the approvals engine (migration 00006): `requested`/`declined`/
+-- `escalated` join the lifecycle, and the columns the engine needs are present.
 CREATE TABLE core.approvals (
-  id uuid PRIMARY KEY, subject_type text NOT NULL, subject_id uuid NOT NULL,
+  id uuid PRIMARY KEY, entity_type text NOT NULL, entity_id uuid NOT NULL,
   requested_by uuid NOT NULL, policy_id uuid REFERENCES core.approval_policies(id),
-  status text NOT NULL CHECK (status IN ('pending','approved','rejected','expired','cancelled')),
-  subject_version int NOT NULL,                       -- approval invalid if subject changes
-  created_at timestamptz NOT NULL DEFAULT now(), decided_at timestamptz
+  ref text, amount_minor bigint NOT NULL DEFAULT 0, currency char(3),
+  approver_role text, approver_id uuid, policy_ref text, due_at timestamptz,
+  status text NOT NULL CHECK (status IN
+    ('requested','pending','approved','declined','escalated','cancelled','expired')),
+  decided_at timestamptz, decided_by uuid, reason text,
+  version int NOT NULL DEFAULT 1, archived_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+-- Append-only lifecycle history: one row per transition (request, approve, ...).
+CREATE TABLE core.approval_history (
+  id uuid PRIMARY KEY,
+  approval_id uuid NOT NULL REFERENCES core.approvals(id) ON DELETE CASCADE,
+  actor_id uuid, action text NOT NULL, reason text,
+  from_status text, to_status text, created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE core.approval_decisions (
   approval_id uuid REFERENCES core.approvals(id), approver_id uuid NOT NULL,

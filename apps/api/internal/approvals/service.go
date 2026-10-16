@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,7 +44,7 @@ func (s *Service) Request(ctx context.Context, in Request, actor *uuid.UUID) (*A
 	if err != nil {
 		return nil, fmt.Errorf("approvals: id: %w", err)
 	}
-	ref := generateRef(now.Year())
+	ref := generateRef(now.Year(), id)
 
 	a := Approval{
 		ID:           id,
@@ -214,8 +215,11 @@ func (s *Service) writeAudit(ctx context.Context, actor *uuid.UUID, action, enti
 	})
 }
 
-func generateRef(year int) string {
-	return fmt.Sprintf("APR-%d-%06d", year, time.Now().UnixNano()%1000000)
+// generateRef builds a human reference (docs/ATLAS.md 6.6). It is derived from
+// the approval's UUIDv7 so two approvals created in the same nanosecond can
+// never collide; core.approvals has a unique index on ref.
+func generateRef(year int, id uuid.UUID) string {
+	return fmt.Sprintf("APR-%d-%s", year, strings.ToUpper(id.String()[:8]))
 }
 
 func zeroIfNil(p *uuid.UUID) uuid.UUID {

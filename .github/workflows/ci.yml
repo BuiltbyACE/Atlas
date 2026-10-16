@@ -16,8 +16,44 @@ jobs:
     defaults:
       run:
         working-directory: apps/api
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: atlas
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atlas -d atlas"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # atlas-cli migrates as atlas_migrator; the integration tests connect as
+      # the database owner so they can TRUNCATE between cases.
+      ATLAS_DATABASE_URL: postgres://atlas_migrator:atlas_migrator@localhost:5432/atlas
+      ATLAS_MIGRATE_DATABASE_URL: postgres://atlas_migrator:atlas_migrator@localhost:5432/atlas
+      ATLAS_TEST_DATABASE_URL: postgres://atlas:atlas@localhost:5432/atlas
     steps:
       - uses: actions/checkout@v4
+
+      # The business schemas and grants reference the Atlas roles, so create
+      # them before migrating (same roles as infra/compose/postgres/initdb.d).
+      - name: Create Atlas database roles
+        run: |
+          psql "postgres://atlas:atlas@localhost:5432/atlas" -v ON_ERROR_STOP=1 <<'EOSQL'
+          CREATE ROLE atlas_migrator LOGIN PASSWORD 'atlas_migrator';
+          CREATE ROLE atlas_api LOGIN PASSWORD 'atlas_api';
+          CREATE ROLE atlas_worker LOGIN PASSWORD 'atlas_worker';
+          CREATE ROLE atlas_orchestrator LOGIN PASSWORD 'atlas_orchestrator';
+          CREATE ROLE atlas_readonly LOGIN PASSWORD 'atlas_readonly';
+          GRANT CREATE, CONNECT ON DATABASE atlas TO atlas_migrator;
+          GRANT CREATE, CONNECT ON DATABASE atlas TO atlas_orchestrator;
+          GRANT CONNECT ON DATABASE atlas TO atlas_api, atlas_worker, atlas_readonly;
+          GRANT CREATE, USAGE ON SCHEMA public TO atlas_migrator;
+          EOSQL
 
       - uses: actions/setup-go@v5
         with:
@@ -30,7 +66,12 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Unit tests
+      # Migrate before testing: the integration tests run the engine's real SQL
+      # against the real schema, which is what catches Go/database drift.
+      - name: Apply migrations
+        run: go run ./cmd/atlas-cli migrate up
+
+      - name: Tests (unit + database integration)
         run: go test ./...
 
       - name: golangci-lint
@@ -60,6 +101,8 @@ jobs:
     env:
       ORCHESTRATOR_DATABASE_URL: postgres://atlas_orchestrator:atlas_orchestrator@localhost:5432/atlas
       ATLAS_MIGRATE_DATABASE_URL: postgres://atlas_migrator:atlas_migrator@localhost:5432/atlas
+      # atlas-cli's config requires ATLAS_DATABASE_URL even when migrating.
+      ATLAS_DATABASE_URL: postgres://atlas_migrator:atlas_migrator@localhost:5432/atlas
     steps:
       - uses: actions/checkout@v4
 
