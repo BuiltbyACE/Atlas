@@ -82,6 +82,41 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
   end
 
+  test "a work event is routed to the work handler" do
+    project = Ecto.UUID.generate()
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "work:project:#{project}")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "work.task.status_changed.v1",
+      seq: 5,
+      payload: %{"task_id" => Ecto.UUID.generate(), "project_id" => project, "to" => "done"},
+      occurred_at: ~U[2026-10-16 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "work:project:" <> _, event: "task.changed"}
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
+  test "an escalation event is routed to the work handler" do
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "core.escalation.resolved.v1",
+      seq: 6,
+      payload: %{"escalation_id" => Ecto.UUID.generate()},
+      occurred_at: ~U[2026-10-16 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "exec:dashboard",
+      event: "dashboard.changed"
+    }
+  end
+
   test "an unknown event type is ignored, not failed" do
     assert :ok = Handlers.dispatch(%Event{id: Ecto.UUID.generate(), type: "x.y.z.v1", payload: %{}})
     refute_receive %Phoenix.Socket.Broadcast{}, 50

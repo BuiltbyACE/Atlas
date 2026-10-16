@@ -80,12 +80,20 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] Exec dashboard "overdue work" tile (overdue tasks + open escalations)
 
 ### Remaining Phase 2 (next)
-- [ ] Elixir outbox wiring for work.* + core.escalation.* events (signals +
-      dashboard invalidation) + tests
+- [x] Elixir outbox wiring for work.* + core.escalation.* events
+      (`AtlasOrchestrator.Work.Handler`/`Signals`): `<entity>.changed` on
+      `work:project:{id}` + `user:{id}`, and `dashboard.changed` on
+      `exec:dashboard`; tests
+- [ ] Mount the `work:project:{id}` channel (join check via
+      `GET /internal/v1/authz/check`) before the frontend goes live
 - [ ] Frontend (after backend above is complete)
 - [ ] L2/L3 ladder timing + notification fan-out for escalations (blocked on D4)
+- [ ] Blueprint deviations recorded in docs/PHASE2.md §9 need a decision:
+      (a) daily reports/leave/absence sit in the `work` schema/events but the
+      blueprint puts them under `people`; (b) escalation timing is a Go worker
+      sweep, not Elixir Oban timers + a Go internal command API (§5.8)
 
-Current status: Phase 1 (A-H) complete. Phase 2 backend for work core, evidence,
-daily reports, absences, escalation ladder and the exec work tile complete
-(schema 12; routes wired; tests green). Next: Elixir outbox wiring for work.*
-and core.escalation.*, then the frontend.
+Current status: Phase 1 (A-H) complete. Phase 2 backend (work core, evidence,
+daily reports, absences, escalation ladder, exec work tile) and the Elixir
+outbox wiring complete (Go schema 12; routes wired; Go tests green; 43 Elixir
+tests green). Next: the two blueprint deviations above, then the frontend.

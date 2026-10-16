@@ -10,7 +10,10 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
     * `core.approval.*.v1` — push `approval.changed` to the dashboard and any
       named approver/escalation target;
     * `core.file.*.v1` — push `dashboard.changed` to the dashboard, because a
-      file upload or archive moves the recent-highlights tile.
+      file upload or archive moves the recent-highlights tile;
+    * `work.*.v1` and `core.escalation.*.v1` — push `<entity>.changed` to the
+      project board and any named person, plus `dashboard.changed` to the
+      dashboard (task/board and overdue-work tiles).
 
   Reacting means *signalling*, never writing business data (ADR-009): Go remains
   the authority, the orchestrator nudges.
@@ -21,6 +24,7 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   alias AtlasOrchestrator.Dashboard.Handler, as: DashboardHandler
   alias AtlasOrchestrator.Notifications.Handler, as: NotificationsHandler
   alias AtlasOrchestrator.Outbox.Event
+  alias AtlasOrchestrator.Work.Handler, as: WorkHandler
 
   @doc "Handles one event. Unknown types are logged and ignored, not failed."
   @spec dispatch(Event.t()) :: :ok
@@ -36,6 +40,14 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
 
   def dispatch(%Event{type: "core.file." <> _} = event) do
     DashboardHandler.handle_event(event)
+  end
+
+  def dispatch(%Event{type: "work." <> _} = event) do
+    WorkHandler.handle_event(event)
+  end
+
+  def dispatch(%Event{type: "core.escalation." <> _} = event) do
+    WorkHandler.handle_event(event)
   end
 
   def dispatch(%Event{type: type}) do
