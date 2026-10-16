@@ -18,6 +18,7 @@ import (
 
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/health"
@@ -41,6 +42,9 @@ type Deps struct {
 	Notifications *notifications.Handler
 	Approvals     *approvals.Handler
 	Settings      *settings.Handler
+	// Files is optional, and only mounted when object storage is configured
+	// (local development may run without a bucket).
+	Files *files.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -88,6 +92,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Settings != nil {
 		registerSettings(reg, d.Settings)
+	}
+
+	if d.Files != nil {
+		registerFiles(reg, d.Files)
 	}
 
 	reg.Mount(r, gate)
@@ -176,4 +184,23 @@ func registerSettings(reg *routing.Registry, h *settings.Handler) {
 		"List a setting's changes", h.History)
 	reg.Gated("core.settings.manage", http.MethodPut, "/api/v1/settings/{key}",
 		"Change a setting", h.Set)
+}
+
+// registerFiles declares the files surface (§6.5). Reading is core.file.read;
+// starting and confirming an upload, and deleting your own file, is
+// core.file.write. Bytes never pass through these routes: they carry metadata
+// and pre-signed URLs only.
+func registerFiles(reg *routing.Registry, h *files.Handler) {
+	reg.Gated("core.file.read", http.MethodGet, "/api/v1/files",
+		"List files", h.List)
+	reg.Gated("core.file.read", http.MethodGet, "/api/v1/files/{id}",
+		"Get file metadata", h.Get)
+	reg.Gated("core.file.read", http.MethodGet, "/api/v1/files/{id}/download",
+		"Issue a download URL", h.Download)
+	reg.Gated("core.file.write", http.MethodPost, "/api/v1/files",
+		"Start an upload", h.RequestUpload)
+	reg.Gated("core.file.write", http.MethodPost, "/api/v1/files/{id}/complete",
+		"Confirm an upload", h.Complete)
+	reg.Gated("core.file.write", http.MethodDelete, "/api/v1/files/{id}",
+		"Delete your file", h.Archive)
 }

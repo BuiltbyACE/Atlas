@@ -93,6 +93,23 @@ type Config struct {
 	// configuration (§2.10), not code.
 	ApprovalSweepInterval time.Duration
 	ApprovalSweepBatch    int
+
+	// ── Files / object storage (§6.5) ────────────────────────────
+	// Evidence and documents live in an S3-compatible bucket (Cloudflare R2 in
+	// staging and production; SeaweedFS or R2 locally). Go issues pre-signed
+	// URLs so bytes never flow through the API (§6.5). Storage is optional in
+	// local development: when no bucket is configured the file routes are not
+	// mounted.
+	S3Endpoint  string
+	S3Region    string
+	S3Bucket    string
+	S3AccessKey string
+	S3SecretKey string
+	// S3PathStyle forces path-style addressing, which SeaweedFS requires. R2's
+	// account endpoint also accepts it, so the safe default is true.
+	S3PathStyle     bool
+	FileUploadTTL   time.Duration
+	FileDownloadTTL time.Duration
 }
 
 // Load reads configuration from the process environment, applying defaults.
@@ -137,6 +154,15 @@ func Load() (*Config, error) {
 
 		ApprovalSweepInterval: duration("ATLAS_APPROVAL_SWEEP_INTERVAL", time.Minute),
 		ApprovalSweepBatch:    integer("ATLAS_APPROVAL_SWEEP_BATCH", 100),
+
+		S3Endpoint:      get("S3_ENDPOINT", ""),
+		S3Region:        get("S3_REGION", "auto"),
+		S3Bucket:        get("S3_BUCKET", ""),
+		S3AccessKey:     get("S3_ACCESS_KEY", ""),
+		S3SecretKey:     get("S3_SECRET_KEY", ""),
+		S3PathStyle:     boolean("S3_FORCE_PATH_STYLE", true),
+		FileUploadTTL:   duration("ATLAS_FILE_UPLOAD_TTL", 15*time.Minute),
+		FileDownloadTTL: duration("ATLAS_FILE_DOWNLOAD_TTL", 5*time.Minute),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -204,7 +230,21 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("ATLAS_APPROVAL_SWEEP_BATCH must be positive")
 	}
 
+	if c.FileUploadTTL <= 0 {
+		return fmt.Errorf("ATLAS_FILE_UPLOAD_TTL must be positive")
+	}
+	if c.FileDownloadTTL <= 0 {
+		return fmt.Errorf("ATLAS_FILE_DOWNLOAD_TTL must be positive")
+	}
+
 	return nil
+}
+
+// ObjectStorageConfigured reports whether an object-storage bucket is set. When
+// it is not, the file routes are not mounted (a checkout without R2/SeaweedFS
+// still runs).
+func (c *Config) ObjectStorageConfigured() bool {
+	return strings.TrimSpace(c.S3Bucket) != ""
 }
 
 // IsLocal reports whether this process is running in the local development environment.

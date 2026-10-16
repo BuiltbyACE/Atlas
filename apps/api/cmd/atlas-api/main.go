@@ -21,6 +21,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
@@ -93,6 +94,33 @@ func run() error {
 	// write is versioned and audited (§6.7).
 	settingsService := settings.NewService(settings.NewPGStore(pool), auditWriter, logger)
 
+	// Files: bytes go straight to object storage (R2, or SeaweedFS locally)
+	// through pre-signed URLs; Go keeps the metadata and emits core.file.*
+	// events (§6.5). Storage is optional in local development: when no bucket
+	// is configured the file routes are simply not mounted.
+	var filesHandler *files.Handler
+	if cfg.ObjectStorageConfigured() {
+		objects, err := files.NewS3Store(ctx, files.S3Config{
+			Endpoint:  cfg.S3Endpoint,
+			Region:    cfg.S3Region,
+			Bucket:    cfg.S3Bucket,
+			AccessKey: cfg.S3AccessKey,
+			SecretKey: cfg.S3SecretKey,
+			PathStyle: cfg.S3PathStyle,
+		})
+		if err != nil {
+			return err
+		}
+		fileService := files.NewService(files.NewPGStore(pool), objects, files.NoopScanner{}, auditWriter, files.Config{
+			Bucket:      cfg.S3Bucket,
+			UploadTTL:   cfg.FileUploadTTL,
+			DownloadTTL: cfg.FileDownloadTTL,
+		}, logger)
+		filesHandler = files.NewHandler(fileService, logger)
+	} else {
+		logger.Warn("S3_BUCKET is not set; file routes are disabled")
+	}
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -102,6 +130,7 @@ func run() error {
 		Notifications: notificationHandler,
 		Approvals:     approvals.NewHandler(approvalService, logger),
 		Settings:      settings.NewHandler(settingsService, logger),
+		Files:         filesHandler,
 	})
 
 	srv := &http.Server{

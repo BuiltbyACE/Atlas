@@ -1,6 +1,6 @@
 # To-do: finish foundation (backends/engines/orchestrations) so frontend can build on top
 
-The sequence follows: Notifications done (Go), Elixir notification handler done. Approvals engine now has policy lookup, four-eyes/two-person enforcement, notification fan-out and a worker expiry sweep, and the Elixir outbox consumer routes notification and approval events to realtime signals. Next: settings, files, audit views, exec dashboard v1.
+The sequence follows: Notifications done (Go), Elixir notification handler done. Approvals engine now has policy lookup, four-eyes/two-person enforcement, notification fan-out and a worker expiry sweep, and the Elixir outbox consumer routes notification and approval events to realtime signals. Settings and files are done. Next: audit views, exec dashboard v1.
 
 ## A) Approvals engine — core complete
 - [x] Service layer `internal/approvals/service.go`: create approval with policy checks, decide (approve/decline), escalate, cancel; optimistic concurrency; emits correct outbox events; writes audit
@@ -25,9 +25,9 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [ ] Policy **change** workflow (request → both-CEO approval → apply), and seeding real thresholds — deferred to Phase 2 (depends on decision D4; §6.7)
 
 ## D) Files
-- [ ] `internal/files/` metadata, pre-signed upload URLs, classification
-- [ ] S3 config, virus scan placeholder
-- [ ] Events + tests
+- [x] `internal/files/` metadata, pre-signed upload URLs, classification: `Store` (create/get/list/complete/archive) over `core.files`, `Service` (initiate upload → pending, confirm via storage `Stat`, download URL, archive), routes gated by `core.file.read`/`core.file.write`
+- [x] S3 config (`S3_*` env, `config.ObjectStorageConfigured`), S3-compatible adapter (`ObjectStore`: presign PUT/GET, Stat, Delete) targeting Cloudflare R2 and SeaweedFS (migration `00009`: `core.files.updated_at` + touch trigger + keyset indexes); virus-scan placeholder (`Scanner`/`NoopScanner`, `status=quarantined`)
+- [x] Events (`core.file.uploaded.v1`, `core.file.deleted.v1`) written in the same tx as the change + best-effort audit; unit, DB integration, and env-gated S3 round-trip tests
 
 ## E) Audit views
 - [ ] Global audit list (auditor/CEOs), per-record history endpoints
@@ -49,4 +49,4 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [ ] Metrics/logs for dispatcher + sweeps (attempts, failures, lag)
 - [ ] Contracts schema validation hook awareness (CI) — schemas already present
 
-Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests), B complete (worker expiry sweep, configurable poll/batch, tests) and G complete (Elixir outbox routing + approval signals). C–F, H remaining. Next: C (settings), D (files), E (audit views), F (exec dashboard).
+Current status: A core complete (service, HTTP, routes, policy lookup, four-eyes/two-person, notification fan-out, tests), B complete (worker expiry sweep, configurable poll/batch, tests) and G complete (Elixir outbox routing + approval signals). C (settings) and D (files) are complete; E, F and H remain. Next: E (audit views), F (exec dashboard).
