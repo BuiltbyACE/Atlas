@@ -53,7 +53,7 @@ export default async function DailyReportsPage() {
       <Card
         title="Today"
         description={
-          todayReport
+          todayReport?.submitted_at
             ? `Filed ${formatDateTime(todayReport.submitted_at)} · version ${todayReport.version}`
             : "Nothing filed for today yet."
         }

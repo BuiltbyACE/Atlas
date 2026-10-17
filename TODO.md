@@ -75,8 +75,24 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       person per day, re-submit updates an unreviewed day,
       people.daily_report.submitted.v1) and leave (request/list/get/decide/cancel,
       overlap rejection, no self-decision, people.leave.requested/approved/
-      declined/cancelled.v1); D5 policy intentionally not enforced (open
-      decision); §8.5 routes
+      declined/cancelled.v1); §8.5 routes
+- [x] Daily-report lifecycle (decision **D5**, ADR-017): migration `00017`
+      widens `people.daily_reports.status` to
+      `due/draft/submitted/late/missed/excused/reviewed`, adds `due_at`/`missed_at`
+      and the sweep indexes; a daily-report sweep in `atlas-worker` (config
+      `ATLAS_DAILY_REPORT_SWEEP_INTERVAL`/`_BATCH`) is the only place the policy
+      is applied — prompt 16:30 EAT, deadline 09:00 EAT the next working day,
+      Mon–Fri, three misses in ten days → L2 (typed settings `people.daily_report.*`).
+      It opens due reports (`people.daily_report.due.v1`), excuses approved
+      leave, marks misses (`people.daily_report.missed.v1`) and notifies the
+      line manager, relabels late filings, and raises/resolves one L2 per person
+      through the shared `work.escalations` ladder (`entity_type = 'person'`);
+      `_ "time/tzdata"` linked into both commands
+- [x] Fix: migration `00013` moved `daily_reports`/`leave_requests` from `work`
+      to `people` with `SET SCHEMA`, carrying the (empty) `work` ACLs, so
+      `atlas_api`/`atlas_worker` had no DML on them at runtime. Migration `00016`
+      re-grants the `people` schema (mirrors `00015`); `TestPeopleSchemaGrants`
+      is the regression guard
 - [x] Overdue escalation: migration 00012 `work.escalations` (schema 12; work
       schema re-owned by atlas_migrator so `task migrate` works), sweep in
       atlas-worker (config `ATLAS_WORK_SWEEP_INTERVAL`/`ATLAS_WORK_SWEEP_BATCH`),
@@ -133,15 +149,21 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       `POST /api/v1/auth/heartbeat` keeps an open tab's `last_seen_at` fresh;
       web page `/people/activity` (live roster + per-person daily roll-up)
 - [ ] Notification fan-out for escalations (L2+ nudges to both CEOs) — Phase 7
-      (§6.4). The ladder itself is complete (D4, ADR-016)
+      (§6.4). The ladder itself is complete (D4, ADR-016). The daily-report
+      line-manager notice for D5 is done now (ADR-017); the reporter's 16:30
+      prompt fan-out and the D5 public-holiday calendar wait for Phase 7/§10.1
 - [ ] Blueprint deviation still open: escalation timing is a Go worker sweep,
-      not Elixir Oban timers + a Go internal command API (§5.8)
+      not Elixir Oban timers + a Go internal command API (§5.8); the
+      daily-report rhythm (§9.2) rides the same deviation (ADR-017)
       (daily reports/leave moved to `people` in migration 00013 — resolved)
 
 Current status: Phase 1 (A-H) complete. Phase 2 backend (work, people,
 escalations, exec dashboard) is done, including the Elixir outbox wiring, the Go
 realtime join check, the static service credential, account-addressed personal
-`user:{id}` topics, and the two remaining §8.5 people APIs. The Phase 2 frontend
-(`apps/web`) is built: work (projects, tasks, workload, escalations), daily
-reports, people (availability, leave, offboarding, and the session-activity
-view), and the executive dashboard.
+`user:{id}` topics, and the two remaining §8.5 people APIs. Decisions D4
+(ADR-016) and D5 (ADR-017) are decided and implemented: the full escalation
+ladder and the enforced daily-report lifecycle (prompt/deadline times, late,
+missed, excused, repeated-miss L2, line-manager notice) both ride the Go worker
+sweeps. The Phase 2 frontend (`apps/web`) is built: work (projects, tasks,
+workload, escalations), daily reports, people (availability, leave, offboarding,
+and the session-activity view), and the executive dashboard.

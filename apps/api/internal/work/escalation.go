@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -181,4 +182,76 @@ func escalationSnapshot(e Escalation) map[string]any {
 		"status":      string(e.Status),
 		"assignee":    uuidOrZero(e.AssigneeID).String(),
 	}
+}
+
+// PersonForRole resolves the person behind a company-scoped role grant — the
+// ladder's "domain CEO" lookup. Exported so another module can escalate through
+// the same ladder; the people module's repeated-miss rule does (ADR-017).
+func (s *Service) PersonForRole(ctx context.Context, roleKey string) (*uuid.UUID, error) {
+	return s.store.PersonForRole(ctx, roleKey)
+}
+
+// RaiseEscalation opens one escalation for an entity another module owns,
+// returning true when it opened a new one and false when one was already open
+// for that entity and level. It is the generic counterpart to the task sweep:
+// the people module escalates a person's repeated missed daily reports to L2
+// through it (ADR-017). It emits core.escalation.raised.v1 and audits the raise
+// as the system, exactly as the sweep does.
+func (s *Service) RaiseEscalation(ctx context.Context, entityType string, entityID uuid.UUID, level int, reason string, assignee *uuid.UUID) (bool, error) {
+	if strings.TrimSpace(entityType) == "" {
+		return false, fmt.Errorf("%w: escalation needs an entity type", ErrInvalid)
+	}
+	if level < 1 {
+		return false, fmt.Errorf("%w: escalation level must be >= 1", ErrInvalid)
+	}
+	assigneeUser, err := s.accountForPerson(ctx, assignee)
+	if err != nil {
+		return false, err
+	}
+	esc, raised, err := s.store.RaiseEscalationForEntity(ctx, entityType, entityID, level, reason, assignee,
+		func(e Escalation) (outbox.Event, error) {
+			ref := escalationRef(e)
+			ref.AssigneeUserID = assigneeUser
+			return outbox.NewEscalationRaised(nil, ref)
+		})
+	if err != nil {
+		return false, err
+	}
+	if !raised {
+		return false, nil
+	}
+	s.writeAuditAs(ctx, "system", "system", "work.escalation.raised", EntityEscalation, esc.ID,
+		nil, escalationSnapshot(*esc))
+	s.logger.DebugContext(ctx, "work: escalation raised",
+		slog.String("entity_type", esc.EntityType),
+		slog.String("entity_id", esc.EntityID.String()),
+		slog.Int("level", esc.Level))
+	return true, nil
+}
+
+// ResolveEscalations closes every open escalation for an entity another module
+// owns and returns how many it closed, emitting core.escalation.resolved.v1 per
+// row and auditing each. The people sweep calls it once a person's compliance
+// recovers (ADR-017).
+func (s *Service) ResolveEscalations(ctx context.Context, entityType string, entityID uuid.UUID) (int, error) {
+	closed, err := s.store.ResolveEscalationsForEntity(ctx, entityType, entityID,
+		func(e Escalation) (outbox.Event, error) {
+			return outbox.NewEscalationResolved(nil, escalationRef(e))
+		})
+	if err != nil {
+		return 0, err
+	}
+	for _, e := range closed {
+		s.writeAuditAs(ctx, "system", "system", "work.escalation.resolved", EntityEscalation, e.ID,
+			escalationSnapshot(e), escalationSnapshot(e))
+	}
+	return len(closed), nil
+}
+
+// OpenEscalatedEntities returns the entity ids of the given type that currently
+// have an open escalation. Another module pairs it with ResolveEscalations to
+// clear the escalations whose condition has passed (the people module does,
+// ADR-017).
+func (s *Service) OpenEscalatedEntities(ctx context.Context, entityType string) ([]uuid.UUID, error) {
+	return s.store.OpenEscalationEntities(ctx, entityType)
 }

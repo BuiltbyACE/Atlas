@@ -111,6 +111,12 @@ type Config struct {
 	WorkSweepInterval time.Duration
 	WorkSweepBatch    int
 
+	// ── Daily reports (§8.5, decision D5) ────────────────────────
+	// The daily-report lifecycle (prompt, miss, late) is time-driven, so
+	// atlas-worker sweeps it on a poll; both values are configuration (§2.10).
+	DailyReportSweepInterval time.Duration
+	DailyReportSweepBatch    int
+
 	// ── Files / object storage (§6.5) ────────────────────────────
 	// Evidence and documents live in an S3-compatible bucket (Cloudflare R2 in
 	// staging and production; SeaweedFS or R2 locally). Go issues pre-signed
@@ -176,6 +182,9 @@ func Load() (*Config, error) {
 
 		WorkSweepInterval: duration("ATLAS_WORK_SWEEP_INTERVAL", time.Minute),
 		WorkSweepBatch:    integer("ATLAS_WORK_SWEEP_BATCH", 100),
+
+		DailyReportSweepInterval: duration("ATLAS_DAILY_REPORT_SWEEP_INTERVAL", time.Minute),
+		DailyReportSweepBatch:    integer("ATLAS_DAILY_REPORT_SWEEP_BATCH", 500),
 
 		S3Endpoint:      get("S3_ENDPOINT", ""),
 		S3Region:        get("S3_REGION", "auto"),
@@ -260,6 +269,13 @@ func (c *Config) Validate() error {
 	}
 	if c.WorkSweepBatch <= 0 {
 		return fmt.Errorf("ATLAS_WORK_SWEEP_BATCH must be positive")
+	}
+
+	if c.DailyReportSweepInterval <= 0 {
+		return fmt.Errorf("ATLAS_DAILY_REPORT_SWEEP_INTERVAL must be positive")
+	}
+	if c.DailyReportSweepBatch <= 0 {
+		return fmt.Errorf("ATLAS_DAILY_REPORT_SWEEP_BATCH must be positive")
 	}
 
 	if c.FileUploadTTL <= 0 {

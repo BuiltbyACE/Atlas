@@ -15,6 +15,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	// The IANA zone database, linked into the binary: the distroless image ships
+	// no zoneinfo, so without this the daily-report rhythm and notification
+	// quiet hours silently fall back to UTC (ADR-017).
+	_ "time/tzdata"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -139,6 +143,10 @@ func run() error {
 	// orchestrator to react to (ADR-009). The presence window decides when a
 	// sign-in counts as "online" in the activity view.
 	peopleService := people.NewService(people.NewPGStore(pool), auditWriter, logger, cfg.SessionPresenceWindow)
+	// The API does not sweep, but it does answer "today": wiring the policy lets
+	// the day boundary follow the company timezone, so a report filed at 01:00
+	// local lands on the day the worker's sweep will look for (§8.5, ADR-017).
+	peopleService.SetPolicy(people.NewSettingsPolicy(settingsService))
 
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,

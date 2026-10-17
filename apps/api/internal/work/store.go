@@ -83,6 +83,18 @@ type Store interface {
 	// PersonForRole resolves the person (via their account) granted a
 	// company-scoped role — the D4 ladder uses it to find the domain CEO at L2.
 	PersonForRole(ctx context.Context, roleKey string) (*uuid.UUID, error)
+	// RaiseEscalationForEntity opens one escalation for an entity another module
+	// owns (the people module's repeated-miss rule is the first caller). The
+	// bool reports whether this call opened a new one; the event is written
+	// in-tx only then.
+	RaiseEscalationForEntity(ctx context.Context, entityType string, entityID uuid.UUID, level int, reason string, assignee *uuid.UUID, build func(e Escalation) (outbox.Event, error)) (*Escalation, bool, error)
+	// ResolveEscalationsForEntity closes every open escalation for an entity
+	// another module owns, writing each event in-tx.
+	ResolveEscalationsForEntity(ctx context.Context, entityType string, entityID uuid.UUID, build func(e Escalation) (outbox.Event, error)) ([]Escalation, error)
+	// OpenEscalationEntities returns the distinct entity ids with an open
+	// escalation of the given type, so another module can resolve the ones whose
+	// condition has cleared.
+	OpenEscalationEntities(ctx context.Context, entityType string) ([]uuid.UUID, error)
 }
 
 // PGStore implements Store over Postgres.
@@ -1223,6 +1235,132 @@ func (s *PGStore) PersonForRole(ctx context.Context, roleKey string) (*uuid.UUID
 		return nil, fmt.Errorf("work: resolve person for role %s: %w", roleKey, err)
 	}
 	return id, nil
+}
+
+// OpenEscalationEntities returns the distinct entity ids that have an open
+// escalation of the given type. Another module uses it to learn which of its
+// entities are currently escalated, so it can resolve the ones whose condition
+// has cleared (§8.5, D5).
+func (s *PGStore) OpenEscalationEntities(ctx context.Context, entityType string) ([]uuid.UUID, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT DISTINCT entity_id
+		  FROM work.escalations
+		 WHERE entity_type = $1 AND status = 'open'
+		 ORDER BY entity_id`, entityType)
+	if err != nil {
+		return nil, fmt.Errorf("work: list open escalation entities: %w", err)
+	}
+	defer rows.Close()
+	out := make([]uuid.UUID, 0, 4)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("work: scan escalation entity: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// RaiseEscalationForEntity opens one escalation for an entity another module
+// owns — the people module's repeated-miss escalation is the first caller
+// (ADR-017). The ladder's one-open-per-entity rule (idx_work_escalations_open)
+// makes a conflicting insert a no-op, so the bool reports whether this call
+// opened a new one; the caller's event is written only then, in the same
+// transaction.
+func (s *PGStore) RaiseEscalationForEntity(ctx context.Context, entityType string, entityID uuid.UUID, level int, reason string, assignee *uuid.UUID, build func(e Escalation) (outbox.Event, error)) (*Escalation, bool, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("work: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, false, fmt.Errorf("work: new escalation id: %w", err)
+	}
+	now := time.Now().UTC()
+	esc, err := scanEscalation(tx.QueryRow(ctx, `
+		INSERT INTO work.escalations (
+			id, entity_type, entity_id, project_id, level, status, reason,
+			assignee_person_id, version, created_at, updated_at)
+		VALUES ($1,$2,$3,NULL,$4,'open',$5,$6,1,$7,$7)
+		ON CONFLICT (entity_type, entity_id, level) WHERE status = 'open' DO NOTHING
+		RETURNING `+escalationCols,
+		id, entityType, entityID, level, reason, assignee, now))
+	if errors.Is(err, pgx.ErrNoRows) {
+		// An escalation for this entity and level is already open: nothing to
+		// do, and no event to write.
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, fmt.Errorf("work: commit: %w", err)
+		}
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("work: raise escalation: %w", err)
+	}
+	ev, err := build(esc)
+	if err != nil {
+		return nil, false, err
+	}
+	if _, err := outbox.Write(ctx, tx, ev); err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, fmt.Errorf("work: commit: %w", err)
+	}
+	return &esc, true, nil
+}
+
+// ResolveEscalationsForEntity closes every open escalation for an entity another
+// module owns, writing each event in the same transaction, and returns the rows
+// it closed so the caller can audit them.
+func (s *PGStore) ResolveEscalationsForEntity(ctx context.Context, entityType string, entityID uuid.UUID, build func(e Escalation) (outbox.Event, error)) ([]Escalation, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("work: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, `
+		UPDATE work.escalations
+		   SET status = 'resolved', resolved_at = now(), version = version + 1
+		 WHERE entity_type = $1 AND entity_id = $2 AND status = 'open'
+		RETURNING `+escalationCols,
+		entityType, entityID)
+	if err != nil {
+		return nil, fmt.Errorf("work: resolve escalations: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]Escalation, 0, 2)
+	for rows.Next() {
+		e, err := scanEscalation(rows)
+		if err != nil {
+			return nil, fmt.Errorf("work: scan escalation: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+
+	// Build and write the events only after the result set is drained: pgx does
+	// not allow another statement on the connection while rows are open.
+	for _, e := range out {
+		ev, err := build(e)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := outbox.Write(ctx, tx, ev); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("work: commit: %w", err)
+	}
+	return out, nil
 }
 
 // ResolveStaleEscalations closes open escalations whose task is no longer

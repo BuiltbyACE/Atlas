@@ -11,7 +11,9 @@ import (
 // and keep availability views honest (ADR-009). Go records the fact; Elixir
 // decides what to push.
 const (
+	TypeDailyReportDueV1       = "people.daily_report.due.v1"
 	TypeDailyReportSubmittedV1 = "people.daily_report.submitted.v1"
+	TypeDailyReportMissedV1    = "people.daily_report.missed.v1"
 	TypeLeaveRequestedV1       = "people.leave.requested.v1"
 	TypeLeaveApprovedV1        = "people.leave.approved.v1"
 	TypeLeaveDeclinedV1        = "people.leave.declined.v1"
@@ -41,6 +43,49 @@ func NewDailyReportSubmitted(actorID *uuid.UUID, reportID, reporterID uuid.UUID,
 		ReporterID:  reporterID,
 		ReportDate:  reportDate,
 		SubmittedAt: time.Now().UTC(),
+	})
+}
+
+// DailyReportDuePayload is emitted when a working day's report is opened for a
+// person at the prompt minute (§7.4, D5). Go records only that the report is now
+// due; the Phase 7 notification fan-out (or a client) turns it into the prompt.
+// The orchestrator invalidates its views either way.
+type DailyReportDuePayload struct {
+	ReportID   uuid.UUID `json:"report_id"`
+	ReporterID uuid.UUID `json:"reporter_person_id"`
+	ReportDate string    `json:"report_date"`
+	DueAt      time.Time `json:"due_at"`
+}
+
+// NewDailyReportDue builds a people.daily_report.due.v1 event.
+func NewDailyReportDue(actorID *uuid.UUID, reportID, reporterID uuid.UUID, reportDate string) (Event, error) {
+	return buildEvent(TypeDailyReportDueV1, AggregateDailyReport, reportID, actorID, nil, DailyReportDuePayload{
+		ReportID:   reportID,
+		ReporterID: reporterID,
+		ReportDate: reportDate,
+		DueAt:      time.Now().UTC(),
+	})
+}
+
+// DailyReportMissedPayload is emitted when a report's deadline passes with
+// nothing filed (§7.4, D5). LineManagerID is carried so the fan-out can reach
+// the line manager §8.5 asks be notified; nil when the person has none.
+type DailyReportMissedPayload struct {
+	ReportID      uuid.UUID  `json:"report_id"`
+	ReporterID    uuid.UUID  `json:"reporter_person_id"`
+	ReportDate    string     `json:"report_date"`
+	LineManagerID *uuid.UUID `json:"line_manager_id,omitempty"`
+	MissedAt      time.Time  `json:"missed_at"`
+}
+
+// NewDailyReportMissed builds a people.daily_report.missed.v1 event.
+func NewDailyReportMissed(actorID *uuid.UUID, reportID, reporterID uuid.UUID, reportDate string, lineManagerID *uuid.UUID) (Event, error) {
+	return buildEvent(TypeDailyReportMissedV1, AggregateDailyReport, reportID, actorID, nil, DailyReportMissedPayload{
+		ReportID:      reportID,
+		ReporterID:    reporterID,
+		ReportDate:    reportDate,
+		LineManagerID: lineManagerID,
+		MissedAt:      time.Now().UTC(),
 	})
 }
 

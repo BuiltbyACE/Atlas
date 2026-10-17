@@ -26,6 +26,14 @@ type Service struct {
 	logger *slog.Logger
 	// presenceWindow decides when a live session counts as "online" (§8.5).
 	presenceWindow time.Duration
+	// policy reads decision D5's daily-report rhythm at sweep time. Only the
+	// worker's sweeper needs it; a nil policy falls back to the defaults.
+	policy PolicyReader
+	// escalator is the work module's escalation ladder, used by the sweep's
+	// repeated-miss rule (§8.5, D5). A nil escalator skips escalation.
+	escalator Escalator
+	// notifier fans out the line-manager notice for a missed report (§8.5, D5).
+	notifier Notifier
 }
 
 // DefaultPresenceWindow is the fallback "online" window: two missed one-minute
@@ -51,6 +59,21 @@ func NewService(store Store, aw *audit.Writer, logger *slog.Logger, presenceWind
 	}
 }
 
+// SetPolicy wires the daily-report policy (§8.5, D5). The worker's sweep reads
+// the rhythm and the miss rule from it; the API reads only its zone for the
+// "today" day boundary, so an unfiled-today lookup and the sweep agree. Left
+// unwired, the sweep uses DefaultDailyReportPolicy and "today" is the UTC day.
+func (s *Service) SetPolicy(p PolicyReader) { s.policy = p }
+
+// SetEscalator wires the work module's escalation ladder for the repeated-miss
+// rule (§8.5, D5). Left unwired the sweep still marks misses but escalates
+// nothing — the right default for a process that is not the worker.
+func (s *Service) SetEscalator(e Escalator) { s.escalator = e }
+
+// SetNotifier wires the line-manager notice for a missed report (§8.5, D5).
+// Fan-out is best-effort; left unwired it is skipped.
+func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
+
 // accountForPerson resolves a person to the account realtime nudges are
 // addressed to, or nil when the person has no account (§7.5).
 func (s *Service) accountForPerson(ctx context.Context, personID uuid.UUID) (*uuid.UUID, error) {
@@ -59,13 +82,20 @@ func (s *Service) accountForPerson(ctx context.Context, personID uuid.UUID) (*uu
 
 // writeAudit records a state change. A nil writer makes it a no-op.
 func (s *Service) writeAudit(ctx context.Context, actor uuid.UUID, action, entityType string, entityID uuid.UUID, before, after any) {
+	s.writeAuditAs(ctx, audit.ActorUser, actor.String(), action, entityType, entityID, before, after)
+}
+
+// writeAuditAs is writeAudit with an explicit actor type, so the time-driven
+// daily-report sweep (no person involved) is recorded as the system rather than
+// a person.
+func (s *Service) writeAuditAs(ctx context.Context, actorType, actorID, action, entityType string, entityID uuid.UUID, before, after any) {
 	if s.audit == nil {
 		return
 	}
 	id := entityID
 	if err := s.audit.Write(ctx, nil, audit.Event{
-		ActorType:  audit.ActorUser,
-		ActorID:    actor.String(),
+		ActorType:  actorType,
+		ActorID:    actorID,
 		Action:     action,
 		EntityType: entityType,
 		EntityID:   &id,

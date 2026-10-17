@@ -242,6 +242,48 @@ var definitions = []Definition{
 		MaxLength:   64,
 		Default:     "ceo_internal",
 	},
+	// Decision D5 (docs/adr/ADR-017): the daily-report rhythm. The prompt time,
+	// the missed deadline, the working week and the repeated-miss rule are read
+	// by the atlas-worker daily-report sweep on every pass (§8.5, §9.2).
+	{
+		Key:         "people.daily_report.prompt_minute",
+		Kind:        KindInt,
+		Description: "D5: minute of the day (0-1439, company timezone) a working day's report prompt is sent.",
+		Min:         floatPtr(0),
+		Max:         floatPtr(1439),
+		Default:     990.0, // 16:30 EAT
+	},
+	{
+		Key:         "people.daily_report.deadline_minute",
+		Kind:        KindInt,
+		Description: "D5: minute of the day (0-1439, company timezone) on the next working day a report is due; later submissions are late, an unfiled report is missed.",
+		Min:         floatPtr(0),
+		Max:         floatPtr(1439),
+		Default:     540.0, // 09:00 EAT
+	},
+	{
+		Key:         "people.daily_report.working_days",
+		Kind:        KindString,
+		Description: "D5: ISO weekday numbers (1=Mon .. 7=Sun) that are working days, comma-separated.",
+		MaxLength:   20,
+		Default:     "1,2,3,4,5",
+	},
+	{
+		Key:         "people.daily_report.missed_threshold",
+		Kind:        KindInt,
+		Description: "D5: missed reports within the window that escalate a person to L2.",
+		Min:         floatPtr(1),
+		Max:         floatPtr(30),
+		Default:     3.0,
+	},
+	{
+		Key:         "people.daily_report.missed_window_days",
+		Kind:        KindInt,
+		Description: "D5: length of the trailing window (days) the missed-report threshold counts over.",
+		Min:         floatPtr(1),
+		Max:         floatPtr(90),
+		Default:     10.0,
+	},
 }
 
 // floatPtr is a tiny helper so the bounded definitions above stay readable.

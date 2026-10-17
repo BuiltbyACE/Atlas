@@ -729,6 +729,8 @@ stateDiagram-v2
 - Leave approvals reassign or flag the person's due tasks for the leave period.
 - Off-boarding deactivates accounts, revokes sessions/tokens, reassigns open tasks, leads and follow-ups, and lists company assets/credentials to recover.
 
+Daily-report rhythm decided: **D5 → [ADR-017](adr/ADR-017-daily-report-lifecycle-and-miss-policy.md)** — prompt 16:30 EAT, deadline 09:00 EAT the next working day, a Monday–Friday working week, and three misses in ten days → L2. The two times, the working week and the miss rule are typed settings (§6.7); the lifecycle is enforced by the Go worker sweep (§4.1), not by the submit path, and a late filing is recorded `late` rather than `missed`. The line manager is notified of a miss; the reporter's prompt fan-out is Phase 7 (§6.4).
+
 **Key APIs** — `POST /api/v1/daily-reports`, `GET /api/v1/daily-reports/today`, `POST /api/v1/people/leave-requests`, `POST /api/v1/people/leave-requests/{id}/decide`, `GET /api/v1/people/availability?date=`, `POST /api/v1/people/{id}/offboard`.
 
 **Metrics** — report compliance rate, recurring blockers by person/category, capacity vs load, on-time delivery per person and team, absence rate, review completion.
@@ -866,6 +868,14 @@ sequenceDiagram
     E->>G: notify line managers; repeated misses → L2
     Note over E: 07:30 brief includes report compliance and blockers
 ```
+
+The rhythm is enforced by the Go worker's daily-report sweep (§4.1,
+[ADR-017](adr/ADR-017-daily-report-lifecycle-and-miss-policy.md)), not by an
+Elixir `DailyRhythm`: Go opens the day's due reports at the prompt, marks a
+still-unresolved report `missed` after the deadline and raises the
+repeated-miss L2 through the shared ladder, emitting
+`people.daily_report.due.v1`/`.missed.v1`. Elixir reacts to those events only by
+invalidating the dashboard cache (§6.4); the reporter prompt fan-out is Phase 7.
 
 ### 9.3 Expense approval
 
@@ -1382,7 +1392,7 @@ Initial ADRs to write in `docs/adr/` during Phase 0:
 | D2 | Hosting provider and region | Phase 0 | Internal CEO |
 | D3 | SSO (Google/Microsoft) vs Atlas-native accounts | Phase 1 | Internal CEO |
 | D4 | Real approval thresholds T1/T2, D1, C2 and escalation windows E1–E3 — **decided** ([ADR-016](adr/ADR-016-escalation-windows-and-approval-thresholds.md)) | Phase 1 | Both CEOs |
-| D5 | Daily report time, deadline and missed-report policy | Phase 2 | Internal CEO |
+| D5 | Daily report time, deadline and missed-report policy - **decided** ([ADR-017](adr/ADR-017-daily-report-lifecycle-and-miss-policy.md)) | Phase 2 | Internal CEO |
 | D6 | Git provider for evidence integration | Phase 2 | Internal CEO |
 | D7 | Whether timesheets are required, and for which project types | Phase 2 | Both CEOs |
 | D8 | Pipeline stages, lead sources, lost reasons | Phase 3 | Commercial CEO |

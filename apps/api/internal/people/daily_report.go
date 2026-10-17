@@ -3,6 +3,7 @@ package people
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -14,9 +15,12 @@ import (
 // updates that day's report while it has not been reviewed. Emits
 // people.daily_report.submitted.v1 and writes an audit row.
 //
-// The report time-of-day / deadline policy (§8.5, decision D5) is intentionally
-// not enforced here: it is configuration that is still open, so any date is
-// accepted and the policy is applied by a later decision.
+// The lateness/miss policy (§8.5, decision D5) is not applied here: the submit
+// path never decides whether a filing was on time, so a filing is never rejected
+// on the clock. Whether it was late or recovered a miss is decided by the
+// daily-report sweep (sweep.go, ADR-017), which also clears missed_at. The one
+// thing this path does borrow from the policy is the day boundary, so a report
+// filed at 01:00 local lands on the local calendar day the sweep will look for.
 func (s *Service) SubmitDailyReport(ctx context.Context, actor uuid.UUID, in DailyReportInput) (DailyReport, error) {
 	r, err := validateDailyReport(DailyReport{
 		ReporterID:  actor,
@@ -28,7 +32,7 @@ func (s *Service) SubmitDailyReport(ctx context.Context, actor uuid.UUID, in Dai
 		NextDay:     in.NextDay,
 		HoursWorked: in.HoursWorked,
 		Version:     1,
-	}, s.now())
+	}, s.today(ctx))
 	if err != nil {
 		return DailyReport{}, err
 	}
@@ -68,7 +72,7 @@ func (s *Service) GetDailyReport(ctx context.Context, id uuid.UUID) (DailyReport
 // TodayReport returns the caller's report for today, or ErrNotFound when they
 // have not filed one yet. It backs GET /api/v1/daily-reports/today.
 func (s *Service) TodayReport(ctx context.Context, reporter uuid.UUID) (DailyReport, error) {
-	r, err := s.store.GetDailyReportForDate(ctx, reporter, dateOnly(s.now()))
+	r, err := s.store.GetDailyReportForDate(ctx, reporter, s.today(ctx))
 	if err != nil {
 		return DailyReport{}, err
 	}
@@ -76,6 +80,21 @@ func (s *Service) TodayReport(ctx context.Context, reporter uuid.UUID) (DailyRep
 		return DailyReport{}, fmt.Errorf("%w: no report for today", ErrNotFound)
 	}
 	return *r, nil
+}
+
+// today is the calendar date this service treats as "today" for a report: the
+// policy-zone date when the D5 policy is wired, else the UTC date. It exists so
+// the API and the sweep agree on which day "today" is — otherwise a report filed
+// at 01:00 local would land on the previous UTC day and the sweep would mark the
+// day it opened as missed. It is the day boundary only: whether a filing was on
+// time is still decided solely by the sweep (sweep.go, ADR-017).
+func (s *Service) today(ctx context.Context) time.Time {
+	if s.policy != nil {
+		if p, err := s.policy.DailyReportPolicy(ctx); err == nil {
+			return p.Today(s.now())
+		}
+	}
+	return dateOnly(s.now())
 }
 
 // ListDailyReports returns a page of reports, newest first.

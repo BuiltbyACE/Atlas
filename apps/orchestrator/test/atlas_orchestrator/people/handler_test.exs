@@ -70,6 +70,26 @@ defmodule AtlasOrchestrator.People.HandlerTest do
     refute_receive %Phoenix.Socket.Broadcast{topic: "user:" <> _}, 50
   end
 
+  test "a due or missed report only invalidates the dashboard" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "exec:dashboard")
+
+    for type <- ["people.daily_report.due.v1", "people.daily_report.missed.v1"] do
+      assert :ok =
+               Handler.handle_event(
+                 event(type, %{"report_id" => Ecto.UUID.generate()})
+               )
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        topic: "exec:dashboard",
+        event: "dashboard.changed",
+        payload: dashboard
+      }
+
+      assert dashboard["reason"] == type
+      refute_receive %Phoenix.Socket.Broadcast{topic: "user:" <> _}, 50
+    end
+  end
+
   test "an offboarded person only invalidates the dashboard" do
     Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "exec:dashboard")
 

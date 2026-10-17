@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/safaristack/atlas/apps/api/internal/identity"
@@ -26,6 +27,14 @@ type Store interface {
 	GetDailyReport(ctx context.Context, id uuid.UUID) (*DailyReport, error)
 	GetDailyReportForDate(ctx context.Context, reporter uuid.UUID, date time.Time) (*DailyReport, error)
 	ListDailyReports(ctx context.Context, q ListDailyReportsQuery, limit int, before *Cursor) ([]DailyReport, error)
+
+	// Daily-report sweep (§8.5, decision D5). These walk the timed lifecycle
+	// the atlas-worker runs; the API never calls them.
+	OpenDueReports(ctx context.Context, day, dueAt time.Time, limit int, build func(r DailyReport) (outbox.Event, error)) ([]DailyReport, error)
+	ExcuseDueReports(ctx context.Context, day time.Time) (int, error)
+	MarkMissedReports(ctx context.Context, day, missedAt time.Time, build func(r MissedReport) (outbox.Event, error)) ([]MissedReport, error)
+	MarkLateReports(ctx context.Context, day, deadline time.Time) (int, error)
+	MissedCounts(ctx context.Context, since time.Time, min int) ([]MissCounts, error)
 
 	// Leave requests.
 	CreateLeaveRequest(ctx context.Context, l LeaveRequest, ev *outbox.Event) (LeaveRequest, error)
@@ -85,7 +94,15 @@ func (s *PGStore) versionConflict(ctx context.Context, tx pgx.Tx, table string, 
 const dailyReportCols = `id, reporter_person_id, report_date, status,
 	COALESCE(work_done,''), COALESCE(blockers,''), COALESCE(risks,''), COALESCE(next_day,''),
 	hours_worked, submitted_at, reviewed_by_person_id, reviewed_at, COALESCE(notes,''),
-	version, created_at, updated_at`
+	version, created_at, updated_at, due_at, missed_at`
+
+// dailyReportColsQualified is dailyReportCols with an explicit alias, for the
+// sweep statements that join people.persons: id/version/created_at/updated_at
+// exist on both tables and would otherwise be ambiguous.
+const dailyReportColsQualified = `r.id, r.reporter_person_id, r.report_date, r.status,
+	COALESCE(r.work_done,''), COALESCE(r.blockers,''), COALESCE(r.risks,''), COALESCE(r.next_day,''),
+	r.hours_worked, r.submitted_at, r.reviewed_by_person_id, r.reviewed_at, COALESCE(r.notes,''),
+	r.version, r.created_at, r.updated_at, r.due_at, r.missed_at`
 
 func scanDailyReport(row rowScanner) (DailyReport, error) {
 	var r DailyReport
@@ -93,11 +110,32 @@ func scanDailyReport(row rowScanner) (DailyReport, error) {
 	if err := row.Scan(&r.ID, &r.ReporterID, &r.ReportDate, &status,
 		&r.WorkDone, &r.Blockers, &r.Risks, &r.NextDay,
 		&r.HoursWorked, &r.SubmittedAt, &r.ReviewedBy, &r.ReviewedAt, &r.Notes,
-		&r.Version, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		&r.Version, &r.CreatedAt, &r.UpdatedAt, &r.DueAt, &r.MissedAt); err != nil {
 		return r, err
 	}
 	r.Status = DailyReportStatus(status)
 	return r, nil
+}
+
+// scanMissedReports drains a result set of missedCols rows (report columns plus
+// the reporter's line manager) and closes it.
+func scanMissedReports(rows pgx.Rows) ([]MissedReport, error) {
+	defer rows.Close()
+	out := make([]MissedReport, 0, 4)
+	for rows.Next() {
+		var m MissedReport
+		var status string
+		if err := rows.Scan(&m.ID, &m.ReporterID, &m.ReportDate, &status,
+			&m.WorkDone, &m.Blockers, &m.Risks, &m.NextDay,
+			&m.HoursWorked, &m.SubmittedAt, &m.ReviewedBy, &m.ReviewedAt, &m.Notes,
+			&m.Version, &m.CreatedAt, &m.UpdatedAt, &m.DueAt, &m.MissedAt,
+			&m.LineManagerID, &m.ReporterName); err != nil {
+			return nil, err
+		}
+		m.Status = DailyReportStatus(status)
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // SaveDailyReport upserts one report per (reporter, date), keeping the unique
@@ -120,6 +158,10 @@ func (s *PGStore) SaveDailyReport(ctx context.Context, r DailyReport, ev *outbox
 		       blockers = EXCLUDED.blockers, risks = EXCLUDED.risks,
 		       next_day = EXCLUDED.next_day, hours_worked = EXCLUDED.hours_worked,
 		       submitted_at = EXCLUDED.submitted_at,
+		       -- Filing recovers a miss (D5): the row stops counting toward the
+		       -- escalation threshold; the sweep marks it late if it is past the
+		       -- deadline. due_at is left as the episode's anchor.
+		       missed_at = NULL,
 		       version = people.daily_reports.version + 1
 		 WHERE people.daily_reports.status <> 'reviewed'
 		RETURNING `+dailyReportCols,
@@ -210,6 +252,313 @@ func (s *PGStore) ListDailyReports(ctx context.Context, q ListDailyReportsQuery,
 			return nil, fmt.Errorf("people: scan daily report: %w", err)
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ── daily-report sweep (decision D5) ────────────────────────────────────────
+
+// duePersonsPredicate selects the people who owe a report for a day ($1): active
+// people who had started and not exited, and who are not on approved leave
+// covering the day. One fragment so the open and missed passes cannot drift.
+// The ::date cast keeps the date-column comparisons unambiguous regardless of
+// the session TimeZone.
+const duePersonsPredicate = `p.status = 'active'
+   AND (p.start_date IS NULL OR p.start_date <= $1::date)
+   AND (p.end_date IS NULL OR p.end_date >= $1::date)
+   AND NOT EXISTS (
+         SELECT 1 FROM people.leave_requests l
+          WHERE l.person_id = p.id AND l.status = 'approved'
+            AND l.from_date <= $1::date AND l.to_date >= $1::date)`
+
+// missedReportCols is a missed report plus the two person fields the
+// line-manager notice needs.
+const missedReportCols = dailyReportColsQualified + `, p.line_manager_id, p.full_name`
+
+// personGone reports whether err is a foreign-key violation on the report's
+// reporter: the pass listed a person and the row vanished before the insert
+// committed. Offboarding sets status='exited' rather than deleting, so this is
+// rare in production, but the test database is shared and other suites delete
+// the people they seed. Either way a person who no longer exists owes no report,
+// so the pass skips them rather than failing the whole batch.
+func personGone(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
+// tryInSavepoint runs fn inside a savepoint, so that when it fails on a person
+// who has just been deleted it rolls back only that one statement and reports
+// ok=false instead of aborting the whole batch transaction. Any other error is
+// returned unchanged. This is what keeps the open/miss passes usable while the
+// person set is changing underneath them.
+func tryInSavepoint(ctx context.Context, tx pgx.Tx, fn func() error) (ok bool, err error) {
+	if _, err := tx.Exec(ctx, `SAVEPOINT sweep_row`); err != nil {
+		return false, err
+	}
+	if err := fn(); err != nil {
+		if !personGone(err) {
+			return false, err
+		}
+		if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT sweep_row`); err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(ctx, `RELEASE SAVEPOINT sweep_row`); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if _, err := tx.Exec(ctx, `RELEASE SAVEPOINT sweep_row`); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// OpenDueReports opens a `due` report for every person who owes one for day and
+// has no report row yet, writing each prompt event in the same transaction. It
+// is idempotent: once a person's row exists the pass finds nothing for them.
+func (s *PGStore) OpenDueReports(ctx context.Context, day, dueAt time.Time, limit int, build func(r DailyReport) (outbox.Event, error)) ([]DailyReport, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	d := dateOnly(day)
+	at := dueAt.UTC()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("people: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, `
+		SELECT p.id FROM people.persons p
+		 WHERE `+duePersonsPredicate+`
+		   AND NOT EXISTS (
+		         SELECT 1 FROM people.daily_reports r
+		          WHERE r.reporter_person_id = p.id AND r.report_date = $1::date)
+		 ORDER BY p.id
+		 LIMIT $2`, d, limit)
+	if err != nil {
+		return nil, fmt.Errorf("people: list due persons: %w", err)
+	}
+	var people []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("people: scan due person: %w", err)
+		}
+		people = append(people, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	now := time.Now().UTC()
+	out := make([]DailyReport, 0, len(people))
+	for _, person := range people {
+		id, err := uuid.NewV7()
+		if err != nil {
+			return nil, fmt.Errorf("people: new report id: %w", err)
+		}
+		var r DailyReport
+		opened, err := tryInSavepoint(ctx, tx, func() error {
+			var err error
+			r, err = scanDailyReport(tx.QueryRow(ctx, `
+				INSERT INTO people.daily_reports (
+					id, reporter_person_id, report_date, status, due_at, version, created_at, updated_at)
+				VALUES ($1,$2,$3,'due',$4,1,$5,$5)
+				RETURNING `+dailyReportCols,
+				id, person, d, at, now))
+			return err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("people: open due report: %w", err)
+		}
+		if !opened {
+			continue
+		}
+		ev, err := build(r)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := outbox.Write(ctx, tx, ev); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("people: commit: %w", err)
+	}
+	return out, nil
+}
+
+// ExcuseDueReports excuses day's due and missed rows for people now on approved
+// leave covering the day — leave approved after the report was opened, or after
+// it was marked missed. It returns how many rows it excused.
+func (s *PGStore) ExcuseDueReports(ctx context.Context, day time.Time) (int, error) {
+	d := dateOnly(day)
+	tag, err := s.db.Exec(ctx, `
+		UPDATE people.daily_reports r
+		   SET status = 'excused', version = r.version + 1
+		 WHERE r.report_date = $1::date AND r.status IN ('due','missed')
+		   AND EXISTS (
+		         SELECT 1 FROM people.leave_requests l
+		          WHERE l.person_id = r.reporter_person_id AND l.status = 'approved'
+		            AND l.from_date <= $1::date AND l.to_date >= $1::date)`, d)
+	if err != nil {
+		return 0, fmt.Errorf("people: excuse daily reports: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// MarkMissedReports flips day's still-open `due` rows to `missed` and creates a
+// `missed` row for every person who owed a report but has none — the case where
+// the prompt never ran because the worker was down. Reports already filed
+// (submitted/late/reviewed) and excused rows are left alone. Every affected row
+// is returned with the reporter's line manager, and the caller's event is
+// written in the same transaction, so a notice is emitted exactly once.
+func (s *PGStore) MarkMissedReports(ctx context.Context, day, missedAt time.Time, build func(r MissedReport) (outbox.Event, error)) ([]MissedReport, error) {
+	d := dateOnly(day)
+	at := missedAt.UTC()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("people: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Flip the day's due rows. Rows for people on approved leave were excused
+	// already; the NOT EXISTS is the backstop for leave approved in between.
+	flip, err := tx.Query(ctx, `
+		UPDATE people.daily_reports r
+		   SET status = 'missed', missed_at = $2, version = r.version + 1
+		  FROM people.persons p
+		 WHERE p.id = r.reporter_person_id
+		   AND r.report_date = $1::date
+		   AND r.status = 'due'
+		   AND NOT EXISTS (
+		         SELECT 1 FROM people.leave_requests l
+		          WHERE l.person_id = r.reporter_person_id AND l.status = 'approved'
+		            AND l.from_date <= $1::date AND l.to_date >= $1::date)
+		RETURNING `+missedReportCols, d, at)
+	if err != nil {
+		return nil, fmt.Errorf("people: mark reports missed: %w", err)
+	}
+	missed, err := scanMissedReports(flip)
+	if err != nil {
+		return nil, fmt.Errorf("people: scan missed reports: %w", err)
+	}
+
+	// People who owed a report but have no row at all.
+	rows, err := tx.Query(ctx, `
+		SELECT p.id, p.line_manager_id, p.full_name
+		  FROM people.persons p
+		 WHERE `+duePersonsPredicate+`
+		   AND NOT EXISTS (
+		         SELECT 1 FROM people.daily_reports r
+		          WHERE r.reporter_person_id = p.id AND r.report_date = $1::date)
+		 ORDER BY p.id`, d)
+	if err != nil {
+		return nil, fmt.Errorf("people: list people owing a report: %w", err)
+	}
+	type owing struct {
+		person      uuid.UUID
+		lineManager *uuid.UUID
+		name        string
+	}
+	var missing []owing
+	for rows.Next() {
+		var o owing
+		if err := rows.Scan(&o.person, &o.lineManager, &o.name); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("people: scan person owing a report: %w", err)
+		}
+		missing = append(missing, o)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	now := time.Now().UTC()
+	for _, o := range missing {
+		id, err := uuid.NewV7()
+		if err != nil {
+			return nil, fmt.Errorf("people: new report id: %w", err)
+		}
+		var r DailyReport
+		inserted, err := tryInSavepoint(ctx, tx, func() error {
+			var err error
+			r, err = scanDailyReport(tx.QueryRow(ctx, `
+				INSERT INTO people.daily_reports (
+					id, reporter_person_id, report_date, status, missed_at, version, created_at, updated_at)
+				VALUES ($1,$2,$3,'missed',$4,1,$5,$5)
+				RETURNING `+dailyReportCols,
+				id, o.person, d, at, now))
+			return err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("people: create missed report: %w", err)
+		}
+		if !inserted {
+			continue
+		}
+		missed = append(missed, MissedReport{DailyReport: r, LineManagerID: o.lineManager, ReporterName: o.name})
+	}
+
+	for _, mr := range missed {
+		ev, err := build(mr)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := outbox.Write(ctx, tx, ev); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("people: commit: %w", err)
+	}
+	return missed, nil
+}
+
+// MarkLateReports flips day's reports that were filed after the deadline to
+// `late`. A late report still counts as filed (it recovered the miss), so this
+// only relabels it for compliance; it returns how many it relabelled.
+func (s *PGStore) MarkLateReports(ctx context.Context, day, deadline time.Time) (int, error) {
+	d := dateOnly(day)
+	tag, err := s.db.Exec(ctx, `
+		UPDATE people.daily_reports
+		   SET status = 'late', version = version + 1
+		 WHERE report_date = $1::date AND status = 'submitted'
+		   AND submitted_at IS NOT NULL AND submitted_at > $2`, d, deadline.UTC())
+	if err != nil {
+		return 0, fmt.Errorf("people: mark reports late: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// MissedCounts returns every person with at least min missed reports on or after
+// since — the input to the repeated-miss escalation rule (§8.5, D5).
+func (s *PGStore) MissedCounts(ctx context.Context, since time.Time, min int) ([]MissCounts, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT reporter_person_id, count(*)::int
+		  FROM people.daily_reports
+		 WHERE status = 'missed' AND report_date >= $1::date
+		 GROUP BY reporter_person_id
+		HAVING count(*) >= $2
+		 ORDER BY reporter_person_id`, dateOnly(since), min)
+	if err != nil {
+		return nil, fmt.Errorf("people: count missed reports: %w", err)
+	}
+	defer rows.Close()
+	out := make([]MissCounts, 0, 4)
+	for rows.Next() {
+		var c MissCounts
+		if err := rows.Scan(&c.PersonID, &c.Misses); err != nil {
+			return nil, fmt.Errorf("people: scan missed count: %w", err)
+		}
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }

@@ -58,9 +58,12 @@ tick an item only when its code, tests and migrations are in place.
       daily reports: submit/list/get + `GET /api/v1/daily-reports/today`, one per
       person per day (unique key; re-submitting updates an unreviewed day, an
       already-reviewed day is immutable); emits
-      `people.daily_report.submitted.v1`. The report time/deadline policy (D5) is
-      deliberately not enforced — it is open configuration, so any date is
-      accepted for now.
+      `people.daily_report.submitted.v1`. The report time/deadline policy is
+      decision **D5** (`docs/adr/ADR-017`) and is enforced by the daily-report
+      sweep (§5). The submit path never judges lateness — any date is accepted at
+      write time and the sweep decides late/missed — but it shares the sweep's
+      day boundary (`policy.Today` in `company.timezone`), so a report filed at
+      01:00 local lands on the day the sweep will look for.
 - [x] Leave: request/list/get/decide/cancel (dedicated flow, not the approvals
       engine); overlapping active leave is rejected; a requester cannot decide
       their own request, and only the requester may cancel theirs
@@ -98,7 +101,7 @@ tick an item only when its code, tests and migrations are in place.
         per-day roll-up. Polling (30s) rather than a realtime topic keeps this
         from adding session-start/end outbox events and an orchestrator join map.
 
-## 5. Overdue escalation ladder + worker
+## 5. Worker sweeps — overdue escalation ladder + daily reports
 
 - [x] `work.escalations` (migration `00012`): `entity_type`/`entity_id`, `level`,
       `status` (open/resolved), `reason`, `assignee_person_id`, `resolved_by`/
@@ -126,6 +129,56 @@ tick an item only when its code, tests and migrations are in place.
       the open escalation in place (one queue entry per item, one audit per
       transition). Notification fan-out is Phase 7.
 
+**Daily-report lifecycle sweep (decision D5, `docs/adr/ADR-017`).**
+
+- [x] Migration `00017` widens `people.daily_reports.status` to the §8.5
+      lifecycle (`due`/`draft`/`submitted`/`late`/`missed`/`excused`/`reviewed`),
+      adds `due_at`/`missed_at`, and the indexes the sweep reads
+      (`(status, report_date)`, partial on `(reporter_person_id, report_date)
+      WHERE status = 'missed'`)
+- [x] `internal/people/policy.go`: the D5 rhythm as a `PolicyReader` over typed
+      settings, read on every pass (§6.7) — prompt 16:30 EAT, deadline 09:00 EAT
+      the next working day, Mon–Fri, three misses in ten days → L2
+- [x] `internal/people` sweep (`internal/people/sweep.go` + `sweeper.go`, wired
+      into `atlas-worker`, config `ATLAS_DAILY_REPORT_SWEEP_INTERVAL`/`_BATCH`):
+      it is the sole place the policy's *decisions* are applied, so the write
+      path never judges lateness (it shares only the policy's day boundary). One
+      idempotent pass catches up the days a worker slept through and tolerates a
+      person vanishing mid-pass (the shared test database lets other suites
+      delete their people), skipping just that person. It consists of:
+      1. open each working day's report at the prompt (`due`, `due_at`) and emit
+         `people.daily_report.due.v1`
+      2. excuse a due/missed report when the person has approved leave covering
+         the day
+      3. mark a still-`due` report `missed` after the deadline (`missed_at`),
+         emit `people.daily_report.missed.v1` (carrying the line manager) and
+         notify the line manager best-effort after commit
+      4. relabel a `submitted` report filed after the deadline as `late` (a late
+         filing still counts as filed, never a miss)
+      5. raise one **L2** per person at/over the miss threshold, keyed
+         `entity_type = 'person'` in the same `work.escalations` table and
+         ladder as the task sweep (ADR-016), and resolve it when the count falls
+         back below
+- [x] Events `people.daily_report.due.v1` / `.missed.v1`
+      (`internal/outbox/people.go`)
+- [x] `internal/people/notifier.go`: the line-manager notice via the
+      notifications engine (§6.4), idempotent per report
+      (`people.daily_report.missed:<report_id>`)
+- [x] `internal/work` generic escalator seam (`RaiseEscalationForEntity`/
+      `ResolveEscalationsForEntity`/`OpenEscalationEntities`, and the
+      `Service.PersonForRole`/`RaiseEscalation`/`ResolveEscalations` wrappers)
+      so people reuses the ladder and table without importing work
+- [x] `_ "time/tzdata"` linked into `atlas-api` and `atlas-worker`: the
+      distroless image ships no zoneinfo, so without it the rhythm (and
+      notification quiet hours) silently fall back to UTC
+- [x] Tests: policy unit tests (including the policy-zone day boundary the API's
+      `today` and the sweep share); sweep unit tests over an in-memory store (open,
+      prompt gate, weekend, miss + line-manager notice, late, excused, L2 raise
+      / no re-raise / resolve on recovery and on aging out, policy-failure
+      skip); Postgres integration tests for the sweep SQL (including one person
+      vanishing mid-pass) and the real `work` escalation seam;
+      `TestPeopleSchemaGrants` guards the `people` grants (migration `00016`)
+
 ## 6. Executive dashboard updates
 
 - [x] Add "overdue work" tile (open tasks past deadline + open escalations) to
@@ -136,7 +189,7 @@ tick an item only when its code, tests and migrations are in place.
 - [x] Go-side event constructors: `internal/outbox/work.go`
       (`work.project.created/status_changed`, `work.task.created/status_changed/assigned/blocked/unblocked/overdue`,
       `work.evidence.added`) and `internal/outbox/people.go`
-      (`people.daily_report.submitted`, `people.leave.*`), plus
+      (`people.daily_report.due/submitted/missed`, `people.leave.*`), plus
       `internal/outbox/escalation.go` (`core.escalation.raised/resolved.v1`)
 - [x] `AtlasOrchestrator.Work.Signals`/`Handler`: route `work.*` and
       `core.escalation.*` to `<entity>.changed` signals (ADR-009 shape:
@@ -144,7 +197,10 @@ tick an item only when its code, tests and migrations are in place.
       `dashboard.changed` tile invalidation to `exec:dashboard`; tests
 - [x] `AtlasOrchestrator.People.Signals`/`Handler`: route `people.*` to
       `<entity>.changed` signals on `user:{id}` (when the event names a person)
-      and a `dashboard.changed` tile invalidation to `exec:dashboard`; tests
+      and a `dashboard.changed` tile invalidation to `exec:dashboard`; tests.
+      The D5 `due` (D5) and `missed` events are wired too, so the daily-report
+      compliance tile refreshes when the sweep opens or misses a report; turning
+      `due` into the reporter's prompt is the Phase 7 fan-out (ADR-017)
 - [x] Go join check: `GET /internal/v1/authz/check?user_id=&permission=` (§7.5),
       service-to-service and gated by `core.authz.check`; resolves the user's
       effective permissions from their grants so the orchestrator can authorise
@@ -192,6 +248,18 @@ either a refinement or an open question, listed so the divergence is explicit.
   events (`work.task.overdue.v1`, `core.escalation.raised.v1`) are identical
   either way, so the frontend is unaffected; revisiting this is a matter of
   moving the *clock*, not the data.
+- **Daily-report timing — resolved as a Go worker sweep.** §9.2 shows *Elixir*
+  (`DailyRhythm`) prompting at 16:30, opening reports via `GET people due today`
+  and marking misses via a Go internal command at 09:00. Those internal commands
+  do not exist; the accepted deviation is the same as the escalation ladder's
+  (above): a **Go worker sweep** (`atlas-worker`) runs the daily-report lifecycle
+  — open, excuse, miss, late, escalate — as decision **D5**
+  (`docs/adr/ADR-017`). The outbox events (`people.daily_report.due.v1` /
+  `.missed.v1`) are identical either way, so the frontend is unaffected. One
+  consequence is recorded in ADR-017: **the line manager is notified by Go now**
+  (best-effort, idempotent per report), ahead of the Phase 7 notification
+  fan-out, because D5's rule is itself a notification; the reporter's own prompt
+  still waits for Phase 7 or a client.
 - **Daily reports and leave/absence placement — resolved.** §7.4 catalogues
   `people.daily_report.submitted.v1` and `people.leave.*`, and the §10.1 table
   gives those tables to the `people` module; migration `00013` moves

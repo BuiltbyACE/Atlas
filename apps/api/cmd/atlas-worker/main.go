@@ -1,13 +1,14 @@
 // Command atlas-worker runs Atlas's asynchronous and time-driven Go work
 // (docs/ATLAS.md §4.1, §5.1).
 //
-// It runs two jobs. The notification dispatcher (§6.4) leases due rows that
+// It runs the notification dispatcher (§6.4), which leases due rows that
 // producers (atlas-api) recorded with their outbox event in one transaction and
 // performs the provider calls with a timeout, retries, backoff and a circuit
-// breaker (§8.10). The approvals expiry sweeper (§6.3) expires approvals whose
-// deadline passed and fans out the core.approval.expired.v1 event. Both are
-// time-driven, which is why they live here and not in the request path: it is
-// what makes the write path fast and the SLOs in §11 hold.
+// breaker (§8.10), plus three time-driven sweepers: approvals expiry (§6.3),
+// the overdue-work escalation ladder (§3.2, §5.8) and the daily-report
+// lifecycle (§8.5, decision D5). All of them are here rather than in the request
+// path because they are time-driven: it is what makes the write path fast and
+// the SLOs in §11 hold.
 //
 // The heartbeat loop stays: a worker that cannot see the database is idle in
 // the worst way, so it is logged rather than assumed.
@@ -20,6 +21,10 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	// The IANA zone database, linked into the binary: the distroless image ships
+	// no zoneinfo, so without this the daily-report rhythm and notification
+	// quiet hours silently fall back to UTC (ADR-017).
+	_ "time/tzdata"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -27,6 +32,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
+	"github.com/safaristack/atlas/apps/api/internal/people"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
 	"github.com/safaristack/atlas/apps/api/internal/platform/logging"
@@ -108,9 +114,25 @@ func run() error {
 		work.NewSettingsLadder(settingsService))
 	workSweeper := work.NewSweeper(workService, cfg.WorkSweepInterval, cfg.WorkSweepBatch, logger)
 
-	// Run the dispatcher, the two sweepers and the heartbeat side by side;
-	// whichever ends first (a fatal engine error, or a shutdown signal) ends the
-	// process.
+	// The daily-report lifecycle is the third time-driven job (§8.5, decision
+	// D5): it opens each working day's report at the prompt time, excuses the
+	// people now on approved leave, marks what is still missing after the
+	// deadline, relabels a filing that arrived late, notifies the line manager
+	// of a miss and escalates three misses in ten days to L2. The rhythm and the
+	// miss rule are typed settings (§6.7) so the policy is retuned through the
+	// settings API, not by redeploying. Escalation rides the same ladder and the
+	// same escalations table as the task sweep, keyed by entity_type 'person',
+	// so one queue serves both (ADR-017).
+	peopleService := people.NewService(people.NewPGStore(pool), audit.NewWriter(pool), logger,
+		cfg.SessionPresenceWindow)
+	peopleService.SetPolicy(people.NewSettingsPolicy(settingsService))
+	peopleService.SetEscalator(workService)
+	peopleService.SetNotifier(people.NewNotificationsAdapter(notificationService))
+	peopleSweeper := people.NewSweeper(peopleService, cfg.DailyReportSweepInterval,
+		cfg.DailyReportSweepBatch, logger)
+
+	// Run the dispatcher, the sweepers and the heartbeat side by side; whichever
+	// ends first (a fatal engine error, or a shutdown signal) ends the process.
 	dispatchErr := make(chan error, 1)
 	go func() { dispatchErr <- dispatcher.Run(ctx) }()
 
@@ -119,6 +141,9 @@ func run() error {
 
 	workSweepErr := make(chan error, 1)
 	go func() { workSweepErr <- workSweeper.Run(ctx) }()
+
+	peopleSweepErr := make(chan error, 1)
+	go func() { peopleSweepErr <- peopleSweeper.Run(ctx) }()
 
 	heartbeatErr := make(chan error, 1)
 	go func() { heartbeatErr <- loop(ctx, logger, pool) }()
@@ -129,6 +154,8 @@ func run() error {
 	case err := <-sweepErr:
 		return err
 	case err := <-workSweepErr:
+		return err
+	case err := <-peopleSweepErr:
 		return err
 	case err := <-heartbeatErr:
 		return err

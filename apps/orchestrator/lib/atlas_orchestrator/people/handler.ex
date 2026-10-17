@@ -31,7 +31,9 @@ defmodule AtlasOrchestrator.People.Handler do
   # nudge target is the person's account id (`*_user_id`), which is what a
   # socket is addressed by (§7.5, §10.1).
   @events %{
+    "people.daily_report.due.v1" => {"daily_report", "report_id", nil},
     "people.daily_report.submitted.v1" => {"daily_report", "report_id", nil},
+    "people.daily_report.missed.v1" => {"daily_report", "report_id", nil},
     "people.leave.requested.v1" => {"leave_request", "leave_request_id", nil},
     "people.leave.approved.v1" => {"leave_request", "leave_request_id", "person_user_id"},
     "people.leave.declined.v1" => {"leave_request", "leave_request_id", "person_user_id"},

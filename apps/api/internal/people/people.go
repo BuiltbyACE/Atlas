@@ -37,18 +37,28 @@ type Cursor struct {
 }
 
 // DailyReportStatus mirrors the people.daily_reports.status check constraint.
+//
+// The blueprint's lifecycle (§8.5) is due -> submitted/late/missed, or excused:
+// migration 00011 shipped only the three hand-written statuses and migration
+// 00017 widened the set for decision D5. `draft` and `reviewed` remain the
+// human-side states the hand-written report flow uses.
 type DailyReportStatus string
 
 const (
+	DailyReportDue       DailyReportStatus = "due"
 	DailyReportDraft     DailyReportStatus = "draft"
 	DailyReportSubmitted DailyReportStatus = "submitted"
+	DailyReportLate      DailyReportStatus = "late"
+	DailyReportMissed    DailyReportStatus = "missed"
+	DailyReportExcused   DailyReportStatus = "excused"
 	DailyReportReviewed  DailyReportStatus = "reviewed"
 )
 
 // Valid reports whether s is a known daily-report status.
 func (s DailyReportStatus) Valid() bool {
 	switch s {
-	case DailyReportDraft, DailyReportSubmitted, DailyReportReviewed:
+	case DailyReportDue, DailyReportDraft, DailyReportSubmitted, DailyReportLate,
+		DailyReportMissed, DailyReportExcused, DailyReportReviewed:
 		return true
 	}
 	return false
@@ -72,6 +82,11 @@ type DailyReport struct {
 	Version     int
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	// DueAt is when the report was opened by the sweep's prompt (D5), and
+	// MissedAt when its deadline passed with nothing filed. Both are nil for
+	// hand-written reports, which never enter the timed lifecycle.
+	DueAt    *time.Time
+	MissedAt *time.Time
 }
 
 // DailyReportInput is the payload for submitting a daily report. ReportDate is a

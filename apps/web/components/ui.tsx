@@ -129,12 +129,14 @@ export function statusTone(status: string): Tone {
     case "done":
     case "approved":
     case "submitted":
+    case "reviewed":
       return "success";
     case "in_progress":
     case "review":
     case "planning":
     case "requested":
     case "pending":
+    case "due":
       return "info";
     case "blocked":
     case "paused":
