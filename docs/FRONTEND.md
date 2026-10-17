@@ -354,15 +354,14 @@ apps/web/
 
 1. `(auth)/login` is a real client flow (§2), with redirect-if-authenticated.
 2. A sign-out control in the shell (`components/sign-out-button.tsx`).
+3. `(app)/settings` — session management (`GET /auth/sessions`, `DELETE /auth/sessions/{id}`, `POST /auth/sessions/revoke-all`).
+4. Accept-invite page (`POST /api/v1/auth/invites/accept`).
 
 **Yours to do**
 
-1. `(app)/settings` — the session-management page (`GET /auth/sessions`,
-   `DELETE /auth/sessions/{id}`, `POST /auth/sessions/revoke-all`).
-2. Accept-invite page (`POST /api/v1/auth/invites/accept`).
-3. Honest stubs for the module routes in the sidebar (`/crm`, `/work`, …):
+1. Honest stubs for the module routes in the sidebar (`/crm`, `/work`, …):
    today they 404.
-4. Wire `generate:api` and replace hand types with generated ones.
+2. Wire `generate:api` and replace hand types with generated ones.
 
 ---
 
@@ -462,7 +461,7 @@ Tracked in ATLAS.md §21. Most relevant to you:
 1. Login (`email`/`phone` + password) against the real backend.
 2. MFA verify, then enrolment (QR + recovery codes).
 3. Sign-out and session management in `/settings` (done).
-4. Invite acceptance page (needs a `core.user.manage` account to issue invites).
+4. Invite acceptance page (done).
 5. Wire `generate:api` and migrate to generated types.
 6. Dashboard and the authenticated shell polish — with honest empty states —
    ready for the first data modules.
