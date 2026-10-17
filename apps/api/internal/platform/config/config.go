@@ -117,6 +117,12 @@ type Config struct {
 	DailyReportSweepInterval time.Duration
 	DailyReportSweepBatch    int
 
+	// GitHub integration (section 12, decision D6).
+	// GitHubWebhookSecret is the shared secret GitHub signs webhook deliveries
+	// with (X-Hub-Signature-256). When it is empty the /webhooks/github route
+	// is mounted but answers 503: an unconfigured receipt is never trusted.
+	GitHubWebhookSecret string
+
 	// ── Files / object storage (§6.5) ────────────────────────────
 	// Evidence and documents live in an S3-compatible bucket (Cloudflare R2 in
 	// staging and production; SeaweedFS or R2 locally). Go issues pre-signed
@@ -185,6 +191,8 @@ func Load() (*Config, error) {
 
 		DailyReportSweepInterval: duration("ATLAS_DAILY_REPORT_SWEEP_INTERVAL", time.Minute),
 		DailyReportSweepBatch:    integer("ATLAS_DAILY_REPORT_SWEEP_BATCH", 500),
+
+		GitHubWebhookSecret: get("ATLAS_GITHUB_WEBHOOK_SECRET", ""),
 
 		S3Endpoint:      get("S3_ENDPOINT", ""),
 		S3Region:        get("S3_REGION", "auto"),

@@ -28,6 +28,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/auth"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/files"
+	"github.com/safaristack/atlas/apps/api/internal/integrations"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/people"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
@@ -141,6 +142,17 @@ func run() error {
 	// setting work.timesheet.required_project_types (§8.2, ADR-019).
 	workService.SetTimesheetPolicy(work.NewSettingsTimesheetPolicy(settingsService))
 
+	// Integrations (D6, section 12): inbound provider webhooks. GitHub
+	// authenticates with a shared secret rather than a principal; a merged PR
+	// links to the task named by the Atlas ref in its branch or title and
+	// records pull_request evidence (ADR-018).
+	integrationService := integrations.NewService(
+		integrations.NewPGStore(pool),
+		gitHubWork{service: workService},
+		logger,
+	)
+	integrationHandler := integrations.NewHandler(integrationService, cfg.GitHubWebhookSecret, logger)
+
 	// People & accountability (Phase 2): daily reports and leave. These belong
 	// to the people module (§8.5, §10.1) and emit people.* outbox events for the
 	// orchestrator to react to (ADR-009). The presence window decides when a
@@ -163,9 +175,10 @@ func run() error {
 		Audit:         audit.NewHandler(auditService, logger),
 		Dashboard: dashboard.NewHandler(
 			dashboard.NewService(dashboard.NewPGStore(pool), audit.NewPGStore(pool), logger), logger),
-		Files:  filesHandler,
-		Work:   work.NewHandler(workService, logger),
-		People: people.NewHandler(peopleService, logger),
+		Files:        filesHandler,
+		Work:         work.NewHandler(workService, logger),
+		People:       people.NewHandler(peopleService, logger),
+		Integrations: integrationHandler,
 	})
 
 	srv := &http.Server{
@@ -273,6 +286,46 @@ func (r fileResolver) ResolveFile(ctx context.Context, id uuid.UUID) (*work.Evid
 		return nil, err
 	}
 	return &work.EvidenceFile{ID: f.ID, Filename: f.Filename, Status: string(f.Status)}, nil
+}
+
+// gitHubWork adapts work.Service to integrations.Work, so the integrations
+// package resolves a ref and attaches pull_request evidence without importing
+// the work package (the D6 link is a contract, not a dependency).
+type gitHubWork struct{ service *work.Service }
+
+func (g gitHubWork) TaskIDByRef(ctx context.Context, ref string) (uuid.UUID, bool, error) {
+	return g.service.TaskIDByRef(ctx, ref)
+}
+
+func (g gitHubWork) AttachPullRequest(ctx context.Context, taskID uuid.UUID, pr integrations.PullRequest) (integrations.EvidenceLink, error) {
+	evidence, err := g.service.AttachIntegrationEvidence(ctx, work.EvidenceInput{
+		TaskID:       &taskID,
+		EvidenceType: work.EvidenceTypePullRequest,
+		Reference:    pr.URL,
+		Kind:         "pull request",
+		Description:  gitHubPullRequestDescription(pr),
+	})
+	if err != nil {
+		return integrations.EvidenceLink{}, err
+	}
+	link := integrations.EvidenceLink{EvidenceID: evidence.ID}
+	if evidence.ProjectID != nil {
+		link.ProjectID = *evidence.ProjectID
+	}
+	return link, nil
+}
+
+// gitHubPullRequestDescription is the human line stored with the evidence, so
+// the task shows why the link exists without another API call.
+func gitHubPullRequestDescription(pr integrations.PullRequest) string {
+	desc := "Merged pull request"
+	if pr.Repository != "" {
+		desc = fmt.Sprintf("Merged pull request %s#%d", pr.Repository, pr.Number)
+	}
+	if pr.Title != "" {
+		desc += ": " + pr.Title
+	}
+	return desc
 }
 
 // secretSealer builds the AES-GCM sealer for short-lived secrets.

@@ -97,6 +97,16 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       from the task), emitting `work.time_entry.logged/updated/removed.v1` in-tx.
       Enforced **report-only** — missing hours never block a transition; the §8.4
       margin falls back to the assignment-percentage allocation
+- [x] GitHub evidence integration (decision **D6**, ADR-018): migration `00019`
+      adds an immutable human `ref` (`PRJ-<year>-<seq>`, `<project>/T-<seq>`) to
+      `work.projects`/`work.tasks` (allocated in-tx from `work.ref_counters`),
+      makes `work.evidence` polymorphic (`evidence_type`/`reference`, nullable
+      `file_id` with a partial unique index on the external link) and nullable
+      `uploader_person_id` for integration-recorded rows; `POST /webhooks/github`
+      verifies the HMAC-SHA256 signature (`ATLAS_GITHUB_WEBHOOK_SECRET`),
+      de-duplicates by `X-GitHub-Delivery` (`integrations.github_deliveries`),
+      links a merged PR to the task named by its ref and records `pull_request`
+      evidence, emitting `integrations.git.pull_request.merged.v1`
 - [x] Fix: migration `00013` moved `daily_reports`/`leave_requests` from `work`
       to `people` with `SET SCHEMA`, carrying the (empty) `work` ACLs, so
       `atlas_api`/`atlas_worker` had no DML on them at runtime. Migration `00016`
@@ -179,6 +189,10 @@ realtime join check, the static service credential, account-addressed personal
 ladder and the enforced daily-report lifecycle (prompt/deadline times, late,
 missed, excused, repeated-miss L2, line-manager notice) both ride the Go worker
 sweeps, and D7 (ADR-019) records timesheets — required for `client_delivery`,
-optional elsewhere, report-only so they never block delivery. The Phase 2 frontend (`apps/web`) is built: work (projects, tasks,
+optional elsewhere, report-only so they never block delivery. D6 (ADR-018) is
+decided and implemented: GitHub is the provider, an inbound signed webhook links
+a merged PR to the task named by its Atlas ref and records `pull_request`
+evidence (the §8.9 raw-payload inbox and async processing are the recorded
+deviation, PHASE2 §9). The Phase 2 frontend (`apps/web`) is built: work (projects, tasks,
 workload, escalations), daily reports, people (availability, leave, offboarding,
 and the session-activity view), and the executive dashboard.

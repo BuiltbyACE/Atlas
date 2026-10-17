@@ -21,6 +21,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/auth"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/files"
+	"github.com/safaristack/atlas/apps/api/internal/integrations"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/people"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
@@ -59,6 +60,10 @@ type Deps struct {
 	// People is the people & accountability surface (daily reports, leave);
 	// mounted when present.
 	People *people.Handler
+	// Integrations is the inbound provider webhook surface (D6 GitHub);
+	// mounted when present. Its route is public: the provider authenticates
+	// with an HMAC signature, not a principal.
+	Integrations *integrations.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -126,6 +131,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.People != nil {
 		registerPeople(reg, d.People)
+	}
+
+	if d.Integrations != nil {
+		registerIntegrations(reg, d.Integrations)
 	}
 
 	reg.Mount(r, gate)
@@ -389,4 +398,13 @@ func registerPeople(reg *routing.Registry, h *people.Handler) {
 		"See who is signed in and active now", h.GetPresence)
 	reg.Gated("people.session.read", http.MethodGet, "/api/v1/people/sessions",
 		"List sign-in sessions and logged activity", h.ListSessions)
+}
+
+// registerIntegrations declares the inbound provider webhook surface (section
+// 11, section 12). The GitHub route is deliberately NOT under /api/v1: it is
+// GitHub's endpoint, not Atlas's API, and it is unauthenticated by principal.
+// The HMAC signature in the body is the gate, so it is a Public route.
+func registerIntegrations(reg *routing.Registry, h *integrations.Handler) {
+	reg.Public(http.MethodPost, "/webhooks/github",
+		"Receive GitHub webhook deliveries (signed, de-duplicated)", h.ReceiveGitHub)
 }

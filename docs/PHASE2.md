@@ -72,6 +72,35 @@ tick an item only when its code, tests and migrations are in place.
       concurrency, filters, events) tests; `work.time_entries` added to the
       schema-grants guard
 
+## 3.6 GitHub evidence integration (decision D6) — done
+
+- [x] Migration `00019`: a human **`ref`** on `work.projects`/`work.tasks`
+      (`PRJ-2026-007`, `PRJ-2026-007/T-0142`) allocated by Go through
+      `work.ref_counters` in the caller's transaction (a rollback burns no
+      number), immutable, uniquely indexed
+- [x] `work.evidence` becomes **polymorphic** (§6.5): `evidence_type` (the seven
+      values), `reference`, nullable `file_id` with the file/reference
+      consistency CHECK, and a nullable `uploader_person_id` so an
+      integration-recorded row has no submitter — a person can still verify it
+- [x] `internal/integrations`: `POST /webhooks/github` (public, §11) verifies
+      GitHub's HMAC-SHA256 signature over the raw body (constant-time, 1 MiB
+      cap), answers `503` when unconfigured and `401` on a bad signature. The
+      secret is process configuration, `ATLAS_GITHUB_WEBHOOK_SECRET`
+- [x] Replay protection: `integrations.github_deliveries` records each
+      `X-GitHub-Delivery`; a redelivery is a no-op, and a processing failure
+      releases the claim and returns `500` so the retry applies
+- [x] A **merged** pull request links to the task named by the Atlas ref in its
+      branch or title (case-insensitive, first match) and records
+      `pull_request` evidence whose reference is the PR URL; re-attaching the
+      same reference is idempotent (partial unique index + a find-first)
+- [x] `integrations.git.pull_request.merged.v1` emitted by the integrations
+      package in the same write, aggregate `pull_request`, aggregate id = the
+      evidence row; the Elixir work handler routes it to
+      `work:project:{id}` + `dashboard.changed` (ADR-009)
+- [x] Grants on the `integrations` schema (mirror `00015`); tests: signature
+      verify / ref extraction / payload parse (unit), delivery claim + dedupe +
+      grants (DB), and ref + pull_request evidence + idempotency (work)
+
 ## 4. People module — daily reports, leave, availability, offboarding, session activity (`internal/people`) — done
 
 - [x] `internal/people` module (migration `00013` moves the tables home):
@@ -318,3 +347,13 @@ either a refinement or an open question, listed so the divergence is explicit.
 - **Realtime signal names** follow ADR-009's `{type: "<entity>.changed", id}`
   example rather than a module-level name, and tile invalidation reuses the
   dashboard's `dashboard.changed` (`AtlasOrchestrator.Work.Handler`).
+- **GitHub webhooks are processed synchronously.** §8.9 sketches
+  `verify signature → check timestamp/replay → store raw payload
+  (integrations.webhook_inbox) → acknowledge fast → process asynchronously →
+  emit domain event`; the D6 route (ADR-018) instead verifies the signature,
+  claims the delivery id, links and emits inline, and returns `202`. There is
+  no raw-payload inbox and no async worker yet. The behaviour is correct at
+  Phase 2 volumes and the delivery log gives the idempotence the async form
+  would need, so the §8.9 inbox is a refinement of the same event, not a
+  redesign.
+

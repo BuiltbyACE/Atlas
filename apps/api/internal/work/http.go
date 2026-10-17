@@ -34,6 +34,7 @@ func NewHandler(service *Service, logger *slog.Logger) *Handler {
 
 type projectView struct {
 	ID            string     `json:"id"`
+	Ref           string     `json:"ref"`
 	Name          string     `json:"name"`
 	Description   string     `json:"description,omitempty"`
 	ProjectType   string     `json:"project_type,omitempty"`
@@ -69,6 +70,7 @@ type milestoneView struct {
 
 type taskView struct {
 	ID               string     `json:"id"`
+	Ref              string     `json:"ref"`
 	ProjectID        string     `json:"project_id"`
 	MilestoneID      string     `json:"milestone_id,omitempty"`
 	ParentID         string     `json:"parent_id,omitempty"`
@@ -107,16 +109,18 @@ type memberView struct {
 }
 
 type evidenceView struct {
-	ID          string     `json:"id"`
-	TaskID      string     `json:"task_id,omitempty"`
-	ProjectID   string     `json:"project_id,omitempty"`
-	FileID      string     `json:"file_id"`
-	UploaderID  string     `json:"uploader_person_id"`
-	Kind        string     `json:"kind,omitempty"`
-	Description string     `json:"description,omitempty"`
-	VerifiedBy  string     `json:"verified_by_person_id,omitempty"`
-	VerifiedAt  *time.Time `json:"verified_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID           string     `json:"id"`
+	TaskID       string     `json:"task_id,omitempty"`
+	ProjectID    string     `json:"project_id,omitempty"`
+	EvidenceType string     `json:"evidence_type"`
+	FileID       string     `json:"file_id,omitempty"`
+	Reference    string     `json:"reference,omitempty"`
+	UploaderID   string     `json:"uploader_person_id,omitempty"`
+	Kind         string     `json:"kind,omitempty"`
+	Description  string     `json:"description,omitempty"`
+	VerifiedBy   string     `json:"verified_by_person_id,omitempty"`
+	VerifiedAt   *time.Time `json:"verified_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 type timeEntryView struct {
@@ -198,9 +202,11 @@ type blockerReq struct {
 }
 
 type evidenceReq struct {
-	FileID      string `json:"file_id"`
-	Kind        string `json:"kind"`
-	Description string `json:"description"`
+	FileID       string `json:"file_id"`
+	EvidenceType string `json:"evidence_type"`
+	Reference    string `json:"reference"`
+	Kind         string `json:"kind"`
+	Description  string `json:"description"`
 }
 
 type timeEntryReq struct {
@@ -802,15 +808,20 @@ func (h *Handler) attachEvidence(w http.ResponseWriter, r *http.Request, actor u
 		h.writeError(w, r, err)
 		return
 	}
-	fileID, err := uuid.Parse(strings.TrimSpace(req.FileID))
-	if err != nil {
-		httpx.WriteProblem(w, r, httpx.BadRequest("file_id is not a valid id."))
-		return
-	}
-	e, err := h.service.AttachEvidence(r.Context(), actor, EvidenceInput{
-		TaskID: taskID, ProjectID: projectID, FileID: fileID,
+	in := EvidenceInput{
+		TaskID: taskID, ProjectID: projectID,
+		EvidenceType: req.EvidenceType, Reference: req.Reference,
 		Kind: req.Kind, Description: req.Description,
-	})
+	}
+	if strings.TrimSpace(req.FileID) != "" {
+		fileID, err := uuid.Parse(strings.TrimSpace(req.FileID))
+		if err != nil {
+			httpx.WriteProblem(w, r, httpx.BadRequest("file_id is not a valid id."))
+			return
+		}
+		in.FileID = fileID
+	}
+	e, err := h.service.AttachEvidence(r.Context(), actor, in)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -1338,6 +1349,7 @@ func cursorOrNil(cursor string) (*Cursor, error) {
 func projectOf(p Project, timesheetRequired bool) projectView {
 	v := projectView{
 		ID:                p.ID.String(),
+		Ref:               p.Ref,
 		Name:              p.Name,
 		Description:       p.Description,
 		ProjectType:       p.ProjectType,
@@ -1378,6 +1390,7 @@ func milestoneOf(m Milestone) milestoneView {
 func taskOf(t Task) taskView {
 	v := taskView{
 		ID:            t.ID.String(),
+		Ref:           t.Ref,
 		ProjectID:     t.ProjectID.String(),
 		Title:         t.Title,
 		Description:   t.Description,
@@ -1428,13 +1441,19 @@ func blockerOf(b Blocker) blockerView {
 
 func evidenceOf(e Evidence) evidenceView {
 	v := evidenceView{
-		ID:          e.ID.String(),
-		FileID:      e.FileID.String(),
-		UploaderID:  e.UploaderID.String(),
-		Kind:        e.Kind,
-		Description: e.Description,
-		VerifiedAt:  e.VerifiedAt,
-		CreatedAt:   e.CreatedAt,
+		ID:           e.ID.String(),
+		EvidenceType: e.EvidenceType,
+		Reference:    e.Reference,
+		Kind:         e.Kind,
+		Description:  e.Description,
+		VerifiedAt:   e.VerifiedAt,
+		CreatedAt:    e.CreatedAt,
+	}
+	if e.FileID != nil {
+		v.FileID = e.FileID.String()
+	}
+	if e.UploaderID != nil {
+		v.UploaderID = e.UploaderID.String()
 	}
 	if e.TaskID != nil {
 		v.TaskID = e.TaskID.String()

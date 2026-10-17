@@ -39,6 +39,8 @@ type Store interface {
 	// Tasks.
 	CreateTask(ctx context.Context, t Task, ev *outbox.Event) (Task, error)
 	GetTask(ctx context.Context, id uuid.UUID) (*Task, error)
+	// TaskIDByRef resolves a human ref (PRJ-2026-007/T-0142) to its task.
+	TaskIDByRef(ctx context.Context, ref string) (uuid.UUID, bool, error)
 	ListTasks(ctx context.Context, q ListTasksQuery, limit int, before *Cursor) ([]Task, error)
 	UpdateTask(ctx context.Context, t Task, expectedVersion int, ev *outbox.Event) (Task, error)
 	AddDependency(ctx context.Context, d Dependency) error
@@ -59,6 +61,10 @@ type Store interface {
 	// Evidence.
 	CreateEvidence(ctx context.Context, e Evidence, ev *outbox.Event) (Evidence, error)
 	GetEvidence(ctx context.Context, id uuid.UUID) (*Evidence, error)
+	// EvidenceByReference finds a reference (D6: a merged PR URL) already
+	// attached to a task, so a redelivered webhook reuses the row rather than
+	// inserting a second.
+	EvidenceByReference(ctx context.Context, taskID uuid.UUID, evidenceType, reference string) (*Evidence, error)
 	ListEvidence(ctx context.Context, q ListEvidenceQuery) ([]Evidence, error)
 	VerifyEvidence(ctx context.Context, id uuid.UUID, verifier uuid.UUID) (Evidence, error)
 	DeleteEvidence(ctx context.Context, id uuid.UUID) error
@@ -128,13 +134,13 @@ func nullIfEmpty(s string) any {
 	return s
 }
 
-const projectCols = `id, name, COALESCE(description,''), COALESCE(project_type,''), status,
+const projectCols = `id, ref, name, COALESCE(description,''), COALESCE(project_type,''), status,
 	owner_person_id, department_id, started_at, due_at, completed_at, version, created_at, updated_at`
 
 func scanProject(row rowScanner) (Project, error) {
 	var p Project
 	var status string
-	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.ProjectType, &status,
+	if err := row.Scan(&p.ID, &p.Ref, &p.Name, &p.Description, &p.ProjectType, &status,
 		&p.OwnerPersonID, &p.DepartmentID, &p.StartedAt, &p.DueAt, &p.CompletedAt,
 		&p.Version, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return p, err
@@ -150,13 +156,18 @@ func (s *PGStore) CreateProject(ctx context.Context, p Project, ev *outbox.Event
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	ref, err := allocateProjectRef(ctx, tx, p.CreatedAt)
+	if err != nil {
+		return Project{}, err
+	}
+
 	created, err := scanProject(tx.QueryRow(ctx, `
 		INSERT INTO work.projects (
-			id, name, description, project_type, status, owner_person_id, department_id,
+			id, ref, name, description, project_type, status, owner_person_id, department_id,
 			started_at, due_at, completed_at, version, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING `+projectCols,
-		p.ID, p.Name, nullIfEmpty(p.Description), nullIfEmpty(p.ProjectType), string(p.Status),
+		p.ID, ref, p.Name, nullIfEmpty(p.Description), nullIfEmpty(p.ProjectType), string(p.Status),
 		p.OwnerPersonID, p.DepartmentID, p.StartedAt, p.DueAt, p.CompletedAt,
 		p.Version, p.CreatedAt, p.UpdatedAt))
 	if err != nil {
@@ -411,14 +422,14 @@ func (s *PGStore) UpdateMilestone(ctx context.Context, m Milestone, expectedVers
 	return updated, nil
 }
 
-const taskCols = `id, project_id, milestone_id, parent_id, title, COALESCE(description,''),
+const taskCols = `id, ref, project_id, milestone_id, parent_id, title, COALESCE(description,''),
 	assignee_person_id, reporter_person_id, status, priority, due_at, started_at, completed_at,
 	blocked, COALESCE(blocked_reason,''), estimate_hours, actual_hours, version, created_at, updated_at`
 
 func scanTask(row rowScanner) (Task, error) {
 	var t Task
 	var status, priority string
-	if err := row.Scan(&t.ID, &t.ProjectID, &t.MilestoneID, &t.ParentID, &t.Title, &t.Description,
+	if err := row.Scan(&t.ID, &t.Ref, &t.ProjectID, &t.MilestoneID, &t.ParentID, &t.Title, &t.Description,
 		&t.AssigneePersonID, &t.ReporterPersonID, &status, &priority, &t.DueAt, &t.StartedAt,
 		&t.CompletedAt, &t.Blocked, &t.BlockedReason, &t.EstimateHours, &t.ActualHours,
 		&t.Version, &t.CreatedAt, &t.UpdatedAt); err != nil {
@@ -436,15 +447,20 @@ func (s *PGStore) CreateTask(ctx context.Context, t Task, ev *outbox.Event) (Tas
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	ref, err := allocateTaskRef(ctx, tx, t.ProjectID)
+	if err != nil {
+		return Task{}, err
+	}
+
 	created, err := scanTask(tx.QueryRow(ctx, `
 		INSERT INTO work.tasks (
-			id, project_id, milestone_id, parent_id, title, description,
+			id, ref, project_id, milestone_id, parent_id, title, description,
 			assignee_person_id, reporter_person_id, status, priority, due_at, started_at,
 			completed_at, blocked, blocked_reason, estimate_hours, actual_hours,
 			version, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		RETURNING `+taskCols,
-		t.ID, t.ProjectID, t.MilestoneID, t.ParentID, t.Title, nullIfEmpty(t.Description),
+		t.ID, ref, t.ProjectID, t.MilestoneID, t.ParentID, t.Title, nullIfEmpty(t.Description),
 		t.AssigneePersonID, t.ReporterPersonID, string(t.Status), string(t.Priority), t.DueAt,
 		t.StartedAt, t.CompletedAt, t.Blocked, nullIfEmpty(t.BlockedReason), t.EstimateHours,
 		t.ActualHours, t.Version, t.CreatedAt, t.UpdatedAt))
@@ -471,6 +487,67 @@ func (s *PGStore) GetTask(ctx context.Context, id uuid.UUID) (*Task, error) {
 		return nil, fmt.Errorf("work: get task: %w", err)
 	}
 	return &t, nil
+}
+
+// TaskIDByRef resolves the human ref (PRJ-2026-007/T-0142) to its task id.
+// found is false when no task carries it.
+func (s *PGStore) TaskIDByRef(ctx context.Context, ref string) (uuid.UUID, bool, error) {
+	var id uuid.UUID
+	err := s.db.QueryRow(ctx, `SELECT id FROM work.tasks WHERE ref = $1`, ref).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, false, nil
+	}
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("work: resolve task ref: %w", err)
+	}
+	return id, true, nil
+}
+
+// allocateProjectRef bumps the per-year PRJ counter and formats it. Allocation
+// runs in the caller's transaction, so a rolled-back create burns no ref.
+func allocateProjectRef(ctx context.Context, tx pgx.Tx, at time.Time) (string, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	year := at.UTC().Format("2006")
+	n, err := nextRef(ctx, tx, "PRJ-"+year)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("PRJ-%s-%03d", year, n), nil
+}
+
+// allocateTaskRef formats the next task as <project ref>/T-0001, mirroring the
+// blueprint's PRJ-2026-007/T-0142. The task counter is global, so two projects
+// never share an ordinal by accident.
+func allocateTaskRef(ctx context.Context, tx pgx.Tx, projectID uuid.UUID) (string, error) {
+	var projectRef string
+	err := tx.QueryRow(ctx, `SELECT ref FROM work.projects WHERE id = $1`, projectID).Scan(&projectRef)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("%w: project %s", ErrNotFound, projectID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("work: read project ref: %w", err)
+	}
+	n, err := nextRef(ctx, tx, "T")
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s/T-%04d", projectRef, n), nil
+}
+
+// nextRef bumps a named counter in-tx and returns the new value. The scope
+// ("PRJ-2026", "T") is the allocation domain; a missing scope starts at 1.
+func nextRef(ctx context.Context, tx pgx.Tx, scope string) (int64, error) {
+	var n int64
+	err := tx.QueryRow(ctx, `
+		INSERT INTO work.ref_counters (scope, value) VALUES ($1, 1)
+		ON CONFLICT (scope) DO UPDATE SET value = work.ref_counters.value + 1
+		RETURNING value`, scope).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("work: allocate ref %q: %w", scope, err)
+	}
+	return n, nil
 }
 
 func (s *PGStore) ListTasks(ctx context.Context, q ListTasksQuery, limit int, before *Cursor) ([]Task, error) {
@@ -754,13 +831,15 @@ func (s *PGStore) CountOpenBlockers(ctx context.Context, taskID uuid.UUID) (int,
 	return n, nil
 }
 
-const evidenceCols = `id, task_id, project_id, file_id, uploader_person_id,
-	COALESCE(kind,''), COALESCE(description,''), verified_by_person_id, verified_at, created_at`
+const evidenceCols = `id, task_id, project_id, file_id, uploader_person_id, evidence_type,
+	COALESCE(reference,''), COALESCE(kind,''), COALESCE(description,''),
+	verified_by_person_id, verified_at, created_at`
 
 func scanEvidence(row rowScanner) (Evidence, error) {
 	var e Evidence
 	if err := row.Scan(&e.ID, &e.TaskID, &e.ProjectID, &e.FileID, &e.UploaderID,
-		&e.Kind, &e.Description, &e.VerifiedBy, &e.VerifiedAt, &e.CreatedAt); err != nil {
+		&e.EvidenceType, &e.Reference, &e.Kind, &e.Description,
+		&e.VerifiedBy, &e.VerifiedAt, &e.CreatedAt); err != nil {
 		return e, err
 	}
 	return e, nil
@@ -775,12 +854,13 @@ func (s *PGStore) CreateEvidence(ctx context.Context, e Evidence, ev *outbox.Eve
 
 	created, err := scanEvidence(tx.QueryRow(ctx, `
 		INSERT INTO work.evidence (
-			id, task_id, project_id, file_id, uploader_person_id, kind, description,
-			verified_by_person_id, verified_at, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			id, task_id, project_id, file_id, uploader_person_id, evidence_type, reference,
+			kind, description, verified_by_person_id, verified_at, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		RETURNING `+evidenceCols,
-		e.ID, e.TaskID, e.ProjectID, e.FileID, e.UploaderID, nullIfEmpty(e.Kind),
-		nullIfEmpty(e.Description), e.VerifiedBy, e.VerifiedAt, e.CreatedAt))
+		e.ID, e.TaskID, e.ProjectID, e.FileID, e.UploaderID, e.EvidenceType,
+		nullIfEmpty(e.Reference), nullIfEmpty(e.Kind), nullIfEmpty(e.Description),
+		e.VerifiedBy, e.VerifiedAt, e.CreatedAt))
 	if err != nil {
 		return Evidence{}, fmt.Errorf("work: create evidence: %w", err)
 	}
@@ -802,6 +882,29 @@ func (s *PGStore) GetEvidence(ctx context.Context, id uuid.UUID) (*Evidence, err
 	}
 	if err != nil {
 		return nil, fmt.Errorf("work: get evidence: %w", err)
+	}
+	return &e, nil
+}
+
+// EvidenceByReference returns the row already carrying (task, type, reference),
+// or nil. It is the idempotent half of the D6 link: a redelivered webhook finds
+// the evidence it recorded, so the delivery is not applied twice.
+func (s *PGStore) EvidenceByReference(ctx context.Context, taskID uuid.UUID, evidenceType, reference string) (*Evidence, error) {
+	ref := strings.TrimSpace(reference)
+	if ref == "" {
+		return nil, nil
+	}
+	e, err := scanEvidence(s.db.QueryRow(ctx, `
+		SELECT `+evidenceCols+`
+		  FROM work.evidence
+		 WHERE task_id = $1 AND evidence_type = $2 AND reference = $3
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT 1`, taskID, evidenceType, ref))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("work: find evidence by reference: %w", err)
 	}
 	return &e, nil
 }

@@ -123,6 +123,32 @@ defmodule AtlasOrchestrator.Work.HandlerTest do
     refute_receive %Phoenix.Socket.Broadcast{topic: "user:" <> _}, 50
   end
 
+  test "a merged pull request link reaches the project board and the dashboard" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "work:project:#{@project}")
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "exec:dashboard")
+
+    assert :ok =
+             Handler.handle_event(
+               event("integrations.git.pull_request.merged.v1", %{
+                 "evidence_id" => Ecto.UUID.generate(),
+                 "task_id" => Ecto.UUID.generate(),
+                 "project_id" => @project,
+                 "repository" => "safaristack/atlas"
+               })
+             )
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "work:project:" <> _,
+      event: "evidence.changed",
+      payload: payload
+    }
+
+    assert payload["project_id"] == @project
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+    # The PR link names no account, so no personal nudge is sent.
+    refute_receive %Phoenix.Socket.Broadcast{topic: "user:" <> _}, 50
+  end
+
   test "an unknown work event type is ignored, not failed" do
     assert :ok = Handler.handle_event(event("work.task.reopened.v1", %{}))
     assert :ok = Handler.handle_event(%{})

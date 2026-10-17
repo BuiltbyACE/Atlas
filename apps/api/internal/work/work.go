@@ -134,7 +134,10 @@ func (d DependencyType) Valid() bool {
 
 // Project is a row in work.projects.
 type Project struct {
-	ID            uuid.UUID
+	ID uuid.UUID
+	// Ref is the human reference (PRJ-2026-007), allocated once on create and
+	// never edited: it is how a GitHub branch or PR names a project's task (D6).
+	Ref           string
 	Name          string
 	Description   string
 	ProjectType   string
@@ -166,7 +169,10 @@ type Milestone struct {
 
 // Task is a row in work.tasks.
 type Task struct {
-	ID               uuid.UUID
+	ID uuid.UUID
+	// Ref is the human reference (PRJ-2026-007/T-0142), allocated once on create
+	// and never edited. It is the join key for the D6 GitHub PR link.
+	Ref              string
 	ProjectID        uuid.UUID
 	MilestoneID      *uuid.UUID
 	ParentID         *uuid.UUID
@@ -202,26 +208,60 @@ type Blocker struct {
 // Evidence is a row in work.evidence: a core.files file attached to a task or a
 // project, optionally verified by a reviewer (§Phase 2).
 type Evidence struct {
-	ID          uuid.UUID
-	TaskID      *uuid.UUID
-	ProjectID   *uuid.UUID
-	FileID      uuid.UUID
-	UploaderID  uuid.UUID
-	Kind        string
-	Description string
-	VerifiedBy  *uuid.UUID
-	VerifiedAt  *time.Time
-	CreatedAt   time.Time
+	ID           uuid.UUID
+	TaskID       *uuid.UUID
+	ProjectID    *uuid.UUID
+	FileID       *uuid.UUID
+	UploaderID   *uuid.UUID
+	EvidenceType string
+	Reference    string
+	Kind         string
+	Description  string
+	VerifiedBy   *uuid.UUID
+	VerifiedAt   *time.Time
+	CreatedAt    time.Time
 }
 
-// EvidenceInput is the payload for attaching a file as evidence. Exactly one of
-// TaskID / ProjectID must be set; when TaskID is set the project is derived.
+// Evidence types (docs/ATLAS.md 6.5). `file` is the original stored-object type;
+// the rest carry an external reference.
+const (
+	EvidenceTypeFile             = "file"
+	EvidenceTypeURL              = "url"
+	EvidenceTypeGitCommit        = "git_commit"
+	EvidenceTypePullRequest      = "pull_request"
+	EvidenceTypeTestRun          = "test_run"
+	EvidenceTypeClientApproval   = "client_approval"
+	EvidenceTypePaymentReference = "payment_reference"
+)
+
+// EvidenceTypes is the closed set of values a row may take.
+var EvidenceTypes = []string{
+	EvidenceTypeFile, EvidenceTypeURL, EvidenceTypeGitCommit, EvidenceTypePullRequest,
+	EvidenceTypeTestRun, EvidenceTypeClientApproval, EvidenceTypePaymentReference,
+}
+
+// ValidEvidenceType reports whether t is a 6.5 evidence type.
+func ValidEvidenceType(t string) bool {
+	for _, known := range EvidenceTypes {
+		if t == known {
+			return true
+		}
+	}
+	return false
+}
+
+// EvidenceInput is the payload for attaching evidence. Exactly one of TaskID /
+// ProjectID must be set; when TaskID is set the project is derived. An empty
+// EvidenceType means `file`, which requires FileID; every other type requires
+// Reference and no file.
 type EvidenceInput struct {
-	TaskID      *uuid.UUID
-	ProjectID   *uuid.UUID
-	FileID      uuid.UUID
-	Kind        string
-	Description string
+	TaskID       *uuid.UUID
+	ProjectID    *uuid.UUID
+	FileID       uuid.UUID
+	EvidenceType string
+	Reference    string
+	Kind         string
+	Description  string
 }
 
 // EvidenceFile is the minimal view of a stored file evidence needs. Keeping it

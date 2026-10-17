@@ -238,28 +238,49 @@ func NewTaskOverdue(actorID *uuid.UUID, t TaskOverdueRef) (Event, error) {
 	})
 }
 
-// NewEvidenceAdded builds a work.evidence.added.v1 event.
-func NewEvidenceAdded(actorID *uuid.UUID, evidenceID, fileID uuid.UUID, taskID, projectID uuid.UUID, kind string, addedBy uuid.UUID) (Event, error) {
-	return buildEvent(TypeEvidenceAddedV1, AggregateEvidence, evidenceID, actorID, nil, EvidenceAddedPayload{
-		EvidenceID: evidenceID,
-		FileID:     fileID,
-		TaskID:     taskID,
-		ProjectID:  projectID,
-		Kind:       kind,
-		AddedBy:    addedBy,
-		AddedAt:    time.Now().UTC(),
+// EvidenceRef is the minimal view the evidence event builder needs (the
+// polymorphic §6.5 row: a stored file or an external reference).
+type EvidenceRef struct {
+	ID           uuid.UUID
+	TaskID       uuid.UUID
+	ProjectID    uuid.UUID
+	FileID       *uuid.UUID
+	UploaderID   *uuid.UUID
+	EvidenceType string
+	Reference    string
+	Kind         string
+}
+
+// NewEvidenceAdded builds a work.evidence.added.v1 event. actorID is the
+// uploader or nil when an integration (§6.5 pull_request/payment_reference)
+// recorded it.
+func NewEvidenceAdded(actorID *uuid.UUID, e EvidenceRef) (Event, error) {
+	return buildEvent(TypeEvidenceAddedV1, AggregateEvidence, e.ID, actorID, nil, EvidenceAddedPayload{
+		EvidenceID:   e.ID,
+		EvidenceType: e.EvidenceType,
+		FileID:       e.FileID,
+		Reference:    e.Reference,
+		TaskID:       e.TaskID,
+		ProjectID:    e.ProjectID,
+		Kind:         e.Kind,
+		UploaderID:   e.UploaderID,
+		AddedAt:      time.Now().UTC(),
 	})
 }
 
-// EvidenceAddedPayload is emitted when a file is attached as evidence.
+// EvidenceAddedPayload is emitted when evidence is attached to a task or
+// project. FileID and Reference are mutually exclusive per §6.5; the client
+// fetches the row rather than reconstructing it from the event (ADR-009).
 type EvidenceAddedPayload struct {
-	EvidenceID uuid.UUID `json:"evidence_id"`
-	FileID     uuid.UUID `json:"file_id"`
-	TaskID     uuid.UUID `json:"task_id,omitempty"`
-	ProjectID  uuid.UUID `json:"project_id,omitempty"`
-	Kind       string    `json:"kind,omitempty"`
-	AddedBy    uuid.UUID `json:"added_by,omitempty"`
-	AddedAt    time.Time `json:"added_at"`
+	EvidenceID   uuid.UUID  `json:"evidence_id"`
+	EvidenceType string     `json:"evidence_type"`
+	FileID       *uuid.UUID `json:"file_id,omitempty"`
+	Reference    string     `json:"reference,omitempty"`
+	TaskID       uuid.UUID  `json:"task_id,omitempty"`
+	ProjectID    uuid.UUID  `json:"project_id,omitempty"`
+	Kind         string     `json:"kind,omitempty"`
+	UploaderID   *uuid.UUID `json:"uploader_person_id,omitempty"`
+	AddedAt      time.Time  `json:"added_at"`
 }
 
 // TimeEntryChangedPayload is emitted when a time entry is logged, edited or

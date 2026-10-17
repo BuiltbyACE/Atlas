@@ -423,7 +423,8 @@ The foundation is Phase 1. Every later module depends on it.
 
 - Stored in S3-compatible object storage **[DECIDE provider]**; metadata in `core.files` (owner, checksum, MIME, size, classification, linked entity).
 - Uploads via pre-signed URLs issued by Go after a permission check; virus scanning **[DECIDE]** before files become visible.
-- Evidence types: `file`, `url`, `git_commit`, `pull_request`, `test_run`, `client_approval`, `payment_reference`.
+- **Evidence is polymorphic.** `evidence_type` is one of `file`, `url`, `git_commit`, `pull_request`, `test_run`, `client_approval`, `payment_reference` (§8.2). A `file` row names a `core.files` object and nothing else; every other type carries an external `reference` (a URL, a commit sha, an external key) and no file.
+- A row may be **recorded by an integration** with no person submitter — a merged `pull_request` from the §12 webhook (ADR-018) — as well as by a person; in either case a *different* person verifies it (§3.3).
 
 ### 6.6 Common conventions
 
@@ -1130,7 +1131,7 @@ Backups: nightly full + continuous WAL archiving (point-in-time recovery), encry
 | **WhatsApp Business Platform (Cloud API)** | Lead conversations, reminders, daily report prompts, executive brief summaries | 3 (prompts may start in 2) | Business-initiated messages require approved templates; free-form replies are limited to the customer-service window after the contact last messaged. Pricing and policy change — verify current Meta rules before build. Store opt-in/consent per contact. Webhooks verified by app-secret signature. |
 | **Telephony provider [DECIDE]** | Click-to-call, call logging, optional recording | 3 | Options: a local provider with voice APIs (e.g. Africa's Talking) or an international one (e.g. Twilio). Decide on cost, Kenyan number support, call logs via webhook. Recording only with announced consent. Start with *manual call logging* if budget or timing requires. |
 | **Email (transactional) [DECIDE]** | Notifications, invoices, briefs | 1 | SPF/DKIM/DMARC on the sending domain. |
-| **GitHub / GitLab [DECIDE]** | Evidence of completion: PR merged, CI status, release tags | 2 | Webhooks link PRs to tasks via the task ref in branch name or PR title (`PRJ-2026-007/T-0142`). |
+| **GitHub** (D6, [ADR-018](adr/ADR-018-git-provider-and-merged-pr-evidence.md)) | Evidence of completion: PR merged, CI status, release tags | 2 | Implemented: `POST /webhooks/github`, HMAC-SHA256 (`X-Hub-Signature-256`) over the raw body, deliveries de-duplicated by `X-GitHub-Delivery`. A merged PR records `pull_request` evidence on the task named by the Atlas ref in its branch or title (`PRJ-2026-007/T-0142`). GitLab is not built; adding it is a new adapter (§8.9). |
 | **Payments: M-Pesa (Daraja) and bank** | Payment received notifications, reconciliation | 4 | C2B confirmations to webhook; match by account reference = invoice ref. Bank: statement import (CSV) first, API later if the bank offers one. |
 | **KRA eTIMS / tax e-invoicing [DECIDE]** | Compliant invoices and expense validity | 4 | Confirm current obligations with the accountant; integrate directly, via an accounting package, or via an approved intermediary. |
 | **Accounting package [DECIDE]** | Statutory books | 4 | Export journals or sync if one is retained (e.g. QuickBooks, Xero, Odoo). |
@@ -1394,7 +1395,7 @@ Initial ADRs to write in `docs/adr/` during Phase 0:
 | D3 | SSO (Google/Microsoft) vs Atlas-native accounts | Phase 1 | Internal CEO |
 | D4 | Real approval thresholds T1/T2, D1, C2 and escalation windows E1–E3 — **decided** ([ADR-016](adr/ADR-016-escalation-windows-and-approval-thresholds.md)) | Phase 1 | Both CEOs |
 | D5 | Daily report time, deadline and missed-report policy - **decided** ([ADR-017](adr/ADR-017-daily-report-lifecycle-and-miss-policy.md)) | Phase 2 | Internal CEO |
-| D6 | Git provider for evidence integration | Phase 2 | Internal CEO |
+| D6 | Git provider for evidence integration — **decided** ([ADR-018](adr/ADR-018-git-provider-and-merged-pr-evidence.md)) | Phase 2 | Internal CEO |
 | D7 | Whether timesheets are required, and for which project types - **decided** ([ADR-019](adr/ADR-019-timesheets-requirement-and-project-types.md)) | Phase 2 | Both CEOs |
 | D8 | Pipeline stages, lead sources, lost reasons | Phase 3 | Commercial CEO |
 | D9 | WhatsApp number strategy (one company number vs per-salesperson) and consent wording | Phase 3 | Commercial CEO |
