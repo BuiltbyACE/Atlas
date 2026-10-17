@@ -71,3 +71,51 @@ export function activateMfa(mfaToken: string, code: string): Promise<MfaActivate
 export function logout(): Promise<{ status: string }> {
   return post<{ status: string }>("/api/v1/auth/logout");
 }
+
+/** One active sign-in, from `GET /api/v1/auth/sessions`. */
+export interface SessionSummary {
+  id: string;
+  /** `true` for the session making this request. */
+  current: boolean;
+  ip?: string;
+  user_agent?: string;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+}
+
+/** `GET /api/v1/auth/sessions`: every session this account still holds. */
+export function getSessions(): Promise<{ sessions: SessionSummary[] }> {
+  return apiFetch<{ sessions: SessionSummary[] }>("/api/v1/auth/sessions", {
+    cache: "no-store",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+}
+
+/** `DELETE /api/v1/auth/sessions/{id}`: revoke one of your own sessions. */
+export function revokeSession(id: string): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(
+    `/api/v1/auth/sessions/${encodeURIComponent(id)}`,
+    { method: "DELETE", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) },
+  );
+}
+
+/**
+ * `POST /api/v1/auth/sessions/revoke-all`: revoke every session you hold. Go
+ * also clears this session's cookie, so the caller is signed out afterwards.
+ */
+export function revokeAllSessions(): Promise<{ revoked: number }> {
+  return post<{ revoked: number }>("/api/v1/auth/sessions/revoke-all");
+}
+
+/**
+ * `POST /api/v1/auth/invites/accept`: complete an invitation and set a
+ * password. Public - the invitee has no account yet.
+ */
+export function acceptInvite(input: {
+  token: string;
+  full_name: string;
+  password: string;
+}): Promise<{ id: string; email: string }> {
+  return post<{ id: string; email: string }>("/api/v1/auth/invites/accept", input);
+}

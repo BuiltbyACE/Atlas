@@ -461,7 +461,7 @@ Tracked in ATLAS.md §21. Most relevant to you:
 
 1. Login (`email`/`phone` + password) against the real backend.
 2. MFA verify, then enrolment (QR + recovery codes).
-3. Sign-out and the session list in `/settings`.
+3. Sign-out and session management in `/settings` (done).
 4. Invite acceptance page (needs a `core.user.manage` account to issue invites).
 5. Wire `generate:api` and migrate to generated types.
 6. Dashboard and the authenticated shell polish — with honest empty states —
