@@ -210,6 +210,23 @@ paths:
         "401":
           $ref: "#/components/responses/Problem"
 
+  /api/v1/auth/heartbeat:
+    post:
+      summary: Refresh the current session's activity
+      description: >
+        A cheap authenticated ping an open client sends while a tab is visible.
+        The request refreshes the session's `last_seen_at`, which the people
+        activity view (blueprint §8.5) reads as "online". Returns no content.
+      operationId: heartbeat
+      tags: [auth]
+      security:
+        - sessionCookie: []
+      responses:
+        "204":
+          description: Activity recorded.
+        "401":
+          $ref: "#/components/responses/Problem"
+
   /api/v1/auth/sessions:
     get:
       summary: List active sessions

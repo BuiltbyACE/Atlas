@@ -114,6 +114,13 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       roster + leave/offboard, and real dashboard tiles. Typed API layer over
       the Go routes (`lib/api/atlas.ts`); realtime signal refresh; no business
       logic in Next.js (Go owns all writes, rules and permissions)
+- [x] Session activity (not in the blueprint — requested directly): who is
+      signed in now and how long each person was active, derived read-only from
+      `core.sessions`. `GET /api/v1/people/presence` and
+      `GET /api/v1/people/sessions?from_date=&to_date=` (both
+      `people.session.read`, migration `00014` adds the roster index);
+      `POST /api/v1/auth/heartbeat` keeps an open tab's `last_seen_at` fresh;
+      web page `/people/activity` (live roster + per-person daily roll-up)
 - [ ] L2/L3 ladder timing + notification fan-out for escalations (blocked on D4)
 - [ ] Blueprint deviation still open: escalation timing is a Go worker sweep,
       not Elixir Oban timers + a Go internal command API (§5.8)
@@ -124,4 +131,5 @@ escalations, exec dashboard) is done, including the Elixir outbox wiring, the Go
 realtime join check, the static service credential, account-addressed personal
 `user:{id}` topics, and the two remaining §8.5 people APIs. The Phase 2 frontend
 (`apps/web`) is built: work (projects, tasks, workload, escalations), daily
-reports, people (availability, leave, offboarding), and the executive dashboard.
+reports, people (availability, leave, offboarding, and the session-activity
+view), and the executive dashboard.

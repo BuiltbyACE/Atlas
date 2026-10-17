@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { PresenceHeartbeat } from "@/components/presence-heartbeat";
 import { SignOutButton } from "@/components/sign-out-button";
 import { requireUser } from "@/lib/auth/session";
 
@@ -47,6 +48,7 @@ const NAVIGATION: NavItem[] = [
     ready: true,
     children: [
       { label: "Availability & leave", href: "/people" },
+      { label: "Activity", href: "/people/activity" },
       { label: "Daily reports", href: "/daily-reports" },
     ],
   },
@@ -66,6 +68,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-milk">
+      <PresenceHeartbeat />
       <aside className="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white">
         <div className="border-b border-slate-200 px-5 py-4">
           <Link

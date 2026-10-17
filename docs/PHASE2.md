@@ -52,7 +52,7 @@ tick an item only when its code, tests and migrations are in place.
 - [x] File availability checked through `work.FileResolver`, adapted from the
       files service in `cmd/atlas-api` (the work package does not import files)
 
-## 4. People module — daily reports, leave, availability, offboarding (`internal/people`) — done
+## 4. People module — daily reports, leave, availability, offboarding, session activity (`internal/people`) — done
 
 - [x] `internal/people` module (migration `00013` moves the tables home):
       daily reports: submit/list/get + `GET /api/v1/daily-reports/today`, one per
@@ -80,6 +80,23 @@ tick an item only when its code, tests and migrations are in place.
       working day, deactivates the linked account and revokes its sessions and
       role grants; emits `people.person.offboarded.v1`. The blueprint's
       offboarding checklist and work handover are deferred (no table yet)
+- [x] Session activity (**not in the blueprint** — requested directly): who is
+      signed in now, and how long each person was active. Read-only and derived
+      from the `core.sessions` rows auth already keeps (migration `00014` adds
+      the roster index); no new business state.
+      - `GET /api/v1/people/presence` gated by `people.session.read` — live,
+        unexpired sessions last seen within `ATLAS_SESSION_PRESENCE_WINDOW`
+        (default 2m), newest activity first.
+      - `GET /api/v1/people/sessions?person_id=&from_date=&to_date=` — a keyset
+        page of the day's sign-ins (ordered by `last_seen_at`), each with
+        `online`, `active_seconds` and an `ended_at` when explicitly revoked.
+        "From when to when" is `started_at` → (`ended_at` or `last_active_at`).
+      - `POST /api/v1/auth/heartbeat` (Authenticated, 204) — an open client pings
+        every minute, refreshing `last_seen_at` so an idle-but-open tab stays
+        online; the web shell sends it from `PresenceHeartbeat`
+      - Web: `/people/activity` — a polling live roster plus a per-person,
+        per-day roll-up. Polling (30s) rather than a realtime topic keeps this
+        from adding session-start/end outbox events and an orchestrator join map.
 
 ## 5. Overdue escalation ladder + worker
 
@@ -146,8 +163,10 @@ tick an item only when its code, tests and migrations are in place.
 ## 8. Frontend (after the backend above is complete and tested)
 
 - [x] Projects list/detail, task board, evidence upload, daily report, workload —
-      plus escalations, the people availability roster with leave/offboarding,
-      and real executive-dashboard tiles. A hand-written typed API layer
+      plus escalations, the people availability roster with leave/offboarding, the
+      session-activity view (`/people/activity`: live roster + per-person daily
+      roll-up, fed by the heartbeat and a 30s poll), and real
+      executive-dashboard tiles. A hand-written typed API layer
       (`apps/web/lib/api/atlas.ts`) mirrors the Go JSON shapes; `SignalRefresh`
       re-reads server components on realtime signals. `generate:api` is still a
       placeholder because the public OpenAPI document covers auth + internal

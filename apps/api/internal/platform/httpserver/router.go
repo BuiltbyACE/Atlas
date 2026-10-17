@@ -156,6 +156,7 @@ func registerAuth(reg *routing.Registry, h *auth.Handler) {
 
 	reg.Authenticated(http.MethodPost, "/api/v1/auth/logout", "Revoke the current session", h.Logout)
 	reg.Authenticated(http.MethodGet, "/api/v1/auth/me", "The current principal", h.Me)
+	reg.Authenticated(http.MethodPost, "/api/v1/auth/heartbeat", "Refresh the current session's activity", h.Heartbeat)
 	reg.Authenticated(http.MethodGet, "/api/v1/auth/sessions", "List your active sessions", h.Sessions)
 	reg.Authenticated(http.MethodDelete, "/api/v1/auth/sessions/{id}", "Revoke one of your sessions", h.RevokeSession)
 	reg.Authenticated(http.MethodPost, "/api/v1/auth/sessions/revoke-all", "Revoke every session you hold", h.RevokeAllSessions)
@@ -367,4 +368,11 @@ func registerPeople(reg *routing.Registry, h *people.Handler) {
 		"See who is available on a date", h.GetAvailability)
 	reg.Gated("people.person.manage", http.MethodPost, "/api/v1/people/{id}/offboard",
 		"Offboard a person and revoke their access", h.OffboardPerson)
+
+	// Session activity: who is signed in now, and how long they have been. This
+	// is derived read-only from the auth session rows (§8.5).
+	reg.Gated("people.session.read", http.MethodGet, "/api/v1/people/presence",
+		"See who is signed in and active now", h.GetPresence)
+	reg.Gated("people.session.read", http.MethodGet, "/api/v1/people/sessions",
+		"List sign-in sessions and logged activity", h.ListSessions)
 }

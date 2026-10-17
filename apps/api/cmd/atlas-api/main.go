@@ -136,8 +136,9 @@ func run() error {
 
 	// People & accountability (Phase 2): daily reports and leave. These belong
 	// to the people module (§8.5, §10.1) and emit people.* outbox events for the
-	// orchestrator to react to (ADR-009).
-	peopleService := people.NewService(people.NewPGStore(pool), auditWriter, logger)
+	// orchestrator to react to (ADR-009). The presence window decides when a
+	// sign-in counts as "online" in the activity view.
+	peopleService := people.NewService(people.NewPGStore(pool), auditWriter, logger, cfg.SessionPresenceWindow)
 
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,

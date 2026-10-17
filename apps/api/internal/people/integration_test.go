@@ -77,7 +77,7 @@ func mustAccount(t *testing.T, pool *pgxpool.Pool, personID uuid.UUID) uuid.UUID
 func TestDailyReportLifecycle(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
-	svc := NewService(NewPGStore(pool), nil, nil)
+	svc := NewService(NewPGStore(pool), nil, nil, 0)
 	actor := mustPerson(t, pool)
 
 	first, err := svc.SubmitDailyReport(ctx, actor, DailyReportInput{WorkDone: "wrote tests"})
@@ -128,7 +128,7 @@ func TestDailyReportLifecycle(t *testing.T) {
 func TestLeaveRequestLifecycle(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
-	svc := NewService(NewPGStore(pool), nil, nil)
+	svc := NewService(NewPGStore(pool), nil, nil, 0)
 	requester := mustPerson(t, pool)
 	manager := mustPerson(t, pool)
 
@@ -204,7 +204,7 @@ func findAvailability(t *testing.T, entries []AvailabilityEntry, personID uuid.U
 func TestAvailability(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
-	svc := NewService(NewPGStore(pool), nil, nil)
+	svc := NewService(NewPGStore(pool), nil, nil, 0)
 
 	onLeave := mustPerson(t, pool)
 	available := mustPerson(t, pool)
@@ -261,7 +261,7 @@ func TestAvailability(t *testing.T) {
 func TestOffboardPerson(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
-	svc := NewService(NewPGStore(pool), nil, nil)
+	svc := NewService(NewPGStore(pool), nil, nil, 0)
 
 	person := mustPerson(t, pool)
 	account := mustAccount(t, pool, person)

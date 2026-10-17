@@ -33,6 +33,19 @@ export interface Page<T> {
   limit: number;
 }
 
+// ── auth (§6.1) ─────────────────────────────────────────────────────────────
+
+/**
+ * Refresh the current session's activity (`POST /api/v1/auth/heartbeat`). The
+ * Go gate touches `last_seen_at` before the handler runs, so this is a cheap
+ * 204 that keeps a signed-in tab counted as "online" in the people activity
+ * view (§8.5). A service token has no session and gets a 401, which callers
+ * ignore.
+ */
+export function heartbeat(): Promise<void> {
+  return apiFetch<void>("/api/v1/auth/heartbeat", { method: "POST" });
+}
+
 // ── work: enums ─────────────────────────────────────────────────────────────
 
 export type ProjectStatus =
@@ -660,6 +673,56 @@ export function offboardPerson(
   return apiFetch<OffboardResult>(`/api/v1/people/${id}/offboard`, {
     method: "POST",
     body,
+  });
+}
+
+// ── people: session activity (§8.5) ─────────────────────────────────────────
+
+/** One sign-in, derived read-only from a core.sessions row. */
+export interface SignInSession {
+  id: string;
+  person_id: string;
+  full_name: string;
+  /** When the person signed in. */
+  started_at: string;
+  /** The last heartbeat the session was seen. */
+  last_active_at: string;
+  /** Set only when the session was explicitly ended (signed out / revoked). */
+  ended_at?: string;
+  expires_at: string;
+  online: boolean;
+  /** Span from sign-in to its effective end (or last heartbeat while live). */
+  active_seconds: number;
+  ip?: string;
+  user_agent?: string;
+}
+
+/** The live roster (`GET /api/v1/people/presence`). */
+export interface Presence {
+  generated_at: string;
+  online: SignInSession[];
+}
+
+export type SessionListQuery = {
+  person_id?: string;
+  /** Inclusive calendar day (UTC), `YYYY-MM-DD`. */
+  from_date?: string;
+  /** Inclusive calendar day (UTC), `YYYY-MM-DD`. */
+  to_date?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export function getPresence(): Promise<Presence> {
+  return apiFetch<Presence>("/api/v1/people/presence", { cache: "no-store" });
+}
+
+export function listSessions(
+  query: SessionListQuery = {},
+): Promise<Page<SignInSession>> {
+  return apiFetch<Page<SignInSession>>("/api/v1/people/sessions", {
+    query,
+    cache: "no-store",
   });
 }
 

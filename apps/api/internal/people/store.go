@@ -38,6 +38,10 @@ type Store interface {
 	ListPersons(ctx context.Context) ([]Person, error)
 	ListApprovedLeaveOn(ctx context.Context, date time.Time) ([]LeaveRequest, error)
 	OffboardPerson(ctx context.Context, personID uuid.UUID, endDate time.Time, ev *outbox.Event) (OffboardResult, error)
+
+	// Session activity (§8.5): who is signed in, and for how long.
+	ListActiveSessions(ctx context.Context, since time.Time) ([]Session, error)
+	ListSessions(ctx context.Context, q ListSessionsQuery, limit int, before *Cursor) ([]Session, error)
 }
 
 // PGStore implements Store over Postgres.
@@ -491,4 +495,97 @@ func (s *PGStore) OffboardPerson(ctx context.Context, personID uuid.UUID, endDat
 		return OffboardResult{}, fmt.Errorf("people: commit: %w", err)
 	}
 	return out, nil
+}
+
+// ── session activity (§8.5) ─────────────────────────────────────────────────
+
+// sessionCols/sessionJoin read a sign-in through its account to its person, so
+// the activity view can name the person rather than echo a bare account id.
+const sessionCols = `s.id, s.user_id, a.person_id, p.full_name,
+	COALESCE(host(s.ip), ''), COALESCE(s.user_agent, ''),
+	s.created_at, s.last_seen_at, s.revoked_at, s.expires_at`
+
+const sessionJoin = `FROM core.sessions s
+	JOIN core.user_accounts a ON a.id = s.user_id
+	JOIN people.persons p ON p.id = a.person_id`
+
+func scanSession(row rowScanner) (Session, error) {
+	var s Session
+	if err := row.Scan(&s.ID, &s.UserID, &s.PersonID, &s.FullName,
+		&s.IP, &s.UserAgent, &s.StartedAt, &s.LastSeenAt, &s.RevokedAt, &s.ExpiresAt); err != nil {
+		return s, err
+	}
+	return s, nil
+}
+
+// ListActiveSessions returns live, unexpired sessions last seen at or after
+// since, most recently active first.
+func (s *PGStore) ListActiveSessions(ctx context.Context, since time.Time) ([]Session, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT `+sessionCols+`
+		`+sessionJoin+`
+		 WHERE s.revoked_at IS NULL AND s.expires_at > now() AND s.last_seen_at >= $1
+		 ORDER BY s.last_seen_at DESC, s.id DESC`, since)
+	if err != nil {
+		return nil, fmt.Errorf("people: list active sessions: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]Session, 0, 8)
+	for rows.Next() {
+		sess, err := scanSession(rows)
+		if err != nil {
+			return nil, fmt.Errorf("people: scan session: %w", err)
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+// ListSessions returns a keyset page of sessions, newest activity first. From
+// bounds last_seen_at (inclusive) and To bounds created_at (exclusive), so a
+// session that straddles the window is still returned.
+func (s *PGStore) ListSessions(ctx context.Context, q ListSessionsQuery, limit int, before *Cursor) ([]Session, error) {
+	where := make([]string, 0, 4)
+	args := make([]any, 0, 6)
+	add := func(clause string, v any) {
+		args = append(args, v)
+		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	if q.PersonID != nil {
+		add("a.person_id = $%d", *q.PersonID)
+	}
+	if q.From != nil {
+		add("s.last_seen_at >= $%d", *q.From)
+	}
+	if q.To != nil {
+		add("s.created_at < $%d", *q.To)
+	}
+	if before != nil {
+		args = append(args, before.At.UTC(), before.ID)
+		where = append(where, fmt.Sprintf("(s.last_seen_at, s.id) < ($%d, $%d)", len(args)-1, len(args)))
+	}
+	args = append(args, limit)
+
+	sql := `SELECT ` + sessionCols + "\n" + sessionJoin
+	if len(where) > 0 {
+		sql += " WHERE " + strings.Join(where, " AND ")
+	}
+	sql += fmt.Sprintf(" ORDER BY s.last_seen_at DESC, s.id DESC LIMIT $%d", len(args))
+
+	rows, err := s.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("people: list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]Session, 0, 8)
+	for rows.Next() {
+		sess, err := scanSession(rows)
+		if err != nil {
+			return nil, fmt.Errorf("people: scan session: %w", err)
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
 }

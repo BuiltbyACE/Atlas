@@ -246,6 +246,21 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, userView(principal))
 }
 
+// Heartbeat handles POST /api/v1/auth/heartbeat: a cheap, authenticated ping an
+// open client sends while a tab is visible. The request is what refreshes the
+// session's last_seen_at — the gate resolves and touches the session before the
+// handler runs — so this only confirms the caller is a signed-in person (a
+// service token has no session to keep alive). It backs the people activity
+// view, which reads "online" as a session seen within the presence window.
+func (h *Handler) Heartbeat(w http.ResponseWriter, r *http.Request) {
+	principal, ok := authz.PrincipalFrom(r.Context())
+	if !ok || !principal.IsUser() {
+		httpx.WriteProblem(w, r, httpx.Unauthenticated("Authentication is required."))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Sessions handles GET /api/v1/auth/sessions.
 func (h *Handler) Sessions(w http.ResponseWriter, r *http.Request) {
 	principal, ok := authz.PrincipalFrom(r.Context())

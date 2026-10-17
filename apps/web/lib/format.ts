@@ -31,6 +31,31 @@ export function formatDateTime(value?: string | null): string {
   });
 }
 
+/** `2026-09-14T08:31:00Z` -> `11:31` (local time), for same-day spans. */
+export function formatTime(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * A span in seconds as `3h 42m` / `45m` / `30s`. Presentation only: Go computes
+ * `active_seconds`, this only makes it readable.
+ */
+export function formatDuration(seconds?: number | null): string {
+  if (seconds === undefined || seconds === null || seconds < 0) return "—";
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${total}s`;
+}
+
 /** A plain calendar date `2026-09-14` kept as-is (no timezone shift). */
 export function formatDay(value?: string | null): string {
   if (!value) return "—";

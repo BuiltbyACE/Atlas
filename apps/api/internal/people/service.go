@@ -24,15 +24,31 @@ type Service struct {
 	audit  *audit.Writer
 	now    func() time.Time
 	logger *slog.Logger
+	// presenceWindow decides when a live session counts as "online" (§8.5).
+	presenceWindow time.Duration
 }
 
+// DefaultPresenceWindow is the fallback "online" window: two missed one-minute
+// heartbeats. Production sets ATLAS_SESSION_PRESENCE_WINDOW.
+const DefaultPresenceWindow = 2 * time.Minute
+
 // NewService builds the people service. aw may be nil in tests, in which case
-// changes are still applied and only the audit row is skipped.
-func NewService(store Store, aw *audit.Writer, logger *slog.Logger) *Service {
+// changes are still applied and only the audit row is skipped. A non-positive
+// presenceWindow falls back to DefaultPresenceWindow.
+func NewService(store Store, aw *audit.Writer, logger *slog.Logger, presenceWindow time.Duration) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{store: store, audit: aw, now: func() time.Time { return time.Now().UTC() }, logger: logger}
+	if presenceWindow <= 0 {
+		presenceWindow = DefaultPresenceWindow
+	}
+	return &Service{
+		store:          store,
+		audit:          aw,
+		now:            func() time.Time { return time.Now().UTC() },
+		logger:         logger,
+		presenceWindow: presenceWindow,
+	}
 }
 
 // accountForPerson resolves a person to the account realtime nudges are

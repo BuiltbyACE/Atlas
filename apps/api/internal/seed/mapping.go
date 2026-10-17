@@ -12,6 +12,7 @@ var RolePermissions = map[string][]string{
 			"core.user.read", "core.role.read", "core.settings.read", "core.audit.read",
 			"core.notification.read", "core.file.read", "core.approval.read", "core.approval_policy.read",
 			"people.person.read", "people.department.read", "people.daily_report.read", "people.leave.read",
+			"people.session.read",
 			"units.unit.read", "units.indicator.read",
 		),
 		write("core.file.write"),
@@ -53,6 +54,7 @@ var RolePermissions = map[string][]string{
 			"people.department.read", "people.department.manage",
 			"people.daily_report.read", "people.leave.read", "people.leave.manage",
 			"people.review.read", "people.review.manage",
+			"people.session.read",
 			"work.project.read", "work.project.manage",
 			"work.task.read", "work.task.write", "work.task.assign", "work.task.review",
 			"work.evidence.read", "work.evidence.write",
@@ -165,7 +167,7 @@ var RolePermissions = map[string][]string{
 	},
 
 	"system_admin": concat(
-		read("core.file.read", "people.person.read", "people.department.read"),
+		read("core.file.read", "people.person.read", "people.department.read", "people.session.read"),
 		all(
 			"core.user.read", "core.user.manage",
 			"core.role.read", "core.role.manage",

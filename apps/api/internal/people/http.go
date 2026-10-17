@@ -129,6 +129,29 @@ type offboardView struct {
 	RolesRevoked    int    `json:"roles_revoked"`
 }
 
+// sessionView is one sign-in in the activity view (§8.5). last_active_at is the
+// last heartbeat a session was seen; ended_at is set only when the session was
+// explicitly ended (signed out, revoked or expired-by-offboarding).
+type sessionView struct {
+	ID            string     `json:"id"`
+	PersonID      string     `json:"person_id"`
+	FullName      string     `json:"full_name"`
+	StartedAt     time.Time  `json:"started_at"`
+	LastActiveAt  time.Time  `json:"last_active_at"`
+	EndedAt       *time.Time `json:"ended_at,omitempty"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	Online        bool       `json:"online"`
+	ActiveSeconds int64      `json:"active_seconds"`
+	IP            string     `json:"ip,omitempty"`
+	UserAgent     string     `json:"user_agent,omitempty"`
+}
+
+// presenceView is the live roster (GET /api/v1/people/presence).
+type presenceView struct {
+	GeneratedAt time.Time     `json:"generated_at"`
+	Online      []sessionView `json:"online"`
+}
+
 // ── daily reports ───────────────────────────────────────────────────────────
 
 // SubmitDailyReport handles POST /api/v1/daily-reports.
@@ -459,6 +482,79 @@ func (h *Handler) OffboardPerson(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, offboardViewOf(res))
 }
 
+// ── session activity ────────────────────────────────────────────────────────
+
+// GetPresence handles GET /api/v1/people/presence: who is signed in and active
+// right now (§8.5). "Online" is a live, unexpired session whose last heartbeat
+// is inside the presence window.
+func (h *Handler) GetPresence(w http.ResponseWriter, r *http.Request) {
+	items, err := h.service.Presence(r.Context())
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	views := make([]sessionView, 0, len(items))
+	for _, a := range items {
+		views = append(views, sessionOf(a))
+	}
+	httpx.WriteJSON(w, http.StatusOK, presenceView{GeneratedAt: time.Now().UTC(), Online: views})
+}
+
+// ListSessions handles GET /api/v1/people/sessions?person_id=&from_date=&to_date=:
+// a page of sign-in sessions, newest activity first. The dates are plain
+// calendar days (UTC); from_date is inclusive and to_date covers the whole day.
+func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
+	limit, cursor, err := httpx.ParsePage(r)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	before, err := cursorOrNil(cursor)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	q := ListSessionsQuery{}
+	if raw := strings.TrimSpace(r.URL.Query().Get("person_id")); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteProblem(w, r, httpx.BadRequest("person_id is not a valid id."))
+			return
+		}
+		q.PersonID = &id
+	}
+	if q.From, err = optDate(r.URL.Query().Get("from_date")); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	to, err := optDate(r.URL.Query().Get("to_date"))
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if to != nil {
+		end := to.AddDate(0, 0, 1)
+		q.To = &end
+	}
+
+	items, err := h.service.ListSessions(r.Context(), q, limit+1, before)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	next := ""
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[len(items)-1]
+		next = encodeCursor(last.Session.LastSeenAt, last.Session.ID)
+	}
+	views := make([]sessionView, 0, len(items))
+	for _, a := range items {
+		views = append(views, sessionOf(a))
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewPage(views, next, limit))
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (*authz.Principal, bool) {
@@ -623,6 +719,23 @@ func offboardViewOf(res OffboardResult) offboardView {
 		v.AccountStatus = res.AccountStatus
 	}
 	return v
+}
+
+func sessionOf(a SessionActivity) sessionView {
+	s := a.Session
+	return sessionView{
+		ID:            s.ID.String(),
+		PersonID:      s.PersonID.String(),
+		FullName:      s.FullName,
+		StartedAt:     s.StartedAt,
+		LastActiveAt:  s.LastSeenAt,
+		EndedAt:       a.EndedAt,
+		ExpiresAt:     s.ExpiresAt,
+		Online:        a.Online,
+		ActiveSeconds: a.ActiveSeconds,
+		IP:            s.IP,
+		UserAgent:     s.UserAgent,
+	}
 }
 
 func encodeCursor(at time.Time, id uuid.UUID) string {

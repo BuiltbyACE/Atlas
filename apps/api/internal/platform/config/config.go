@@ -53,6 +53,12 @@ type Config struct {
 	// after SessionIdleTimeout without use, and always after SessionAbsoluteTTL.
 	SessionIdleTimeout time.Duration
 	SessionAbsoluteTTL time.Duration
+	// SessionPresenceWindow is how recently a session must have been seen to
+	// count as "online" in the people activity view. It is deliberately much
+	// shorter than SessionIdleTimeout: a signed-in browser sends a heartbeat
+	// every minute, so a window of a few minutes distinguishes "still here" from
+	// "left" long before the session itself expires (§8.5).
+	SessionPresenceWindow time.Duration
 	// MFAIssuer is the issuer shown in authenticator apps when enrolling TOTP.
 	MFAIssuer string
 	// EncryptionKey is a base64-encoded 32-byte AES key used to encrypt
@@ -140,11 +146,12 @@ func Load() (*Config, error) {
 		IdleTimeout:   duration("ATLAS_HTTP_IDLE_TIMEOUT", 60*time.Second),
 		ShutdownGrace: duration("ATLAS_SHUTDOWN_GRACE", 20*time.Second),
 
-		SessionCookieName:  get("ATLAS_SESSION_COOKIE", "atlas_session"),
-		SessionIdleTimeout: duration("ATLAS_SESSION_IDLE_TIMEOUT", 12*time.Hour),
-		SessionAbsoluteTTL: duration("ATLAS_SESSION_ABSOLUTE_TTL", 7*24*time.Hour),
-		MFAIssuer:          get("ATLAS_MFA_ISSUER", "SafariStack Atlas"),
-		EncryptionKey:      get("ATLAS_ENCRYPTION_KEY", ""),
+		SessionCookieName:     get("ATLAS_SESSION_COOKIE", "atlas_session"),
+		SessionIdleTimeout:    duration("ATLAS_SESSION_IDLE_TIMEOUT", 12*time.Hour),
+		SessionAbsoluteTTL:    duration("ATLAS_SESSION_ABSOLUTE_TTL", 7*24*time.Hour),
+		SessionPresenceWindow: duration("ATLAS_SESSION_PRESENCE_WINDOW", 2*time.Minute),
+		MFAIssuer:             get("ATLAS_MFA_ISSUER", "SafariStack Atlas"),
+		EncryptionKey:         get("ATLAS_ENCRYPTION_KEY", ""),
 
 		RealtimePrivateKey: get("ATLAS_REALTIME_PRIVATE_KEY", ""),
 		RealtimeIssuer:     get("ATLAS_REALTIME_ISSUER", "atlas"),
@@ -228,6 +235,9 @@ func (c *Config) Validate() error {
 	}
 	if c.SessionIdleTimeout <= 0 || c.SessionIdleTimeout > c.SessionAbsoluteTTL {
 		return fmt.Errorf("ATLAS_SESSION_IDLE_TIMEOUT must be positive and no greater than the absolute lifetime")
+	}
+	if c.SessionPresenceWindow <= 0 || c.SessionPresenceWindow > c.SessionIdleTimeout {
+		return fmt.Errorf("ATLAS_SESSION_PRESENCE_WINDOW must be positive and no greater than the idle timeout")
 	}
 
 	if c.Env == EnvProduction && c.RealtimePrivateKey == "" {

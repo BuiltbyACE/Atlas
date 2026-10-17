@@ -70,6 +70,7 @@ var Permissions = []Permission{
 	{"people.person.read", "View person records", false},
 	{"people.person.manage", "Create and edit person records", false},
 	{"people.person.sensitive.read", "View sensitive person fields (e.g. salary)", true},
+	{"people.session.read", "View sign-in sessions and logged activity", false},
 	{"people.department.read", "View departments", false},
 	{"people.department.manage", "Create and edit departments", false},
 	{"people.daily_report.read", "View daily reports", false},
