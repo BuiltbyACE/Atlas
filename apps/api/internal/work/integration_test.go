@@ -468,9 +468,9 @@ func TestEscalationLadder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	// Every aggregate this test writes events for: the escalations and the
-	// tasks they hang off (work.task.overdue.v1 keys on the task).
-	aggregates := make([]uuid.UUID, 0, 4)
+	// Every aggregate this test writes events for: the project, the escalations
+	// and the tasks they hang off (work.task.overdue.v1 keys on the task).
+	aggregates := []uuid.UUID{project.ID}
 	t.Cleanup(func() {
 		for _, id := range aggregates {
 			_, _ = pool.Exec(context.Background(), `DELETE FROM outbox.events WHERE aggregate_id = $1`, id)
@@ -480,9 +480,11 @@ func TestEscalationLadder(t *testing.T) {
 
 	// A task overdue by less than E1 is late but not on the ladder yet.
 	tooFresh := time.Now().UTC().Add(-10 * time.Hour)
-	if _, err := svc.CreateTask(ctx, owner, project.ID, TaskInput{Title: "Fresh", DueAt: &tooFresh}); err != nil {
+	fresh, err := svc.CreateTask(ctx, owner, project.ID, TaskInput{Title: "Fresh", DueAt: &tooFresh})
+	if err != nil {
 		t.Fatalf("CreateTask fresh: %v", err)
 	}
+	aggregates = append(aggregates, fresh.ID)
 	if raised, _, err := svc.Sweep(ctx, 10); err != nil || raised != 0 {
 		t.Fatalf("pre-E1 sweep raised=%d err=%v, want 0", raised, err)
 	}
