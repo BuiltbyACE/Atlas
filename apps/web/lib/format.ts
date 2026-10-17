@@ -106,7 +106,8 @@ export function initials(name: string): string {
 }
 
 /** Shorten a UUID for display when a name is not available. */
-export function shortId(id: string): string {
+export function shortId(id?: string | null): string {
+  if (!id) return "—";
   return id.length > 8 ? id.slice(0, 8) : id;
 }
 

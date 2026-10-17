@@ -13,7 +13,7 @@ import {
   verifyEvidence,
   type Evidence,
 } from "@/lib/api/atlas";
-import { formatDateTime, shortId } from "@/lib/format";
+import { formatDateTime, humanise, shortId } from "@/lib/format";
 import { useMutation } from "@/lib/use-mutation";
 
 /**
@@ -24,6 +24,10 @@ import { useMutation } from "@/lib/use-mutation";
  * place and the branch attaches the resulting file as evidence. Bytes never pass
  * through the API. A different person verifies the evidence (separation of
  * duties, §3.3) - Go rejects self-verification with 409.
+ *
+ * Not everything is a file: a provider (GitHub's merged PR, ADR-018) attaches
+ * evidence by `reference`, with no `file_id` to download. The subject of a row
+ * is therefore rendered by `EvidenceSubject`, not assumed to be a file.
  */
 export function EvidencePanel({
   taskId,
@@ -83,7 +87,10 @@ export function EvidencePanel({
   }
 
   return (
-    <Card title={title} description="Files that prove the work. A reviewer verifies them.">
+    <Card
+      title={title}
+      description="Files and links that prove the work. A reviewer verifies them."
+    >
       {problem && (
         <div className="mb-3">
           <ProblemNotice error={problem} title="Evidence change failed" />
@@ -94,43 +101,46 @@ export function EvidencePanel({
         <EmptyState>Nothing attached yet.</EmptyState>
       ) : (
         <ul className="mb-4 space-y-2">
-          {evidence.map((item) => (
-            <li
-              key={item.id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2"
-            >
-              <div className="min-w-0">
-                <p className="text-sm text-slate-800">
-                  {item.kind ? <span className="font-medium">{item.kind} · </span> : null}
-                  <span className="font-mono text-xs text-slate-500">
-                    file {shortId(item.file_id)}
-                  </span>
-                </p>
-                {item.description && (
-                  <p className="text-xs text-slate-500">{item.description}</p>
-                )}
-                <p className="mt-0.5 text-xs text-slate-400">
-                  Added {formatDateTime(item.created_at)}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {item.verified_at ? (
-                  <Badge tone="success">verified</Badge>
-                ) : (
-                  <Button
-                    variant="secondary"
-                    disabled={busy && verifying === item.id}
-                    onClick={() => onVerify(item.id)}
-                  >
-                    {verifying === item.id ? "Verifying…" : "Verify"}
-                  </Button>
-                )}
-                <Button variant="ghost" onClick={() => onDownload(item.file_id)}>
-                  Download
-                </Button>
-              </div>
-            </li>
-          ))}
+          {evidence.map((item) => {
+            const fileId = item.file_id;
+            return (
+              <li
+                key={item.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm text-slate-800">
+                    {item.kind ? <span className="font-medium">{item.kind} · </span> : null}
+                    <EvidenceSubject item={item} />
+                  </p>
+                  {item.description && (
+                    <p className="text-xs text-slate-500">{item.description}</p>
+                  )}
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    Added {formatDateTime(item.created_at)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {item.verified_at ? (
+                    <Badge tone="success">verified</Badge>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      disabled={busy && verifying === item.id}
+                      onClick={() => onVerify(item.id)}
+                    >
+                      {verifying === item.id ? "Verifying…" : "Verify"}
+                    </Button>
+                  )}
+                  {fileId && (
+                    <Button variant="ghost" onClick={() => onDownload(fileId)}>
+                      Download
+                    </Button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -157,5 +167,34 @@ export function EvidencePanel({
         </Button>
       </form>
     </Card>
+  );
+}
+
+/**
+ * What an evidence row points at. Uploads have a file; provider evidence has a
+ * `reference` (a pull request URL, say) that is linked when it looks like one.
+ */
+function EvidenceSubject({ item }: { item: Evidence }) {
+  if (item.file_id) {
+    return (
+      <span className="font-mono text-xs text-slate-500">file {shortId(item.file_id)}</span>
+    );
+  }
+  if (item.reference) {
+    return /^https?:\/\//i.test(item.reference) ? (
+      <a
+        href={item.reference}
+        target="_blank"
+        rel="noreferrer"
+        className="text-xs text-sky-700 underline decoration-sky-300 underline-offset-2"
+      >
+        {item.reference}
+      </a>
+    ) : (
+      <span className="font-mono text-xs text-slate-500">{item.reference}</span>
+    );
+  }
+  return (
+    <span className="text-xs text-slate-500">{humanise(item.evidence_type ?? "evidence")}</span>
   );
 }

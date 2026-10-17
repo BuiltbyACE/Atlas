@@ -175,8 +175,14 @@ export interface Evidence {
   id: string;
   task_id?: string;
   project_id?: string;
-  file_id: string;
-  uploader_person_id: string;
+  /**
+   * `file` for an upload, otherwise the provider that recorded it
+   * (`pull_request`, …). Exactly one of `file_id` / `reference` is set.
+   */
+  evidence_type?: string;
+  file_id?: string;
+  reference?: string;
+  uploader_person_id?: string;
   kind?: string;
   description?: string;
   verified_by_person_id?: string;
