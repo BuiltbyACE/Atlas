@@ -72,6 +72,41 @@ func mustAccount(t *testing.T, pool *pgxpool.Pool, personID uuid.UUID) uuid.UUID
 	return id
 }
 
+// mustSession inserts a sign-in row with explicit activity timestamps so the
+// presence and activity derivation can be exercised against real SQL. The token
+// hash is derived from the id, which keeps it unique.
+func mustSession(t *testing.T, pool *pgxpool.Pool, account uuid.UUID, startedAt, lastSeenAt, expiresAt time.Time, revokedAt *time.Time) uuid.UUID {
+	t.Helper()
+	id, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("new id: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO core.sessions (id, user_id, token_hash, created_at, last_seen_at, expires_at, revoked_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		id, account, []byte(id.String()), startedAt, lastSeenAt, expiresAt, revokedAt); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM core.sessions WHERE id = $1`, id)
+	})
+	return id
+}
+
+// findActivity returns the derivation for a session, or fails.
+func findActivity(t *testing.T, entries []SessionActivity, id uuid.UUID) SessionActivity {
+	t.Helper()
+	for _, e := range entries {
+		if e.Session.ID == id {
+			return e
+		}
+	}
+	t.Fatalf("no activity for session %s", id)
+	return SessionActivity{}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
+
 // TestDailyReportLifecycle covers one-report-per-person-per-day, re-submission
 // of an unreviewed day, listing and the hours bounds.
 func TestDailyReportLifecycle(t *testing.T) {
@@ -364,5 +399,137 @@ func TestOffboardPerson(t *testing.T) {
 	missing := uuid.Must(uuid.NewV7())
 	if _, err := svc.OffboardPerson(ctx, admin, missing, OffboardInput{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("offboard missing: err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestSessionActivity covers the sign-in activity view (§8.5) at the database
+// layer: Presence returns only live, unexpired sessions seen inside the window,
+// the history list derives online/ended/active for every sign-in, filters by
+// person and by the activity window, and pages with a keyset cursor.
+func TestSessionActivity(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	svc := NewService(NewPGStore(pool), nil, nil, DefaultPresenceWindow)
+
+	person := mustPerson(t, pool)
+	account := mustAccount(t, pool, person)
+	other := mustPerson(t, pool)
+	otherAccount := mustAccount(t, pool, other)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	started := now.Add(-2 * time.Hour)
+	// Every session lasts a day unless a test deliberately expires it.
+	live := func() time.Time { return now.Add(24 * time.Hour) }
+
+	online := mustSession(t, pool, account, started, now.Add(-30*time.Second), live(), nil)
+	expired := mustSession(t, pool, account, started, now.Add(-45*time.Second), now.Add(-10*time.Minute), nil)
+	revoked := now.Add(-30 * time.Minute)
+	signedOut := mustSession(t, pool, account, started, revoked, live(), &revoked)
+	abandoned := mustSession(t, pool, account, started, now.Add(-time.Hour), live(), nil)
+	// A second person, seen right now, proves the presence roster is global while
+	// the history filter is per person.
+	otherOnline := mustSession(t, pool, otherAccount, started, now.Add(-10*time.Second), live(), nil)
+
+	// Presence: the two sessions seen inside the window, and nothing else — the
+	// abandoned, signed-out and expired rows are all excluded.
+	presence, err := svc.Presence(ctx)
+	if err != nil {
+		t.Fatalf("Presence: %v", err)
+	}
+	gotOnline := map[uuid.UUID]bool{}
+	for _, a := range presence {
+		gotOnline[a.Session.ID] = true
+		if !a.Online {
+			t.Errorf("presence returned an offline session %s", a.Session.ID)
+		}
+	}
+	for _, id := range []uuid.UUID{online, otherOnline} {
+		if !gotOnline[id] {
+			t.Errorf("presence is missing online session %s", id)
+		}
+	}
+	for _, id := range []uuid.UUID{expired, signedOut, abandoned} {
+		if gotOnline[id] {
+			t.Errorf("presence wrongly includes session %s", id)
+		}
+	}
+
+	// A presence entry names the person and reports the active span so far.
+	if got := findActivity(t, presence, online); got.Session.PersonID != person ||
+		got.Session.FullName != "Test Person" ||
+		got.ActiveSeconds != int64((now.Add(-30*time.Second)).Sub(started).Seconds()) {
+		t.Fatalf("presence entry = %+v, want person %s with a 7170s span", got, person)
+	}
+
+	// History for one person: newest activity first, with the derived fields.
+	page, err := svc.ListSessions(ctx, ListSessionsQuery{PersonID: &person}, 50, nil)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(page) != 4 {
+		t.Fatalf("ListSessions = %d rows, want 4", len(page))
+	}
+	wantOrder := []uuid.UUID{online, expired, signedOut, abandoned}
+	for i, id := range wantOrder {
+		if page[i].Session.ID != id {
+			t.Fatalf("row %d = %s, want %s", i, page[i].Session.ID, id)
+		}
+	}
+	if page[0].Online != true || page[0].EndedAt != nil {
+		t.Errorf("online row = %+v, want online and not ended", page[0])
+	}
+	if page[1].Online != false || page[1].EndedAt != nil {
+		t.Errorf("expired row = %+v, want offline and not ended", page[1])
+	}
+	if page[2].Online != false || page[2].EndedAt == nil || !page[2].EndedAt.Equal(revoked) {
+		t.Errorf("signed-out row = %+v, want ended at %s", page[2], revoked)
+	}
+	if page[3].Online != false || page[3].EndedAt != nil {
+		t.Errorf("abandoned row = %+v, want offline and not ended", page[3])
+	}
+	// A sign-out ends the span at revoked_at, not at last_seen_at.
+	if got, want := page[2].ActiveSeconds, int64(revoked.Sub(started).Seconds()); got != want {
+		t.Errorf("signed-out active = %d, want %d", got, want)
+	}
+
+	// From bounds activity: only sessions seen in the last two minutes.
+	recent, err := svc.ListSessions(ctx, ListSessionsQuery{PersonID: &person, From: ptrTime(now.Add(-2 * time.Minute))}, 50, nil)
+	if err != nil {
+		t.Fatalf("ListSessions(from): %v", err)
+	}
+	if len(recent) != 2 {
+		t.Fatalf("ListSessions(from) = %d rows, want 2 (online, expired)", len(recent))
+	}
+
+	// To bounds creation: a window that closed before these rows existed is empty.
+	past, err := svc.ListSessions(ctx, ListSessionsQuery{PersonID: &person, To: ptrTime(now.Add(-3 * time.Hour))}, 50, nil)
+	if err != nil {
+		t.Fatalf("ListSessions(to): %v", err)
+	}
+	if len(past) != 0 {
+		t.Fatalf("ListSessions(to) = %d rows, want 0", len(past))
+	}
+
+	// Keyset pagination: one at a time, no gaps and no repeats.
+	var seen []uuid.UUID
+	var cursor *Cursor
+	for {
+		row, err := svc.ListSessions(ctx, ListSessionsQuery{PersonID: &person}, 1, cursor)
+		if err != nil {
+			t.Fatalf("ListSessions(page): %v", err)
+		}
+		if len(row) == 0 {
+			break
+		}
+		seen = append(seen, row[0].Session.ID)
+		cursor = &Cursor{At: row[0].Session.LastSeenAt, ID: row[0].Session.ID}
+	}
+	if len(seen) != 4 {
+		t.Fatalf("paged %d sessions, want 4", len(seen))
+	}
+	for i, id := range wantOrder {
+		if seen[i] != id {
+			t.Fatalf("paged order %v, want %v", seen, wantOrder)
+		}
 	}
 }
