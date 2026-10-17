@@ -21,16 +21,14 @@
 import { useEffect, useRef } from "react";
 import { Socket, type Channel } from "phoenix";
 
+import { EXEC_DASHBOARD_TOPIC, userTopic } from "@/lib/realtime/topics";
+
 /** Event name the orchestrator pushes signals on for every topic. */
 const SIGNAL_EVENT = "signal";
 
-/** Well-known topic for the CEO executive dashboard (blueprint section 7.5). */
-export const EXEC_DASHBOARD_TOPIC = "exec:dashboard";
-
-/** Topic for a single user's notifications, approvals and escalations. */
-export function userTopic(userId: string): string {
-  return `user:${userId}`;
-}
+// The topic names live in `./topics` so server components can import them too;
+// re-exported here for existing callers.
+export { EXEC_DASHBOARD_TOPIC, userTopic };
 
 export type ChangeType = "created" | "updated" | "deleted" | "changed";
 

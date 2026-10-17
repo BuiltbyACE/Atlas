@@ -109,7 +109,11 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       roster, default today) and `POST /api/v1/people/{id}/offboard` (exit +
       deactivate account + revoke sessions/roles, one transaction; emits
       `people.person.offboarded.v1`)
-- [ ] Frontend (after backend above is complete)
+- [x] Frontend (`apps/web`): projects list/detail, task Kanban board + detail
+      (blockers, evidence), daily report, workload, escalations, availability
+      roster + leave/offboard, and real dashboard tiles. Typed API layer over
+      the Go routes (`lib/api/atlas.ts`); realtime signal refresh; no business
+      logic in Next.js (Go owns all writes, rules and permissions)
 - [ ] L2/L3 ladder timing + notification fan-out for escalations (blocked on D4)
 - [ ] Blueprint deviation still open: escalation timing is a Go worker sweep,
       not Elixir Oban timers + a Go internal command API (§5.8)
@@ -118,4 +122,6 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 Current status: Phase 1 (A-H) complete. Phase 2 backend (work, people,
 escalations, exec dashboard) is done, including the Elixir outbox wiring, the Go
 realtime join check, the static service credential, account-addressed personal
-`user:{id}` topics, and the two remaining §8.5 people APIs. Next: the frontend.
+`user:{id}` topics, and the two remaining §8.5 people APIs. The Phase 2 frontend
+(`apps/web`) is built: work (projects, tasks, workload, escalations), daily
+reports, people (availability, leave, offboarding), and the executive dashboard.

@@ -145,7 +145,13 @@ tick an item only when its code, tests and migrations are in place.
 
 ## 8. Frontend (after the backend above is complete and tested)
 
-- [ ] Projects list/detail, task board, evidence upload, daily report, workload
+- [x] Projects list/detail, task board, evidence upload, daily report, workload —
+      plus escalations, the people availability roster with leave/offboarding,
+      and real executive-dashboard tiles. A hand-written typed API layer
+      (`apps/web/lib/api/atlas.ts`) mirrors the Go JSON shapes; `SignalRefresh`
+      re-reads server components on realtime signals. `generate:api` is still a
+      placeholder because the public OpenAPI document covers auth + internal
+      endpoints only.
 
 ## 9. Deviations from the blueprint (recorded deliberately)
 
