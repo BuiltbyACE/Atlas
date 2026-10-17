@@ -136,7 +136,7 @@ A person can hold several roles. Roles grant **permissions** (§6.2) within a **
 
 ### 3.3 Approval matrix **[CONFIG]**
 
-Thresholds are stored in the `approval_policies` table and editable only with joint CEO approval. Illustrative starting values (replace with real numbers):
+Thresholds are stored in the `approval_policies` table and editable only with joint CEO approval. The starting values are decided: **D4 → [ADR-016](adr/ADR-016-escalation-windows-and-approval-thresholds.md)** (T1 = KES 10,000; T2 = KES 100,000; D1 = 10%; C2 = KES 500,000). The tier shape is:
 
 | Decision | Below T1 | T1 – T2 | Above T2 |
 |---|---|---|---|
@@ -163,6 +163,8 @@ Rules that are **not** configurable:
 | L1 | Owner's lead (project lead / manager) | Item overdue by E1 hours |
 | L2 | Domain CEO | Overdue by E2 hours, or blocker flagged "needs management" |
 | L3 | Both CEOs (shared decisions queue) | Cross-domain blocker, client-impacting risk, or L2 unresolved after E3 |
+
+Windows decided: **D4 → [ADR-016](adr/ADR-016-escalation-windows-and-approval-thresholds.md)** (E1 = 24h, E2 = 48h, E3 = +48h; L3 fires at E2+E3 overdue). L2's "domain CEO" resolves through the `escalation.l2_role` setting (default `ceo_internal`); the flag/risk-driven triggers await a blocker flag and are tracked in ADR-016.
 
 Escalations are timers run by Elixir (§5.5); every escalation is a recorded event, so patterns (who escalates most, which projects stall) become measurable.
 
@@ -1379,7 +1381,7 @@ Initial ADRs to write in `docs/adr/` during Phase 0:
 | D1 | Production domain name and branding of Atlas | Phase 0 | Both CEOs |
 | D2 | Hosting provider and region | Phase 0 | Internal CEO |
 | D3 | SSO (Google/Microsoft) vs Atlas-native accounts | Phase 1 | Internal CEO |
-| D4 | Real approval thresholds T1/T2, D1, C2 and escalation windows E1–E3 | Phase 1 | Both CEOs |
+| D4 | Real approval thresholds T1/T2, D1, C2 and escalation windows E1–E3 — **decided** ([ADR-016](adr/ADR-016-escalation-windows-and-approval-thresholds.md)) | Phase 1 | Both CEOs |
 | D5 | Daily report time, deadline and missed-report policy | Phase 2 | Internal CEO |
 | D6 | Git provider for evidence integration | Phase 2 | Internal CEO |
 | D7 | Whether timesheets are required, and for which project types | Phase 2 | Both CEOs |

@@ -63,7 +63,7 @@ func TestServiceLifecycle(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
 	store := NewPGStore(pool)
-	svc := NewService(store, nil, nil, nil)
+	svc := NewService(store, nil, nil, nil, nil)
 	actor := mustPerson(t, pool)
 
 	project, err := svc.CreateProject(ctx, actor, ProjectInput{Name: "Apollo"})
@@ -202,7 +202,7 @@ func TestOverdueListing(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
 	store := NewPGStore(pool)
-	svc := NewService(store, nil, nil, nil)
+	svc := NewService(store, nil, nil, nil, nil)
 	actor := mustPerson(t, pool)
 
 	project, err := svc.CreateProject(ctx, actor, ProjectInput{Name: "Overdue test"})
@@ -277,7 +277,7 @@ func TestEvidenceLifecycle(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
 	store := NewPGStore(pool)
-	svc := NewService(store, dbFileResolver{pool: pool}, nil, nil)
+	svc := NewService(store, dbFileResolver{pool: pool}, nil, nil, nil)
 	actor := mustPerson(t, pool)
 	reviewer := mustPerson(t, pool)
 
@@ -354,13 +354,14 @@ func TestEvidenceLifecycle(t *testing.T) {
 }
 
 // TestEscalationSweep covers the overdue ladder end to end: an overdue task is
-// escalated once (assigned to the project owner), a manual resolve is honoured
-// and not re-raised in the same episode, and the outbox carries both the overdue
-// and the escalation events.
+// escalated once (at the rung its overdue time has reached — below E2, so L1,
+// assigned to the project owner), a manual resolve is honoured and not re-raised
+// in the same episode, and the outbox carries both the overdue and the
+// escalation events.
 func TestEscalationSweep(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
-	svc := NewService(NewPGStore(pool), nil, nil, nil)
+	svc := NewService(NewPGStore(pool), nil, nil, nil, nil)
 	owner := mustPerson(t, pool)
 	assignee := mustPerson(t, pool)
 
@@ -372,7 +373,9 @@ func TestEscalationSweep(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM work.projects WHERE id = $1`, project.ID)
 	})
 
-	past := time.Now().UTC().Add(-72 * time.Hour)
+	// 30h overdue: past E1 (24h) but below E2 (48h), so the default ladder
+	// (ADR-016) raises L1 to the project owner.
+	past := time.Now().UTC().Add(-30 * time.Hour)
 	task, err := svc.CreateTask(ctx, owner, project.ID, TaskInput{Title: "Late", DueAt: &past, AssigneePersonID: &assignee})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -429,6 +432,163 @@ func TestEscalationSweep(t *testing.T) {
 	}
 }
 
+// mustRoleGrant gives a person an account holding a company-scoped role, so a
+// test can prove role-based resolution (the D4 ladder's L2 target lookup).
+func mustRoleGrant(t *testing.T, pool *pgxpool.Pool, personID uuid.UUID, role string) {
+	t.Helper()
+	accountID := mustAccount(t, pool, personID)
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO core.role_grants (id, user_id, role_key, scope_type, granted_by) VALUES ($1, $2, $3, 'company', $2)`,
+		uuid.New(), accountID, role); err != nil {
+		t.Fatalf("insert role grant: %v", err)
+	}
+	// t.Cleanup is LIFO: the grant goes before the account it hangs off.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM core.role_grants WHERE user_id = $1`, accountID)
+	})
+}
+
+// TestEscalationLadder walks the full D4 ladder (ADR-016): L1 to the project
+// owner after E1, promotion in place to L2 (the domain CEO) after E2, then to
+// L3 (the shared both-CEO queue, no assignee) after E2+E3 — and a task first
+// swept long after its deadline lands directly on the right rung.
+func TestEscalationLadder(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	// The default ladder is D4's decided configuration: 24h / 48h / +48h with
+	// L2 going to the ceo_internal holder (ADR-016).
+	svc := NewService(NewPGStore(pool), nil, nil, nil, nil)
+	owner := mustPerson(t, pool)
+	ceo := mustPerson(t, pool)
+	// Guarantee at least one ceo_internal holder exists so the L2 rung has a
+	// target; on a database that already has one, the oldest grant wins.
+	mustRoleGrant(t, pool, ceo, "ceo_internal")
+
+	project, err := svc.CreateProject(ctx, owner, ProjectInput{Name: "Ladder test", OwnerPersonID: &owner})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	// Every aggregate this test writes events for: the escalations and the
+	// tasks they hang off (work.task.overdue.v1 keys on the task).
+	aggregates := make([]uuid.UUID, 0, 4)
+	t.Cleanup(func() {
+		for _, id := range aggregates {
+			_, _ = pool.Exec(context.Background(), `DELETE FROM outbox.events WHERE aggregate_id = $1`, id)
+		}
+		_, _ = pool.Exec(context.Background(), `DELETE FROM work.projects WHERE id = $1`, project.ID)
+	})
+
+	// A task overdue by less than E1 is late but not on the ladder yet.
+	tooFresh := time.Now().UTC().Add(-10 * time.Hour)
+	if _, err := svc.CreateTask(ctx, owner, project.ID, TaskInput{Title: "Fresh", DueAt: &tooFresh}); err != nil {
+		t.Fatalf("CreateTask fresh: %v", err)
+	}
+	if raised, _, err := svc.Sweep(ctx, 10); err != nil || raised != 0 {
+		t.Fatalf("pre-E1 sweep raised=%d err=%v, want 0", raised, err)
+	}
+
+	// Overdue by 30h: L1, assigned to the project owner.
+	due := time.Now().UTC().Add(-30 * time.Hour)
+	task, err := svc.CreateTask(ctx, owner, project.ID, TaskInput{Title: "Climbing", DueAt: &due})
+	if err != nil {
+		t.Fatalf("CreateTask climbing: %v", err)
+	}
+	if raised, _, err := svc.Sweep(ctx, 10); err != nil || raised != 1 {
+		t.Fatalf("L1 sweep raised=%d err=%v, want 1", raised, err)
+	}
+	esc := openEscalation(t, ctx, svc, task.ID)
+	aggregates = append(aggregates, esc.ID, task.ID)
+	if esc.Level != 1 || esc.AssigneeID == nil || *esc.AssigneeID != owner {
+		t.Fatalf("escalation = %+v, want level 1 assigned to owner", esc)
+	}
+
+	// Time passes (the deadline moves further into the past): the same
+	// escalation is promoted in place to L2 and handed to the domain CEO.
+	if _, err := pool.Exec(ctx, `UPDATE work.tasks SET due_at = now() - interval '50 hours' WHERE id = $1`, task.ID); err != nil {
+		t.Fatalf("age task: %v", err)
+	}
+	if raised, _, err := svc.Sweep(ctx, 10); err != nil || raised != 1 {
+		t.Fatalf("L2 sweep raised=%d err=%v, want 1", raised, err)
+	}
+	promoted, err := svc.GetEscalation(ctx, esc.ID)
+	if err != nil {
+		t.Fatalf("GetEscalation after L2: %v", err)
+	}
+	// The domain CEO is whoever holds the ladder's L2 role. The sweep resolves
+	// it with the same rule this lookup uses — the oldest active company-scoped
+	// grant — so the assertion holds even when the database already has an
+	// account in that role (a fresh one only has the grant this test made).
+	l2, err := svc.store.PersonForRole(ctx, "ceo_internal")
+	if err != nil || l2 == nil {
+		t.Fatalf("PersonForRole(ceo_internal) = %v, %v; the L2 rung needs a holder", l2, err)
+	}
+	if promoted.Level != 2 || promoted.AssigneeID == nil || *promoted.AssigneeID != *l2 {
+		t.Fatalf("escalation = %+v, want level 2 assigned to the ceo_internal holder %s", promoted, *l2)
+	}
+	if *promoted.AssigneeID == owner {
+		t.Fatalf("L2 assigned to the project owner; it belongs to the domain CEO")
+	}
+	if promoted.Version != esc.Version+1 {
+		t.Fatalf("version = %d, want %d (promoted in place)", promoted.Version, esc.Version+1)
+	}
+
+	// Past E2+E3: L3, the shared both-CEO queue with no single assignee.
+	if _, err := pool.Exec(ctx, `UPDATE work.tasks SET due_at = now() - interval '100 hours' WHERE id = $1`, task.ID); err != nil {
+		t.Fatalf("age task again: %v", err)
+	}
+	if raised, _, err := svc.Sweep(ctx, 10); err != nil || raised != 1 {
+		t.Fatalf("L3 sweep raised=%d err=%v, want 1", raised, err)
+	}
+	top, err := svc.GetEscalation(ctx, esc.ID)
+	if err != nil {
+		t.Fatalf("GetEscalation after L3: %v", err)
+	}
+	if top.Level != 3 || top.AssigneeID != nil {
+		t.Fatalf("escalation = %+v, want level 3 with no assignee (shared queue)", top)
+	}
+
+	// A task first swept long after its deadline lands directly on L3, and a
+	// second sweep does not nag the same episode again.
+	late := time.Now().UTC().Add(-100 * time.Hour)
+	direct, err := svc.CreateTask(ctx, owner, project.ID, TaskInput{Title: "Ancient", DueAt: &late})
+	if err != nil {
+		t.Fatalf("CreateTask ancient: %v", err)
+	}
+	if raised, _, err := svc.Sweep(ctx, 10); err != nil || raised != 1 {
+		t.Fatalf("direct-L3 sweep raised=%d err=%v, want 1", raised, err)
+	}
+	escalations := openEscalation(t, ctx, svc, direct.ID)
+	aggregates = append(aggregates, escalations.ID, direct.ID)
+	if raised, _, err := svc.Sweep(ctx, 10); err != nil || raised != 0 {
+		t.Fatalf("idempotent sweep raised=%d err=%v, want 0", raised, err)
+	}
+
+	// The promoted escalation's events carry every rung it passed: one
+	// task.overdue plus three core.escalation.raised (L1, L2, L3).
+	var overdueEvents, raisedEvents, topEvents int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT count(*) FROM outbox.events WHERE aggregate_id = $2 AND type = 'work.task.overdue.v1'),
+		  (SELECT count(*) FROM outbox.events WHERE aggregate_id = $1 AND type = 'core.escalation.raised.v1'),
+		  (SELECT count(*) FROM outbox.events WHERE aggregate_id = $1 AND type = 'core.escalation.raised.v1' AND payload->>'level' = '3')`,
+		esc.ID, task.ID).Scan(&overdueEvents, &raisedEvents, &topEvents); err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	if overdueEvents != 1 || raisedEvents != 3 || topEvents != 1 {
+		t.Fatalf("events overdue=%d raised=%d at-level-3=%d, want 1/3/1", overdueEvents, raisedEvents, topEvents)
+	}
+}
+
+// openEscalation returns the single open escalation for a task.
+func openEscalation(t *testing.T, ctx context.Context, svc *Service, taskID uuid.UUID) Escalation {
+	t.Helper()
+	opens, err := svc.ListEscalations(ctx, ListEscalationsQuery{EntityType: "task", EntityID: &taskID, Status: EscalationOpen}, 10, nil)
+	if err != nil || len(opens) != 1 {
+		t.Fatalf("open escalations = %d, err = %v, want 1", len(opens), err)
+	}
+	return opens[0]
+}
+
 // mustAccount gives a person a login and returns the account id, so a test can
 // assert the realtime address an event carries.
 func mustAccount(t *testing.T, pool *pgxpool.Pool, personID uuid.UUID) uuid.UUID {
@@ -454,7 +614,7 @@ func mustAccount(t *testing.T, pool *pgxpool.Pool, personID uuid.UUID) uuid.UUID
 func TestProjectCreatedCarriesOwnerUserID(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
-	svc := NewService(NewPGStore(pool), nil, nil, nil)
+	svc := NewService(NewPGStore(pool), nil, nil, nil, nil)
 
 	owner := mustPerson(t, pool)
 	accountID := mustAccount(t, pool, owner)
@@ -496,7 +656,7 @@ func TestProjectCreatedCarriesOwnerUserID(t *testing.T) {
 func TestEscalationResolvesWhenTaskCompletes(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
-	svc := NewService(NewPGStore(pool), nil, nil, nil)
+	svc := NewService(NewPGStore(pool), nil, nil, nil, nil)
 	owner := mustPerson(t, pool)
 
 	project, err := svc.CreateProject(ctx, owner, ProjectInput{Name: "Resolve test", OwnerPersonID: &owner})

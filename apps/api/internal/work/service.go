@@ -30,16 +30,28 @@ type Service struct {
 	audit  *audit.Writer
 	now    func() time.Time
 	logger *slog.Logger
+	ladder LadderReader
 }
 
 // NewService builds the work service. files may be nil (evidence attachment then
 // skips the availability check); aw may be nil in tests, in which case changes
-// are still applied and only the global audit write is skipped.
-func NewService(store Store, files FileResolver, aw *audit.Writer, logger *slog.Logger) *Service {
+// are still applied and only the global audit write is skipped; ladder may be
+// nil, in which case the escalation sweep runs on DefaultLadder (ADR-016's
+// decided windows) — production wires the settings store so the windows are
+// editable configuration (§6.7).
+func NewService(store Store, files FileResolver, aw *audit.Writer, logger *slog.Logger, ladder LadderReader) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{store: store, files: files, audit: aw, now: func() time.Time { return time.Now().UTC() }, logger: logger}
+	return &Service{store: store, files: files, audit: aw, now: func() time.Time { return time.Now().UTC() }, logger: logger, ladder: ladder}
+}
+
+// ladderFor returns the D4 ladder for one sweep pass.
+func (s *Service) ladderFor(ctx context.Context) (Ladder, error) {
+	if s.ladder == nil {
+		return DefaultLadder(), nil
+	}
+	return s.ladder.Ladder(ctx)
 }
 
 // accountForPerson resolves an optional person to the account realtime nudges

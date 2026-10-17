@@ -103,11 +103,12 @@ tick an item only when its code, tests and migrations are in place.
 - [x] `work.escalations` (migration `00012`): `entity_type`/`entity_id`, `level`,
       `status` (open/resolved), `reason`, `assignee_person_id`, `resolved_by`/
       `resolved_at`, `version`; partial unique index on open escalations
-- [x] Detect overdue tasks (due_at < now, not done/cancelled) and raise a level-1
-      escalation assigned to the project owner, in one transaction
-      (`FOR UPDATE SKIP LOCKED`), so two workers take disjoint slices; the
-      "current deadline" scopes an episode so a resolved escalation is not
-      re-raised until the deadline moves and passes again
+- [x] Detect overdue tasks (due_at < now, not done/cancelled) and raise a
+      escalation at the rung decision **D4** says the overdue time has reached
+      (ADR-016), in one transaction (`FOR UPDATE SKIP LOCKED`), so two workers
+      take disjoint slices; the "current deadline" scopes an episode so a
+      resolved escalation is not re-raised until the deadline moves and passes
+      again
 - [x] Escalation sweep in `atlas-worker`
       (`ATLAS_WORK_SWEEP_INTERVAL`/`ATLAS_WORK_SWEEP_BATCH`), mirroring the
       approvals sweeper: it drains in batches and logs, never dies on one bad batch
@@ -116,9 +117,14 @@ tick an item only when its code, tests and migrations are in place.
 - [x] Manual resolution: `POST /api/v1/work/escalations/{id}/resolve` gated by
       `work.task.review`; list/get gated by `work.task.read`
 - [x] Events `work.task.overdue.v1` + `core.escalation.raised/resolved.v1`.
-      The ladder's E1-E3 timing windows (L2/L3) are decision **D4** and still
-      open, so only L1 is raised for now; the `level` column already exists so
-      later rungs need configuration, not schema. Notification fan-out is Phase 7.
+      The full ladder is implemented (decision **D4**, `docs/adr/ADR-016`): L1
+      after E1 overdue to the project owner, L2 after E2 to the domain CEO
+      (`escalation.l2_role`, default `ceo_internal`), L3 after E2+E3 to the
+      shared both-CEO queue with no single assignee. The windows and the L2 role
+      are typed settings (§6.7), read on every sweep pass; a first sweep long
+      after the deadline lands directly on the right rung, later rungs promote
+      the open escalation in place (one queue entry per item, one audit per
+      transition). Notification fan-out is Phase 7.
 
 ## 6. Executive dashboard updates
 
@@ -209,8 +215,18 @@ either a refinement or an open question, listed so the divergence is explicit.
   the REST visibility the frontend already has, and a signal carries ids, not
   data (ADR-009). Narrowing a project channel to `work.project_members` would
   make it stricter than the REST API; that refinement is deferred.
-- **L1-only escalation.** The ladder's E1-E3 windows are decision **D4** (open),
-  so only level 1 is raised; the `level` column exists for L2/L3 once D4 lands.
+- **L1-only escalation — resolved.** The ladder's E1-E3 windows were decision
+  **D4**; D4 is decided (`docs/adr/ADR-016`) and the full ladder ships as typed
+  settings: L1 after E1 to the project owner, L2 after E2 to the
+  `escalation.l2_role` holder (default `ceo_internal`), L3 after E2+E3 to the
+  shared both-CEO queue. Note the one timing consequence: E3 is measured against
+  the task's deadline (`due_at + E2 + E3`) rather than the L2 row's age, which
+  is "L2 unresolved after E3" to within one sweep interval and keeps a single
+  timestamp scoping the episode. §3.4's flag/risk-driven rungs (blocker "needs
+  management", cross-domain blocker) are not modelled yet — blockers carry no
+  such flag — and reuse the same machinery when they land. Approval thresholds
+  T1/T2, D1, C2 are decided and stored as typed settings but not enforced; see
+  ADR-016 for why.
 - **Realtime signal names** follow ADR-009's `{type: "<entity>.changed", id}`
   example rather than a module-level name, and tile invalidation reuses the
   dashboard's `dashboard.changed` (`AtlasOrchestrator.Work.Handler`).

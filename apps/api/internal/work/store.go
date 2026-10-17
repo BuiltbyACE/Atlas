@@ -68,13 +68,21 @@ type Store interface {
 	ListEscalations(ctx context.Context, q ListEscalationsQuery, limit int, before *Cursor) ([]Escalation, error)
 	ResolveEscalation(ctx context.Context, id, resolvedBy uuid.UUID, ev *outbox.Event) (Escalation, error)
 	// SweepOverdueTasks claims a batch of overdue tasks that have not already
-	// been escalated for their current deadline, raises one escalation per task
-	// and writes the events, all in one transaction (FOR UPDATE SKIP LOCKED) so
-	// a second worker skips them.
-	SweepOverdueTasks(ctx context.Context, limit int, build func(t OverdueTask, esc Escalation) ([]outbox.Event, error)) ([]Escalation, error)
+	// been escalated for their current deadline and raises one escalation per
+	// task at the rung the D4 ladder says the task's overdue time has reached
+	// (L1/L2/L3), writing the events, all in one transaction (FOR UPDATE SKIP
+	// LOCKED) so a second worker skips them.
+	SweepOverdueTasks(ctx context.Context, limit int, lad Ladder, l2Person *uuid.UUID, build func(t OverdueTask, esc Escalation) ([]outbox.Event, error)) ([]Escalation, error)
+	// PromoteEscalations raises open escalations that have passed a higher rung
+	// of the D4 ladder (L1 → L2 at E2, L2 → L3 at E2+E3), updating the row in
+	// place so one overdue item is one queue entry, and writes the events in-tx.
+	PromoteEscalations(ctx context.Context, limit int, lad Ladder, l2Person *uuid.UUID, build func(before, after Escalation) (outbox.Event, error)) ([]Escalation, error)
 	// ResolveStaleEscalations resolves open escalations whose task is no longer
 	// overdue (done, cancelled, or due again), writing each event in-tx.
 	ResolveStaleEscalations(ctx context.Context, limit int, build func(e Escalation) (outbox.Event, error)) ([]Escalation, error)
+	// PersonForRole resolves the person (via their account) granted a
+	// company-scoped role — the D4 ladder uses it to find the domain CEO at L2.
+	PersonForRole(ctx context.Context, roleKey string) (*uuid.UUID, error)
 }
 
 // PGStore implements Store over Postgres.
@@ -863,6 +871,24 @@ func scanEscalation(row rowScanner) (Escalation, error) {
 	return e, nil
 }
 
+// scanEscalations drains a result set of escalations (rows must not be open on
+// the connection while more statements run, per pgx).
+func scanEscalations(rows pgx.Rows) ([]Escalation, error) {
+	defer rows.Close()
+	out := make([]Escalation, 0, 2)
+	for rows.Next() {
+		e, err := scanEscalation(rows)
+		if err != nil {
+			return nil, fmt.Errorf("work: scan escalation: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *PGStore) GetEscalation(ctx context.Context, id uuid.UUID) (*Escalation, error) {
 	e, err := scanEscalation(s.db.QueryRow(ctx, `SELECT `+escalationCols+` FROM work.escalations WHERE id = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -959,17 +985,24 @@ func (s *PGStore) ResolveEscalation(ctx context.Context, id, resolvedBy uuid.UUI
 }
 
 // SweepOverdueTasks claims a batch of overdue tasks that have not already been
-// escalated for their current deadline, raises one escalation per task and
-// writes the caller's events — all in one transaction. The claim holds FOR
-// UPDATE SKIP LOCKED on the task rows until the transaction commits, so two
-// workers take disjoint, deterministic slices (oldest due first) and cannot
-// raise the same escalation twice; the partial unique index on open escalations
-// is the backstop.
+// escalated for their current deadline, raises one escalation per task at the
+// rung the D4 ladder says the task's overdue time has reached, and writes the
+// caller's events — all in one transaction. The claim holds FOR UPDATE SKIP
+// LOCKED on the task rows until the transaction commits, so two workers take
+// disjoint, deterministic slices (oldest due first) and cannot raise the same
+// escalation twice; the partial unique index on open escalations is the
+// backstop.
+//
+// The rung is computed from due_at alone: below E1 the task is overdue but not
+// yet on the ladder, at E2+E3 it lands directly on L3 (a sweep that was down
+// for days does not walk the rungs one pass at a time). L1 goes to the project
+// owner — the "owner's lead" of §5.8 — L2 to l2Person (the domain CEO), and L3
+// to no one: it belongs to both CEOs' shared queue (ADR-016).
 //
 // "Current deadline" is what scopes an overdue episode: once an escalation has
 // been raised at or after a task's due_at, that episode is closed and the sweep
 // will not nag again unless the deadline is pushed out and passes afresh.
-func (s *PGStore) SweepOverdueTasks(ctx context.Context, limit int, build func(t OverdueTask, esc Escalation) ([]outbox.Event, error)) ([]Escalation, error) {
+func (s *PGStore) SweepOverdueTasks(ctx context.Context, limit int, lad Ladder, l2Person *uuid.UUID, build func(t OverdueTask, esc Escalation) ([]outbox.Event, error)) ([]Escalation, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -980,11 +1013,17 @@ func (s *PGStore) SweepOverdueTasks(ctx context.Context, limit int, build func(t
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	rows, err := tx.Query(ctx, `
-		SELECT t.id, t.project_id, t.title, t.assignee_person_id, p.owner_person_id, t.due_at
+		SELECT t.id, t.project_id, t.title, t.assignee_person_id, p.owner_person_id, t.due_at,
+		       CASE
+		         WHEN now() - t.due_at >= make_interval(secs => ($3::float8 + $4::float8)) THEN 3
+		         WHEN now() - t.due_at >= make_interval(secs => $3::float8) THEN 2
+		         ELSE 1
+		       END AS level
 		  FROM work.tasks t
 		  JOIN work.projects p ON p.id = t.project_id
 		 WHERE t.status NOT IN ('done','cancelled')
-		   AND t.due_at IS NOT NULL AND t.due_at < now()
+		   AND t.due_at IS NOT NULL
+		   AND t.due_at + make_interval(secs => $2::float8) <= now()
 		   AND NOT EXISTS (
 		         SELECT 1 FROM work.escalations e
 		          WHERE e.entity_type = 'task' AND e.entity_id = t.id
@@ -992,19 +1031,23 @@ func (s *PGStore) SweepOverdueTasks(ctx context.Context, limit int, build func(t
 		 ORDER BY t.due_at
 		 LIMIT $1
 		   FOR UPDATE OF t SKIP LOCKED`,
-		limit)
+		limit, lad.L1After.Seconds(), lad.L2After.Seconds(), lad.L3After.Seconds())
 	if err != nil {
 		return nil, fmt.Errorf("work: claim overdue tasks: %w", err)
 	}
 
-	claimed := make([]OverdueTask, 0, limit)
+	type claimedTask struct {
+		t     OverdueTask
+		level int
+	}
+	claimed := make([]claimedTask, 0, limit)
 	for rows.Next() {
-		var t OverdueTask
-		if err := rows.Scan(&t.ID, &t.ProjectID, &t.Title, &t.AssigneeID, &t.OwnerID, &t.DueAt); err != nil {
+		var ct claimedTask
+		if err := rows.Scan(&ct.t.ID, &ct.t.ProjectID, &ct.t.Title, &ct.t.AssigneeID, &ct.t.OwnerID, &ct.t.DueAt, &ct.level); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("work: scan overdue task: %w", err)
 		}
-		claimed = append(claimed, t)
+		claimed = append(claimed, ct)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -1013,20 +1056,31 @@ func (s *PGStore) SweepOverdueTasks(ctx context.Context, limit int, build func(t
 
 	now := time.Now().UTC()
 	out := make([]Escalation, 0, len(claimed))
-	for _, t := range claimed {
+	for _, ct := range claimed {
+		t := ct.t
 		id, err := uuid.NewV7()
 		if err != nil {
 			return nil, fmt.Errorf("work: new escalation id: %w", err)
 		}
 		projectID := t.ProjectID
+		var assignee *uuid.UUID
+		switch ct.level {
+		case 1:
+			assignee = t.OwnerID
+		case 2:
+			assignee = l2Person
+		default:
+			assignee = nil // L3: the shared both-CEO queue has no single owner.
+		}
 		esc, err := scanEscalation(tx.QueryRow(ctx, `
 			INSERT INTO work.escalations (
 				id, entity_type, entity_id, project_id, level, status, reason,
 				assignee_person_id, version, created_at, updated_at)
-			VALUES ($1,'task',$2,$3,1,'open',$4,$5,1,$6,$6)
+			VALUES ($1,'task',$2,$3,$4,'open',$5,$6,1,$7,$7)
 			RETURNING `+escalationCols,
-			id, t.ID, &projectID, fmt.Sprintf("task overdue since %s", t.DueAt.UTC().Format(time.RFC3339)),
-			t.OwnerID, now))
+			id, t.ID, &projectID, ct.level,
+			fmt.Sprintf("task overdue since %s", t.DueAt.UTC().Format(time.RFC3339)),
+			assignee, now))
 		if err != nil {
 			return nil, fmt.Errorf("work: raise escalation: %w", err)
 		}
@@ -1046,6 +1100,129 @@ func (s *PGStore) SweepOverdueTasks(ctx context.Context, limit int, build func(t
 		return nil, fmt.Errorf("work: commit: %w", err)
 	}
 	return out, nil
+}
+
+// PromoteEscalations walks open escalations up the D4 ladder: L1 → L2 once the
+// task is overdue by E2, L2 → L3 once overdue by E2+E3. The row is updated in
+// place (level, assignee, version), so one overdue item stays one entry in the
+// shared queues and the escalation's own created_at keeps scoping its episode.
+// Both rungs claim with FOR UPDATE SKIP LOCKED, and the claim only sees
+// escalations whose task is still open and overdue — the resolve pass owns the
+// ones whose task came back on time.
+func (s *PGStore) PromoteEscalations(ctx context.Context, limit int, lad Ladder, l2Person *uuid.UUID, build func(before, after Escalation) (outbox.Event, error)) ([]Escalation, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rungs := []struct {
+		from, to  int
+		threshold float64 // seconds overdue that promote to `to`
+		assignee  *uuid.UUID
+	}{
+		{from: 1, to: 2, threshold: lad.L2After.Seconds(), assignee: l2Person},
+		{from: 2, to: 3, threshold: (lad.L2After + lad.L3After).Seconds(), assignee: nil},
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("work: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	out := make([]Escalation, 0, 2)
+	for _, rung := range rungs {
+		rows, err := tx.Query(ctx, `
+			SELECT e.id, e.assignee_person_id
+			  FROM work.escalations e
+			  JOIN work.tasks t ON t.id = e.entity_id
+			 WHERE e.entity_type = 'task' AND e.status = 'open' AND e.level = $1
+			   AND t.status NOT IN ('done','cancelled')
+			   AND t.due_at IS NOT NULL AND t.due_at < now()
+			   AND t.due_at + make_interval(secs => $2::float8) <= now()
+			 ORDER BY t.due_at
+			 LIMIT $3
+			   FOR UPDATE OF e SKIP LOCKED`,
+			rung.from, rung.threshold, limit)
+		if err != nil {
+			return nil, fmt.Errorf("work: claim escalations to promote: %w", err)
+		}
+		var ids []uuid.UUID
+		before := map[uuid.UUID]*uuid.UUID{}
+		for rows.Next() {
+			var id uuid.UUID
+			var prev *uuid.UUID
+			if err := rows.Scan(&id, &prev); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("work: scan promotable escalation: %w", err)
+			}
+			ids = append(ids, id)
+			before[id] = prev
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		if len(ids) == 0 {
+			continue
+		}
+
+		updated, err := tx.Query(ctx, `
+			UPDATE work.escalations
+			   SET level = $2, assignee_person_id = $3, version = version + 1
+			 WHERE id = ANY($1)
+			RETURNING `+escalationCols, ids, rung.to, rung.assignee)
+		if err != nil {
+			return nil, fmt.Errorf("work: promote escalations: %w", err)
+		}
+		promoted, err := scanEscalations(updated)
+		if err != nil {
+			return nil, fmt.Errorf("work: promote escalations: %w", err)
+		}
+		for _, after := range promoted {
+			// The before-snapshot is the row's state at the previous rung, so
+			// the audit records the transition, not just the new level.
+			beforeEsc := after
+			beforeEsc.Level = rung.from
+			beforeEsc.AssigneeID = before[after.ID]
+			ev, err := build(beforeEsc, after)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := outbox.Write(ctx, tx, ev); err != nil {
+				return nil, err
+			}
+			out = append(out, after)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("work: commit: %w", err)
+	}
+	return out, nil
+}
+
+// PersonForRole resolves the person behind a company-scoped role grant — the
+// D4 ladder's "domain CEO" lookup (ADR-016). The oldest active account wins so
+// the target is deterministic when several people hold the role; nil, nil means
+// nobody holds it and the rung has no single assignee.
+func (s *PGStore) PersonForRole(ctx context.Context, roleKey string) (*uuid.UUID, error) {
+	var id *uuid.UUID
+	err := s.db.QueryRow(ctx, `
+		SELECT a.person_id
+		  FROM core.role_grants g
+		  JOIN core.user_accounts a ON a.id = g.user_id
+		 WHERE g.role_key = $1 AND g.scope_type = 'company' AND g.revoked_at IS NULL
+		   AND a.status = 'active'
+		 ORDER BY a.created_at
+		 LIMIT 1`,
+		roleKey).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("work: resolve person for role %s: %w", roleKey, err)
+	}
+	return id, nil
 }
 
 // ResolveStaleEscalations closes open escalations whose task is no longer

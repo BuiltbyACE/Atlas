@@ -55,7 +55,10 @@ type Definition struct {
 	Enum []string
 	// MaxLength bounds KindString values (0 = unbounded).
 	MaxLength int
-	Default   any
+	// Min and Max bound KindInt values (nil = unbounded).
+	Min     *float64
+	Max     *float64
+	Default any
 }
 
 // Validate reports whether value conforms to the definition. Values arrive
@@ -67,14 +70,27 @@ func (d Definition) Validate(value any) error {
 			return d.invalid("a boolean")
 		}
 	case KindInt:
+		var n float64
 		switch v := value.(type) {
 		case float64:
 			if v != float64(int64(v)) {
 				return d.invalid("an integer")
 			}
-		case int, int32, int64:
+			n = v
+		case int:
+			n = float64(v)
+		case int32:
+			n = float64(v)
+		case int64:
+			n = float64(v)
 		default:
 			return d.invalid("an integer")
+		}
+		if d.Min != nil && n < *d.Min {
+			return d.invalid(fmt.Sprintf("an integer of at least %g", *d.Min))
+		}
+		if d.Max != nil && n > *d.Max {
+			return d.invalid(fmt.Sprintf("an integer of at most %g", *d.Max))
 		}
 	case KindEnum:
 		s, ok := value.(string)
@@ -161,7 +177,75 @@ var definitions = []Definition{
 		Description: "How long an approval may sit unresolved before a reminder is sent.",
 		Default:     24.0,
 	},
+	// Decision D4 (docs/adr/ADR-016): the approval thresholds. These record the
+	// decided numbers; the approvals engine only applies them once the policy
+	// change workflow (§6.7) can express the approver rules of §3.3.
+	{
+		Key:         "approvals.t1_minor",
+		Kind:        KindInt,
+		Description: "D4 threshold T1: below this amount (minor units) an expense is approved by the project lead / line manager.",
+		Min:         floatPtr(0),
+		Default:     1000000.0, // KES 10,000
+	},
+	{
+		Key:         "approvals.t2_minor",
+		Kind:        KindInt,
+		Description: "D4 threshold T2: above this amount (minor units) expenses and purchases need both CEOs.",
+		Min:         floatPtr(0),
+		Default:     10000000.0, // KES 100,000
+	},
+	{
+		Key:         "approvals.discount_max_pct",
+		Kind:        KindInt,
+		Description: "D4 threshold D1: maximum proposal discount (%) the Commercial CEO may approve alone.",
+		Min:         floatPtr(0),
+		Max:         floatPtr(100),
+		Default:     10.0,
+	},
+	{
+		Key:         "approvals.contract_ceo_min_minor",
+		Kind:        KindInt,
+		Description: "D4 threshold C2: contract value (minor units) above which both CEOs must sign.",
+		Min:         floatPtr(0),
+		Default:     50000000.0, // KES 500,000
+	},
+	// Decision D4 (docs/adr/ADR-016): the escalation ladder's timing windows,
+	// read by the overdue-task sweep on every pass (§5.8).
+	{
+		Key:         "escalation.e1_hours",
+		Kind:        KindInt,
+		Description: "E1: hours a task may be overdue before the sweep raises L1 to the project owner.",
+		Min:         floatPtr(0),
+		Max:         floatPtr(8760),
+		Default:     24.0,
+	},
+	{
+		Key:         "escalation.e2_hours",
+		Kind:        KindInt,
+		Description: "E2: hours a task may be overdue before the sweep raises L2 to the domain CEO (escalation.l2_role).",
+		Min:         floatPtr(0),
+		Max:         floatPtr(8760),
+		Default:     48.0,
+	},
+	{
+		Key:         "escalation.e3_hours",
+		Kind:        KindInt,
+		Description: "E3: hours an L2 may sit unresolved before the sweep raises L3 to both CEOs' shared queue.",
+		Min:         floatPtr(0),
+		Max:         floatPtr(8760),
+		Default:     48.0,
+	},
+	{
+		Key:         "escalation.l2_role",
+		Kind:        KindString,
+		Description: "Role key escalated to at L2 — the \"domain CEO\" of §3.4; L3 is the shared both-CEO queue.",
+		MaxLength:   64,
+		Default:     "ceo_internal",
+	},
 }
+
+// floatPtr is a tiny helper so the bounded definitions above stay readable.
+func floatPtr(v float64) *float64 { return &v }
 
 // byKey indexes the catalogue for lookup.
 var byKey = func() map[string]Definition {

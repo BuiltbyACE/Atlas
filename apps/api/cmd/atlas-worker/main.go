@@ -31,6 +31,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/database"
 	"github.com/safaristack/atlas/apps/api/internal/platform/logging"
 	"github.com/safaristack/atlas/apps/api/internal/platform/telemetry"
+	"github.com/safaristack/atlas/apps/api/internal/settings"
 	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
@@ -97,9 +98,14 @@ func run() error {
 	sweeper := approvals.NewSweeper(approvalService, cfg.ApprovalSweepInterval, cfg.ApprovalSweepBatch, logger)
 
 	// The overdue-work escalation ladder is a second time-driven job (§3.2,
-	// §5.8): it raises escalations for overdue tasks and resolves the ones whose
-	// task is no longer late.
-	workService := work.NewService(work.NewPGStore(pool), nil, audit.NewWriter(pool), logger)
+	// §5.8): it walks the D4 ladder (ADR-016) — L1 to the project owner after
+	// E1 overdue, L2 to the domain CEO after E2, L3 to the shared both-CEO
+	// queue after E3 — and resolves the escalations whose task came back on
+	// time. The windows and the L2 role are typed settings (§6.7), so the
+	// ladder is retuned through the settings API, not by redeploying.
+	settingsService := settings.NewService(settings.NewPGStore(pool), nil, logger)
+	workService := work.NewService(work.NewPGStore(pool), nil, audit.NewWriter(pool), logger,
+		work.NewSettingsLadder(settingsService))
 	workSweeper := work.NewSweeper(workService, cfg.WorkSweepInterval, cfg.WorkSweepBatch, logger)
 
 	// Run the dispatcher, the two sweepers and the heartbeat side by side;

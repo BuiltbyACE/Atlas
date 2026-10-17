@@ -132,7 +132,7 @@ func run() error {
 	// and blockers. Go is the authority; state changes emit work.* outbox events
 	// for the orchestrator to react to (ADR-009). Evidence attachment checks a
 	// file's availability through the files service, adapted to work.FileResolver.
-	workService := work.NewService(work.NewPGStore(pool), newFileResolver(fileService), auditWriter, logger)
+	workService := work.NewService(work.NewPGStore(pool), newFileResolver(fileService), auditWriter, logger, nil)
 
 	// People & accountability (Phase 2): daily reports and leave. These belong
 	// to the people module (§8.5, §10.1) and emit people.* outbox events for the

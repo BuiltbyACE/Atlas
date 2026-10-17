@@ -60,15 +60,28 @@ func (s *Service) ResolveEscalation(ctx context.Context, actor, id uuid.UUID) (E
 
 // Sweep is the overdue-escalation ladder's engine and belongs to atlas-worker:
 // escalation is time-driven, so it must not run in the API's request path
-// (docs/ATLAS.md §4.1). It raises level-1 escalations for overdue tasks and
-// resolves escalations whose task is no longer overdue, then audits both.
-// It returns how many escalations it raised and how many it resolved.
-//
-// The ladder's later rungs (E1-E3 hours before L2/L3) are decision D4 and still
-// open, so only L1 is raised here; the level column already exists so that later
-// decision needs configuration, not schema.
+// (docs/ATLAS.md §4.1). It raises escalations for overdue tasks at the rung the
+// D4 ladder has reached (§5.8, ADR-016), promotes open escalations that have
+// passed a higher rung, and resolves escalations whose task is no longer
+// overdue, then audits all three. It returns how many escalations it raised —
+// new or promoted — and how many it resolved.
 func (s *Service) Sweep(ctx context.Context, limit int) (raised, resolved int, err error) {
-	raisedEsc, err := s.store.SweepOverdueTasks(ctx, limit, func(t OverdueTask, esc Escalation) ([]outbox.Event, error) {
+	lad, err := s.ladderFor(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	// L2 goes to the domain CEO (the l2_role holder, ADR-016); L3 is the
+	// shared both-CEO queue and deliberately has no assignee. Nobody holding
+	// the role degrades L2 to the same shared visibility, never to nobody.
+	var l2Person *uuid.UUID
+	if lad.L2Role != "" {
+		l2Person, err = s.store.PersonForRole(ctx, lad.L2Role)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+
+	raisedEsc, err := s.store.SweepOverdueTasks(ctx, limit, lad, l2Person, func(t OverdueTask, esc Escalation) ([]outbox.Event, error) {
 		assigneeUser, err := s.accountForPerson(ctx, t.AssigneeID)
 		if err != nil {
 			return nil, err
@@ -106,17 +119,43 @@ func (s *Service) Sweep(ctx context.Context, limit int) (raised, resolved int, e
 			slog.Int("level", e.Level))
 	}
 
+	// Promotions keep the escalation's identity and update its rung in place,
+	// so the audit trail records each transition (§6.6) and the shared queues
+	// hold one entry per overdue item.
+	prev := make(map[uuid.UUID]Escalation, 2)
+	promoted, err := s.store.PromoteEscalations(ctx, limit, lad, l2Person, func(before, after Escalation) (outbox.Event, error) {
+		prev[after.ID] = before
+		ref := escalationRef(after)
+		assigneeUser, err := s.accountForPerson(ctx, after.AssigneeID)
+		if err != nil {
+			return outbox.Event{}, err
+		}
+		ref.AssigneeUserID = assigneeUser
+		return outbox.NewEscalationRaised(nil, ref)
+	})
+	if err != nil {
+		return len(raisedEsc), 0, err
+	}
+	for _, e := range promoted {
+		s.writeAuditAs(ctx, "system", "system", "work.escalation.raised", EntityEscalation,
+			e.ID, escalationSnapshot(prev[e.ID]), escalationSnapshot(e))
+		s.logger.DebugContext(ctx, "work: escalation promoted",
+			slog.String("escalation_id", e.ID.String()),
+			slog.String("entity_id", e.EntityID.String()),
+			slog.Int("level", e.Level))
+	}
+
 	resolvedEsc, err := s.store.ResolveStaleEscalations(ctx, limit, func(e Escalation) (outbox.Event, error) {
 		return outbox.NewEscalationResolved(nil, escalationRef(e))
 	})
 	if err != nil {
-		return len(raisedEsc), 0, err
+		return len(raisedEsc) + len(promoted), 0, err
 	}
 	for _, e := range resolvedEsc {
 		s.writeAuditAs(ctx, "system", "system", "work.escalation.resolved", EntityEscalation,
 			e.ID, escalationSnapshot(e), escalationSnapshot(e))
 	}
-	return len(raisedEsc), len(resolvedEsc), nil
+	return len(raisedEsc) + len(promoted), len(resolvedEsc), nil
 }
 
 func escalationRef(e Escalation) outbox.EscalationRef {

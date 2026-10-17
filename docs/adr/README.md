@@ -23,6 +23,7 @@ An ADR records a decision that is expensive to reverse. When the blueprint and t
 | [ADR-013](ADR-013-accounting-and-einvoicing.md) | Accounting package and KRA e-invoicing integration route | Deferred (Phase 4) | Phase 4 |
 | [ADR-014](ADR-014-hosting-and-region.md) | Hosting and region | Proposed (pending D2) | Phase 0 |
 | [ADR-015](ADR-015-object-storage-provider.md) | Object storage provider (SeaweedFS local store) | Accepted | Phase 0 |
+| [ADR-016](ADR-016-escalation-windows-and-approval-thresholds.md) | Escalation windows E1–E3 and approval thresholds T1/T2, D1, C2 (D4) | Accepted | Phase 1 (implemented in Phase 2) |
 
 ## Status values
 

@@ -22,7 +22,10 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] `internal/settings/` (typed settings, get/set, versioned, audited): `definitions` catalogue (string/bool/int/enum/string_list), `Store` (List/Get/Set/History) with `FOR UPDATE` optimistic concurrency, `Service` (validate + best-effort audit). Migration `00008` adds `core.settings.version` + `core.setting_changes`
 - [x] Approval policy lookup used by approvals service
 - [x] Routes + tests: `GET /api/v1/settings`, `GET/PUT /api/v1/settings/{key}` (ETag/If-Match → 428/412), `GET /api/v1/settings/{key}/history` (cursor); read-only `GET /api/v1/approval-policies`; gated by `core.settings.read`/`core.settings.manage`/`core.approval_policy.read`
-- [ ] Policy **change** workflow (request → both-CEO approval → apply), and seeding real thresholds — deferred to Phase 2 (depends on decision D4; §6.7)
+- [ ] Policy **change** workflow (request → both-CEO approval → apply). D4 is
+      decided (ADR-016): the T1/T2/D1/C2 numbers are recorded as typed settings
+      (`approvals.*`); enforcement stays deferred until the engine can resolve
+      the `line_manager`/`domain_ceo` rules and this workflow exists
 
 ## D) Files
 - [x] `internal/files/` metadata, pre-signed upload URLs, classification: `Store` (create/get/list/complete/archive) over `core.files`, `Service` (initiate upload → pending, confirm via storage `Stat`, download URL, archive), routes gated by `core.file.read`/`core.file.write`
@@ -77,11 +80,19 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
 - [x] Overdue escalation: migration 00012 `work.escalations` (schema 12; work
       schema re-owned by atlas_migrator so `task migrate` works), sweep in
       atlas-worker (config `ATLAS_WORK_SWEEP_INTERVAL`/`ATLAS_WORK_SWEEP_BATCH`),
-      L1 raised to the project owner in one tx (FOR UPDATE SKIP LOCKED, per-deadline
-      episode), auto-resolve when the task is no longer overdue, manual resolve
-      (work.task.review), events work.task.overdue.v1 +
-      core.escalation.raised/resolved.v1; L2/L3 windows deferred to decision D4
+      full D4 ladder (ADR-016): L1 after E1 to the project owner, L2 after E2 to
+      the `escalation.l2_role` holder, L3 after E2+E3 to the shared both-CEO
+      queue — one escalation per task per deadline, promoted in place, windows
+      and L2 role are typed settings (`escalation.*`); auto-resolve when the
+      task is no longer overdue, manual resolve (work.task.review), events
+      work.task.overdue.v1 + core.escalation.raised/resolved.v1
 - [x] Exec dashboard "overdue work" tile (overdue tasks + open escalations)
+- [x] Fix: migration `00011` created the `work` schema but never granted it, so
+      every work route and the atlas-worker escalation sweep failed with
+      "permission denied for schema work" (the Go tests connect as the schema
+      owner, so they stayed green). Migration `00015` grants `work` to
+      `atlas_api`/`atlas_worker` (full DML) and `atlas_readonly` (SELECT), and
+      sets default privileges; `TestWorkSchemaGrants` is the regression guard
 
 ### Remaining Phase 2 (next)
 - [x] Elixir outbox wiring: `work.*` + `core.escalation.*`
@@ -121,7 +132,8 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       `people.session.read`, migration `00014` adds the roster index);
       `POST /api/v1/auth/heartbeat` keeps an open tab's `last_seen_at` fresh;
       web page `/people/activity` (live roster + per-person daily roll-up)
-- [ ] L2/L3 ladder timing + notification fan-out for escalations (blocked on D4)
+- [ ] Notification fan-out for escalations (L2+ nudges to both CEOs) — Phase 7
+      (§6.4). The ladder itself is complete (D4, ADR-016)
 - [ ] Blueprint deviation still open: escalation timing is a Go worker sweep,
       not Elixir Oban timers + a Go internal command API (§5.8)
       (daily reports/leave moved to `people` in migration 00013 — resolved)
