@@ -88,6 +88,15 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       line manager, relabels late filings, and raises/resolves one L2 per person
       through the shared `work.escalations` ladder (`entity_type = 'person'`);
       `_ "time/tzdata"` linked into both commands
+- [x] Timesheets (decision **D7**, ADR-019): migration `00018` adds
+      `work.time_entries` (person, task, derived project, date, minutes, note,
+      version); the typed setting `work.timesheet.required_project_types` (default
+      `client_delivery`) drives a `timesheet_required` flag on the project view;
+      `internal/work` records/lists/edits/deletes entries under
+      `work.time_entry.read`/`.write` (keyset paging, If-Match, project derived
+      from the task), emitting `work.time_entry.logged/updated/removed.v1` in-tx.
+      Enforced **report-only** — missing hours never block a transition; the §8.4
+      margin falls back to the assignment-percentage allocation
 - [x] Fix: migration `00013` moved `daily_reports`/`leave_requests` from `work`
       to `people` with `SET SCHEMA`, carrying the (empty) `work` ACLs, so
       `atlas_api`/`atlas_worker` had no DML on them at runtime. Migration `00016`
@@ -148,6 +157,11 @@ The sequence follows: Notifications done (Go), Elixir notification handler done.
       `people.session.read`, migration `00014` adds the roster index);
       `POST /api/v1/auth/heartbeat` keeps an open tab's `last_seen_at` fresh;
       web page `/people/activity` (live roster + per-person daily roll-up)
+- [ ] Timesheet UI + coverage reporting (D7, ADR-019): the backend records and
+      serves entries and flags which project types require them; the web
+      timesheet panel and the §8.4 coverage / allocation-weighted margin report
+      are the next step (the assignment-percentage fallback is already the
+      documented behaviour)
 - [ ] Notification fan-out for escalations (L2+ nudges to both CEOs) — Phase 7
       (§6.4). The ladder itself is complete (D4, ADR-016). The daily-report
       line-manager notice for D5 is done now (ADR-017); the reporter's 16:30
@@ -164,6 +178,7 @@ realtime join check, the static service credential, account-addressed personal
 (ADR-016) and D5 (ADR-017) are decided and implemented: the full escalation
 ladder and the enforced daily-report lifecycle (prompt/deadline times, late,
 missed, excused, repeated-miss L2, line-manager notice) both ride the Go worker
-sweeps. The Phase 2 frontend (`apps/web`) is built: work (projects, tasks,
+sweeps, and D7 (ADR-019) records timesheets — required for `client_delivery`,
+optional elsewhere, report-only so they never block delivery. The Phase 2 frontend (`apps/web`) is built: work (projects, tasks,
 workload, escalations), daily reports, people (availability, leave, offboarding,
 and the session-activity view), and the executive dashboard.

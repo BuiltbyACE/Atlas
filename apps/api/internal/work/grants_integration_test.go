@@ -34,7 +34,7 @@ func TestWorkSchemaGrants(t *testing.T) {
 		if !usage {
 			t.Fatalf("%s lacks USAGE on the work schema (see migration 00015)", role)
 		}
-		for _, table := range []string{"tasks", "escalations"} {
+		for _, table := range []string{"tasks", "escalations", "time_entries"} {
 			for _, priv := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
 				var ok bool
 				if err := pool.QueryRow(ctx, `SELECT has_table_privilege($1, $2, $3)`, role, "work."+table, priv).Scan(&ok); err != nil {

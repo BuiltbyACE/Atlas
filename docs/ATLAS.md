@@ -594,7 +594,7 @@ stateDiagram-v2
 | `blocker` | task, raised by, category (client input, technical, access, resource, decision needed, external vendor), needs management flag, owner, status, resolution |
 | `evidence` | task, type (§6.5), reference, submitted by, verified by, verified_at |
 | `review` | task, reviewer, type (code, design, QA, client), result (approved/changes requested), notes |
-| `time_entry` (optional) | person, task, date, minutes, note — enabled per project type **[CONFIG]** |
+| `time_entry` (optional) | person, task, date, minutes, note — required for `client_delivery` (D7, [ADR-019](adr/ADR-019-timesheets-requirement-and-project-types.md)), optional for other types |
 | `handover` | contract → project: scope, deliverables, deadlines, client commitments, contacts, budget, open questions, accepted_by |
 
 **Task lifecycle**
@@ -617,13 +617,14 @@ stateDiagram-v2
 **Rules**
 
 - Task types define required evidence **[CONFIG]**, e.g. `feature` → merged PR + passing CI; `document` → file; `deployment` → release tag + health check passing; `client_deliverable` → client approval.
+- Timesheets are **required for `client_delivery` projects and optional otherwise** (D7, [ADR-019](adr/ADR-019-timesheets-requirement-and-project-types.md)). They are recorded, never a completion gate: where hours are missing the §8.4 margin falls back to the assignment-percentage allocation.
 - `Done` is only reachable from `InReview` when required evidence exists and the reviewer is not the owner.
 - `Blocked` requires a blocker record; blockers flagged "needs management" escalate straight to L2.
 - Overdue tasks are marked by the orchestrator and follow the escalation ladder.
 - Project health is computed (overdue tasks, blocked days, budget burn vs progress, missed milestones) with a manual override that requires a reason.
 - A client project cannot start (`Active`) without an **accepted handover**.
 
-**Key APIs** — `POST /api/v1/work/projects`, `GET /api/v1/projects/{id}/tasks`, `POST /api/v1/work/tasks`, `POST /api/v1/work/tasks/{id}/assign`, `POST /api/v1/work/tasks/{id}/transition`, `POST /api/v1/work/tasks/{id}/blockers`, `POST /api/v1/work/tasks/{id}/evidence`, `POST /api/v1/work/tasks/{id}/reviews`, `GET /api/v1/work/my-work`, `POST /api/v1/work/handovers/{id}/accept`.
+**Key APIs** — `POST /api/v1/work/projects`, `GET /api/v1/projects/{id}/tasks`, `POST /api/v1/work/tasks`, `POST /api/v1/work/tasks/{id}/assign`, `POST /api/v1/work/tasks/{id}/transition`, `POST /api/v1/work/tasks/{id}/blockers`, `POST /api/v1/work/tasks/{id}/evidence`, `POST /api/v1/work/tasks/{id}/reviews`, `GET /api/v1/work/time-entries`, `POST /api/v1/work/time-entries`, `GET /api/v1/work/my-work`, `POST /api/v1/work/handovers/{id}/accept`.
 
 **Key screens** — My work, project board (Kanban + list), project overview (health, milestones, budget burn, risks), blockers board, review queue, workload view (who has what, by due date).
 
@@ -1394,7 +1395,7 @@ Initial ADRs to write in `docs/adr/` during Phase 0:
 | D4 | Real approval thresholds T1/T2, D1, C2 and escalation windows E1–E3 — **decided** ([ADR-016](adr/ADR-016-escalation-windows-and-approval-thresholds.md)) | Phase 1 | Both CEOs |
 | D5 | Daily report time, deadline and missed-report policy - **decided** ([ADR-017](adr/ADR-017-daily-report-lifecycle-and-miss-policy.md)) | Phase 2 | Internal CEO |
 | D6 | Git provider for evidence integration | Phase 2 | Internal CEO |
-| D7 | Whether timesheets are required, and for which project types | Phase 2 | Both CEOs |
+| D7 | Whether timesheets are required, and for which project types - **decided** ([ADR-019](adr/ADR-019-timesheets-requirement-and-project-types.md)) | Phase 2 | Both CEOs |
 | D8 | Pipeline stages, lead sources, lost reasons | Phase 3 | Commercial CEO |
 | D9 | WhatsApp number strategy (one company number vs per-salesperson) and consent wording | Phase 3 | Commercial CEO |
 | D10 | Telephony: manual logging, local voice API, or international provider; call recording yes/no | Phase 3 | Commercial CEO |

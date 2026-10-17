@@ -333,6 +333,20 @@ func registerWork(reg *routing.Registry, h *work.Handler) {
 		"Get an escalation", h.GetEscalation)
 	reg.Gated("work.task.review", http.MethodPost, "/api/v1/work/escalations/{id}/resolve",
 		"Resolve an escalation", h.ResolveEscalation)
+
+	// Time entries (D7): hours a person logged against a task. Reads need
+	// work.time_entry.read; writes need work.time_entry.write. Every update
+	// carries the version it read in If-Match (§6.6).
+	reg.Gated("work.time_entry.read", http.MethodGet, "/api/v1/work/time-entries",
+		"List time entries", h.ListTimeEntries)
+	reg.Gated("work.time_entry.read", http.MethodGet, "/api/v1/work/time-entries/{id}",
+		"Get a time entry", h.GetTimeEntry)
+	reg.Gated("work.time_entry.write", http.MethodPost, "/api/v1/work/time-entries",
+		"Record a time entry", h.RecordTimeEntry)
+	reg.Gated("work.time_entry.write", http.MethodPut, "/api/v1/work/time-entries/{id}",
+		"Update a time entry", h.UpdateTimeEntry)
+	reg.Gated("work.time_entry.write", http.MethodDelete, "/api/v1/work/time-entries/{id}",
+		"Delete a time entry", h.DeleteTimeEntry)
 }
 
 // registerPeople declares the people & accountability surface (§8.5): daily

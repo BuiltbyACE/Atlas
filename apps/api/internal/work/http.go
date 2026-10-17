@@ -43,9 +43,14 @@ type projectView struct {
 	StartedAt     *time.Time `json:"started_at,omitempty"`
 	DueAt         *time.Time `json:"due_at,omitempty"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-	Version       int        `json:"version"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	// TimesheetRequired is D7's flag: true when this project's type requires
+	// timesheets (work.timesheet.required_project_types). It is advisory —
+	// nothing blocks completion — but the client uses it to show the timesheet
+	// section and its coverage.
+	TimesheetRequired bool      `json:"timesheet_required"`
+	Version           int       `json:"version"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type milestoneView struct {
@@ -112,6 +117,19 @@ type evidenceView struct {
 	VerifiedBy  string     `json:"verified_by_person_id,omitempty"`
 	VerifiedAt  *time.Time `json:"verified_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
+}
+
+type timeEntryView struct {
+	ID        string    `json:"id"`
+	PersonID  string    `json:"person_id"`
+	TaskID    string    `json:"task_id"`
+	ProjectID string    `json:"project_id"`
+	EntryDate string    `json:"entry_date"`
+	Minutes   int       `json:"minutes"`
+	Note      string    `json:"note,omitempty"`
+	Version   int       `json:"version"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type escalationView struct {
@@ -185,6 +203,14 @@ type evidenceReq struct {
 	Description string `json:"description"`
 }
 
+type timeEntryReq struct {
+	PersonID  *string `json:"person_id"`
+	TaskID    string  `json:"task_id"`
+	EntryDate string  `json:"entry_date"`
+	Minutes   int     `json:"minutes"`
+	Note      string  `json:"note"`
+}
+
 // ── projects ────────────────────────────────────────────────────────────────
 
 // CreateProject handles POST /api/v1/work/projects.
@@ -209,7 +235,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.SetETag(w, int64(p.Version))
-	httpx.WriteJSON(w, http.StatusCreated, projectOf(p))
+	httpx.WriteJSON(w, http.StatusCreated, projectOf(p, h.service.TimesheetPolicy(r.Context()).Required(p.ProjectType)))
 }
 
 // ListProjects handles GET /api/v1/work/projects.
@@ -254,8 +280,9 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		next = encodeCursor(last.CreatedAt, last.ID)
 	}
 	views := make([]projectView, 0, len(items))
+	policy := h.service.TimesheetPolicy(r.Context())
 	for _, p := range items {
-		views = append(views, projectOf(p))
+		views = append(views, projectOf(p, policy.Required(p.ProjectType)))
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.NewPage(views, next, limit))
 }
@@ -272,7 +299,7 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.SetETag(w, int64(p.Version))
-	httpx.WriteJSON(w, http.StatusOK, projectOf(p))
+	httpx.WriteJSON(w, http.StatusOK, projectOf(p, h.service.TimesheetPolicy(r.Context()).Required(p.ProjectType)))
 }
 
 // UpdateProject handles PUT /api/v1/work/projects/{id}.
@@ -304,13 +331,13 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err)
 		return
 	}
-	p, err := h.service.UpdateProject(r.Context(), principal.PersonID, id, current.Version, in)
+	e, err := h.service.UpdateProject(r.Context(), principal.PersonID, id, current.Version, in)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	httpx.SetETag(w, int64(p.Version))
-	httpx.WriteJSON(w, http.StatusOK, projectOf(p))
+	httpx.SetETag(w, int64(e.Version))
+	httpx.WriteJSON(w, http.StatusOK, projectOf(e, h.service.TimesheetPolicy(r.Context()).Required(e.ProjectType)))
 }
 
 // ListMembers handles GET /api/v1/work/projects/{id}/members.
@@ -822,6 +849,213 @@ func (h *Handler) listEvidence(w http.ResponseWriter, r *http.Request, q ListEvi
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
 }
 
+// ── time entries (D7) ───────────────────────────────────────────────────────
+
+// ListTimeEntries handles GET /api/v1/work/time-entries.
+func (h *Handler) ListTimeEntries(w http.ResponseWriter, r *http.Request) {
+	limit, cursor, err := httpx.ParsePage(r)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	before, err := cursorOrNil(cursor)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	var q ListTimeEntriesQuery
+	if q.PersonID, err = queryUUID(r, "person_id"); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if q.TaskID, err = queryUUID(r, "task_id"); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if q.ProjectID, err = queryUUID(r, "project_id"); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if q.From, err = queryDate(r, "from"); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if q.To, err = queryDate(r, "to"); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+
+	items, err := h.service.ListTimeEntries(r.Context(), q, limit+1, before)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	next := ""
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[len(items)-1]
+		next = encodeCursor(last.CreatedAt, last.ID)
+	}
+	views := make([]timeEntryView, 0, len(items))
+	for _, e := range items {
+		views = append(views, timeEntryOf(e))
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewPage(views, next, limit))
+}
+
+// GetTimeEntry handles GET /api/v1/work/time-entries/{id}.
+func (h *Handler) GetTimeEntry(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.idParam(w, r, "id", "time entry")
+	if !ok {
+		return
+	}
+	e, err := h.service.GetTimeEntry(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(e.Version))
+	httpx.WriteJSON(w, http.StatusOK, timeEntryOf(e))
+}
+
+// RecordTimeEntry handles POST /api/v1/work/time-entries.
+func (h *Handler) RecordTimeEntry(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req timeEntryReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := toTimeEntryInput(req)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	e, err := h.service.RecordTimeEntry(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(e.Version))
+	httpx.WriteJSON(w, http.StatusCreated, timeEntryOf(e))
+}
+
+// UpdateTimeEntry handles PUT /api/v1/work/time-entries/{id}.
+func (h *Handler) UpdateTimeEntry(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "time entry")
+	if !ok {
+		return
+	}
+	current, err := h.service.GetTimeEntry(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	var req timeEntryReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := toTimeEntryInput(req)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	e, err := h.service.UpdateTimeEntry(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(e.Version))
+	httpx.WriteJSON(w, http.StatusOK, timeEntryOf(e))
+}
+
+// DeleteTimeEntry handles DELETE /api/v1/work/time-entries/{id}.
+func (h *Handler) DeleteTimeEntry(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "time entry")
+	if !ok {
+		return
+	}
+	if err := h.service.DeleteTimeEntry(r.Context(), principal.PersonID, id); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func toTimeEntryInput(req timeEntryReq) (TimeEntryInput, error) {
+	var in TimeEntryInput
+	taskID, err := uuid.Parse(strings.TrimSpace(req.TaskID))
+	if err != nil {
+		return in, errInvalidField("task_id")
+	}
+	in.TaskID = taskID
+	if in.PersonID, err = optUUID(req.PersonID, "person_id"); err != nil {
+		return in, err
+	}
+	if in.EntryDate, err = parseDate(strings.TrimSpace(req.EntryDate)); err != nil {
+		return in, errInvalidField("entry_date")
+	}
+	in.Minutes = req.Minutes
+	in.Note = req.Note
+	return in, nil
+}
+
+// parseDate accepts a YYYY-MM-DD date or a full RFC3339 timestamp, normalising
+// either to UTC midnight so it matches the work.time_entries date column.
+func parseDate(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, errors.New("empty date")
+	}
+	if d, err := time.Parse("2006-01-02", value); err == nil {
+		return d, nil
+	}
+	ts, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return dateOnly(ts), nil
+}
+
+func queryUUID(r *http.Request, name string) (*uuid.UUID, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return nil, errInvalidField(name)
+	}
+	return &id, nil
+}
+
+func queryDate(r *http.Request, name string) (*time.Time, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		return nil, nil
+	}
+	d, err := parseDate(raw)
+	if err != nil {
+		return nil, errInvalidField(name)
+	}
+	return &d, nil
+}
+
 // GetEvidence handles GET /api/v1/work/evidence/{id}.
 func (h *Handler) GetEvidence(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.idParam(w, r, "id", "evidence")
@@ -1101,19 +1335,20 @@ func cursorOrNil(cursor string) (*Cursor, error) {
 	return c, nil
 }
 
-func projectOf(p Project) projectView {
+func projectOf(p Project, timesheetRequired bool) projectView {
 	v := projectView{
-		ID:          p.ID.String(),
-		Name:        p.Name,
-		Description: p.Description,
-		ProjectType: p.ProjectType,
-		Status:      string(p.Status),
-		StartedAt:   p.StartedAt,
-		DueAt:       p.DueAt,
-		CompletedAt: p.CompletedAt,
-		Version:     p.Version,
-		CreatedAt:   p.CreatedAt,
-		UpdatedAt:   p.UpdatedAt,
+		ID:                p.ID.String(),
+		Name:              p.Name,
+		Description:       p.Description,
+		ProjectType:       p.ProjectType,
+		Status:            string(p.Status),
+		StartedAt:         p.StartedAt,
+		DueAt:             p.DueAt,
+		CompletedAt:       p.CompletedAt,
+		TimesheetRequired: timesheetRequired,
+		Version:           p.Version,
+		CreatedAt:         p.CreatedAt,
+		UpdatedAt:         p.UpdatedAt,
 	}
 	if p.OwnerPersonID != nil {
 		v.OwnerPersonID = p.OwnerPersonID.String()
@@ -1211,6 +1446,21 @@ func evidenceOf(e Evidence) evidenceView {
 		v.VerifiedBy = e.VerifiedBy.String()
 	}
 	return v
+}
+
+func timeEntryOf(e TimeEntry) timeEntryView {
+	return timeEntryView{
+		ID:        e.ID.String(),
+		PersonID:  e.PersonID.String(),
+		TaskID:    e.TaskID.String(),
+		ProjectID: e.ProjectID.String(),
+		EntryDate: dateString(e.EntryDate),
+		Minutes:   e.Minutes,
+		Note:      e.Note,
+		Version:   e.Version,
+		CreatedAt: e.CreatedAt,
+		UpdatedAt: e.UpdatedAt,
+	}
 }
 
 func escalationOf(e Escalation) escalationView {

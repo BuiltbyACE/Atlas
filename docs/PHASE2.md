@@ -52,6 +52,26 @@ tick an item only when its code, tests and migrations are in place.
 - [x] File availability checked through `work.FileResolver`, adapted from the
       files service in `cmd/atlas-api` (the work package does not import files)
 
+## 3.5 Timesheets (`work.time_entries`) — decision D7
+
+- [x] Migration `00018` adds `work.time_entries` (person, task, derived project,
+      `entry_date`, `minutes`, note, version, timestamps) with indexes for a
+      person's week, a task's effort and a project's coverage
+- [x] Typed setting `work.timesheet.required_project_types` (default
+      `client_delivery`); the work module reads it through a settings-backed
+      `TimesheetReader` and surfaces `timesheet_required` on the project view
+- [x] `internal/work` service + PGStore + Handler: record/get/list (person, task,
+      project and date-range filters, keyset paging)/update (If-Match)/delete;
+      the project is derived from the task; `work.time_entry.read`/`.write`
+- [x] Events `work.time_entry.logged.v1` / `.updated.v1` / `.removed.v1` written
+      in the same transaction as the change (ADR-009), routed by the Elixir work
+      handler to `work:project:{id}` + `dashboard.changed`
+- [x] **Report-only enforcement** (ADR-019): nothing blocks completion on missing
+      hours; §8.4 margin falls back to the assignment-percentage allocation
+- [x] Unit (policy parsing/normalisation) + DB integration (lifecycle,
+      concurrency, filters, events) tests; `work.time_entries` added to the
+      schema-grants guard
+
 ## 4. People module — daily reports, leave, availability, offboarding, session activity (`internal/people`) — done
 
 - [x] `internal/people` module (migration `00013` moves the tables home):

@@ -97,6 +97,32 @@ defmodule AtlasOrchestrator.Work.HandlerTest do
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
   end
 
+  test "a logged time entry reaches the project board and the dashboard" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "work:project:#{@project}")
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "exec:dashboard")
+
+    assert :ok =
+             Handler.handle_event(
+               event("work.time_entry.logged.v1", %{
+                 "time_entry_id" => Ecto.UUID.generate(),
+                 "project_id" => @project,
+                 "task_id" => Ecto.UUID.generate(),
+                 "person_id" => @assignee
+               })
+             )
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "work:project:" <> _,
+      event: "time_entry.changed",
+      payload: payload
+    }
+
+    assert payload["project_id"] == @project
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+    # A time entry names no account, so no personal nudge is sent.
+    refute_receive %Phoenix.Socket.Broadcast{topic: "user:" <> _}, 50
+  end
+
   test "an unknown work event type is ignored, not failed" do
     assert :ok = Handler.handle_event(event("work.task.reopened.v1", %{}))
     assert :ok = Handler.handle_event(%{})

@@ -19,13 +19,17 @@ const (
 	TypeTaskUnblockedV1        = "work.task.unblocked.v1"
 	TypeTaskOverdueV1          = "work.task.overdue.v1"
 	TypeEvidenceAddedV1        = "work.evidence.added.v1"
+	TypeTimeEntryLoggedV1      = "work.time_entry.logged.v1"
+	TypeTimeEntryUpdatedV1     = "work.time_entry.updated.v1"
+	TypeTimeEntryRemovedV1     = "work.time_entry.removed.v1"
 )
 
 // Aggregate types for work events.
 const (
-	AggregateProject  = "project"
-	AggregateTask     = "task"
-	AggregateEvidence = "evidence"
+	AggregateProject   = "project"
+	AggregateTask      = "task"
+	AggregateEvidence  = "evidence"
+	AggregateTimeEntry = "time_entry"
 )
 
 // ProjectCreatedPayload is emitted when a project is created.
@@ -256,6 +260,72 @@ type EvidenceAddedPayload struct {
 	Kind       string    `json:"kind,omitempty"`
 	AddedBy    uuid.UUID `json:"added_by,omitempty"`
 	AddedAt    time.Time `json:"added_at"`
+}
+
+// TimeEntryChangedPayload is emitted when a time entry is logged, edited or
+// removed (decision D7, docs/adr/ADR-019). Elixir only invalidates views from
+// it; the hours themselves are data, fetched from Go (§7.4, ADR-009).
+type TimeEntryChangedPayload struct {
+	TimeEntryID uuid.UUID `json:"time_entry_id"`
+	ProjectID   uuid.UUID `json:"project_id"`
+	TaskID      uuid.UUID `json:"task_id"`
+	PersonID    uuid.UUID `json:"person_id"`
+	EntryDate   string    `json:"entry_date"`
+	Minutes     int       `json:"minutes"`
+	ChangedBy   uuid.UUID `json:"changed_by,omitempty"`
+	ChangedAt   time.Time `json:"changed_at"`
+}
+
+// TimeEntryRef is the minimal time-entry view the event builders need.
+type TimeEntryRef struct {
+	ID        uuid.UUID
+	ProjectID uuid.UUID
+	TaskID    uuid.UUID
+	PersonID  uuid.UUID
+	EntryDate string
+	Minutes   int
+}
+
+// NewTimeEntryLogged builds a work.time_entry.logged.v1 event.
+func NewTimeEntryLogged(actorID *uuid.UUID, e TimeEntryRef, changedBy uuid.UUID) (Event, error) {
+	return buildEvent(TypeTimeEntryLoggedV1, AggregateTimeEntry, e.ID, actorID, nil, TimeEntryChangedPayload{
+		TimeEntryID: e.ID,
+		ProjectID:   e.ProjectID,
+		TaskID:      e.TaskID,
+		PersonID:    e.PersonID,
+		EntryDate:   e.EntryDate,
+		Minutes:     e.Minutes,
+		ChangedBy:   changedBy,
+		ChangedAt:   time.Now().UTC(),
+	})
+}
+
+// NewTimeEntryUpdated builds a work.time_entry.updated.v1 event.
+func NewTimeEntryUpdated(actorID *uuid.UUID, e TimeEntryRef, changedBy uuid.UUID) (Event, error) {
+	return buildEvent(TypeTimeEntryUpdatedV1, AggregateTimeEntry, e.ID, actorID, nil, TimeEntryChangedPayload{
+		TimeEntryID: e.ID,
+		ProjectID:   e.ProjectID,
+		TaskID:      e.TaskID,
+		PersonID:    e.PersonID,
+		EntryDate:   e.EntryDate,
+		Minutes:     e.Minutes,
+		ChangedBy:   changedBy,
+		ChangedAt:   time.Now().UTC(),
+	})
+}
+
+// NewTimeEntryRemoved builds a work.time_entry.removed.v1 event.
+func NewTimeEntryRemoved(actorID *uuid.UUID, e TimeEntryRef, changedBy uuid.UUID) (Event, error) {
+	return buildEvent(TypeTimeEntryRemovedV1, AggregateTimeEntry, e.ID, actorID, nil, TimeEntryChangedPayload{
+		TimeEntryID: e.ID,
+		ProjectID:   e.ProjectID,
+		TaskID:      e.TaskID,
+		PersonID:    e.PersonID,
+		EntryDate:   e.EntryDate,
+		Minutes:     e.Minutes,
+		ChangedBy:   changedBy,
+		ChangedAt:   time.Now().UTC(),
+	})
 }
 
 // ProjectRef is the minimal project view the event builders need.

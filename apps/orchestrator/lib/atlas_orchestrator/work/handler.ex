@@ -45,6 +45,9 @@ defmodule AtlasOrchestrator.Work.Handler do
     "work.task.unblocked.v1" => {"task", "task_id", "project_id", nil},
     "work.task.overdue.v1" => {"task", "task_id", "project_id", "assignee_user_id"},
     "work.evidence.added.v1" => {"evidence", "evidence_id", "project_id", nil},
+    "work.time_entry.logged.v1" => {"time_entry", "time_entry_id", "project_id", nil},
+    "work.time_entry.updated.v1" => {"time_entry", "time_entry_id", "project_id", nil},
+    "work.time_entry.removed.v1" => {"time_entry", "time_entry_id", "project_id", nil},
     "core.escalation.raised.v1" => {"escalation", "escalation_id", "project_id", "assignee_user_id"},
     "core.escalation.resolved.v1" => {"escalation", "escalation_id", "project_id", "assignee_user_id"}
   }

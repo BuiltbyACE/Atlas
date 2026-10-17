@@ -63,6 +63,13 @@ type Store interface {
 	VerifyEvidence(ctx context.Context, id uuid.UUID, verifier uuid.UUID) (Evidence, error)
 	DeleteEvidence(ctx context.Context, id uuid.UUID) error
 
+	// Time entries (D7).
+	CreateTimeEntry(ctx context.Context, e TimeEntry, ev *outbox.Event) (TimeEntry, error)
+	GetTimeEntry(ctx context.Context, id uuid.UUID) (*TimeEntry, error)
+	ListTimeEntries(ctx context.Context, q ListTimeEntriesQuery, limit int, before *Cursor) ([]TimeEntry, error)
+	UpdateTimeEntry(ctx context.Context, e TimeEntry, expectedVersion int, ev *outbox.Event) (TimeEntry, error)
+	DeleteTimeEntry(ctx context.Context, id uuid.UUID, ev *outbox.Event) error
+
 	// Escalations.
 	GetEscalation(ctx context.Context, id uuid.UUID) (*Escalation, error)
 	ListEscalations(ctx context.Context, q ListEscalationsQuery, limit int, before *Cursor) ([]Escalation, error)
@@ -861,6 +868,167 @@ func (s *PGStore) DeleteEvidence(ctx context.Context, id uuid.UUID) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("%w: evidence %s", ErrNotFound, id)
+	}
+	return nil
+}
+
+// ── time entries (D7) ───────────────────────────────────────────────────────
+
+const timeEntryCols = `id, person_id, task_id, project_id, entry_date, minutes,
+	COALESCE(note,''), version, created_at, updated_at`
+
+func scanTimeEntry(row rowScanner) (TimeEntry, error) {
+	var e TimeEntry
+	if err := row.Scan(&e.ID, &e.PersonID, &e.TaskID, &e.ProjectID, &e.EntryDate,
+		&e.Minutes, &e.Note, &e.Version, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		return e, err
+	}
+	return e, nil
+}
+
+func (s *PGStore) CreateTimeEntry(ctx context.Context, e TimeEntry, ev *outbox.Event) (TimeEntry, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return TimeEntry{}, fmt.Errorf("work: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	created, err := scanTimeEntry(tx.QueryRow(ctx, `
+		INSERT INTO work.time_entries (
+			id, person_id, task_id, project_id, entry_date, minutes, note,
+			version, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		RETURNING `+timeEntryCols,
+		e.ID, e.PersonID, e.TaskID, e.ProjectID, e.EntryDate, e.Minutes,
+		nullIfEmpty(e.Note), e.Version, e.CreatedAt, e.UpdatedAt))
+	if err != nil {
+		return TimeEntry{}, fmt.Errorf("work: create time entry: %w", err)
+	}
+	if ev != nil {
+		if _, err := outbox.Write(ctx, tx, *ev); err != nil {
+			return TimeEntry{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TimeEntry{}, fmt.Errorf("work: commit: %w", err)
+	}
+	return created, nil
+}
+
+func (s *PGStore) GetTimeEntry(ctx context.Context, id uuid.UUID) (*TimeEntry, error) {
+	e, err := scanTimeEntry(s.db.QueryRow(ctx, `SELECT `+timeEntryCols+` FROM work.time_entries WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("work: get time entry: %w", err)
+	}
+	return &e, nil
+}
+
+func (s *PGStore) ListTimeEntries(ctx context.Context, q ListTimeEntriesQuery, limit int, before *Cursor) ([]TimeEntry, error) {
+	where := make([]string, 0, 6)
+	args := make([]any, 0, 8)
+	add := func(clause string, v any) {
+		args = append(args, v)
+		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	if q.PersonID != nil {
+		add("person_id = $%d", *q.PersonID)
+	}
+	if q.TaskID != nil {
+		add("task_id = $%d", *q.TaskID)
+	}
+	if q.ProjectID != nil {
+		add("project_id = $%d", *q.ProjectID)
+	}
+	if q.From != nil {
+		add("entry_date >= $%d", dateOnly(*q.From))
+	}
+	if q.To != nil {
+		add("entry_date <= $%d", dateOnly(*q.To))
+	}
+	if before != nil {
+		args = append(args, before.At.UTC(), before.ID)
+		where = append(where, fmt.Sprintf("(created_at, id) < ($%d, $%d)", len(args)-1, len(args)))
+	}
+	args = append(args, limit)
+
+	sql := `SELECT ` + timeEntryCols + ` FROM work.time_entries`
+	if len(where) > 0 {
+		sql += " WHERE " + strings.Join(where, " AND ")
+	}
+	sql += fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT $%d", len(args))
+
+	rows, err := s.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("work: list time entries: %w", err)
+	}
+	defer rows.Close()
+	out := make([]TimeEntry, 0, limit)
+	for rows.Next() {
+		e, err := scanTimeEntry(rows)
+		if err != nil {
+			return nil, fmt.Errorf("work: scan time entry: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *PGStore) UpdateTimeEntry(ctx context.Context, e TimeEntry, expectedVersion int, ev *outbox.Event) (TimeEntry, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return TimeEntry{}, fmt.Errorf("work: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	updated, err := scanTimeEntry(tx.QueryRow(ctx, `
+		UPDATE work.time_entries
+		   SET person_id = $2, task_id = $3, project_id = $4, entry_date = $5,
+		       minutes = $6, note = $7, version = version + 1
+		 WHERE id = $1 AND version = $8
+		RETURNING `+timeEntryCols,
+		e.ID, e.PersonID, e.TaskID, e.ProjectID, e.EntryDate, e.Minutes,
+		nullIfEmpty(e.Note), expectedVersion))
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return TimeEntry{}, s.versionConflict(ctx, tx, "work.time_entries", e.ID, expectedVersion)
+	case err != nil:
+		return TimeEntry{}, fmt.Errorf("work: update time entry: %w", err)
+	}
+	if ev != nil {
+		if _, err := outbox.Write(ctx, tx, *ev); err != nil {
+			return TimeEntry{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TimeEntry{}, fmt.Errorf("work: commit: %w", err)
+	}
+	return updated, nil
+}
+
+func (s *PGStore) DeleteTimeEntry(ctx context.Context, id uuid.UUID, ev *outbox.Event) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("work: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, `DELETE FROM work.time_entries WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("work: delete time entry: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: time entry %s", ErrNotFound, id)
+	}
+	if ev != nil {
+		if _, err := outbox.Write(ctx, tx, *ev); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("work: commit: %w", err)
 	}
 	return nil
 }

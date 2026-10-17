@@ -25,6 +25,7 @@ An ADR records a decision that is expensive to reverse. When the blueprint and t
 | [ADR-015](ADR-015-object-storage-provider.md) | Object storage provider (SeaweedFS local store) | Accepted | Phase 0 |
 | [ADR-016](ADR-016-escalation-windows-and-approval-thresholds.md) | Escalation windows E1–E3 and approval thresholds T1/T2, D1, C2 (D4) | Accepted | Phase 1 (implemented in Phase 2) |
 | [ADR-017](ADR-017-daily-report-lifecycle-and-miss-policy.md) | Daily-report lifecycle, prompt/deadline times and repeated-miss policy (D5) | Accepted | Phase 2 |
+| [ADR-019](ADR-019-timesheets-requirement-and-project-types.md) | Timesheets: requirement and project types (D7) | Accepted | Phase 2 |
 
 ## Status values
 

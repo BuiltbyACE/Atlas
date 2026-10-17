@@ -284,6 +284,17 @@ var definitions = []Definition{
 		Max:         floatPtr(90),
 		Default:     10.0,
 	},
+	// Decision D7 (docs/adr/ADR-019): whether timesheets are required, and for
+	// which project types. The work module reads it when it decorates a project
+	// with a timesheet-required flag; an empty list means no project type
+	// requires timesheets. Read through the audited settings API (§6.7).
+	{
+		Key:         "work.timesheet.required_project_types",
+		Kind:        KindString,
+		Description: "D7: project types whose work requires timesheets, comma-separated (empty = none). Recorded, never a completion gate.",
+		MaxLength:   200,
+		Default:     "client_delivery",
+	},
 }
 
 // floatPtr is a tiny helper so the bounded definitions above stay readable.

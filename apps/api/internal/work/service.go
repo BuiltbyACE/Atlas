@@ -19,18 +19,20 @@ const (
 	EntityTask       = "work.task"
 	EntityBlocker    = "work.blocker"
 	EntityEvidence   = "work.evidence"
+	EntityTimeEntry  = "work.time_entry"
 	EntityEscalation = "work.escalation"
 )
 
 // Service coordinates work orchestration: validation, state transitions,
 // optimistic concurrency, auditing and events.
 type Service struct {
-	store  Store
-	files  FileResolver
-	audit  *audit.Writer
-	now    func() time.Time
-	logger *slog.Logger
-	ladder LadderReader
+	store     Store
+	files     FileResolver
+	audit     *audit.Writer
+	now       func() time.Time
+	logger    *slog.Logger
+	ladder    LadderReader
+	timesheet TimesheetReader
 }
 
 // NewService builds the work service. files may be nil (evidence attachment then

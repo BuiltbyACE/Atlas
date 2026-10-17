@@ -137,6 +137,9 @@ func run() error {
 	// for the orchestrator to react to (ADR-009). Evidence attachment checks a
 	// file's availability through the files service, adapted to work.FileResolver.
 	workService := work.NewService(work.NewPGStore(pool), newFileResolver(fileService), auditWriter, logger, nil)
+	// D7: the timesheet-required flag on a project view follows the typed
+	// setting work.timesheet.required_project_types (§8.2, ADR-019).
+	workService.SetTimesheetPolicy(work.NewSettingsTimesheetPolicy(settingsService))
 
 	// People & accountability (Phase 2): daily reports and leave. These belong
 	// to the people module (§8.5, §10.1) and emit people.* outbox events for the
