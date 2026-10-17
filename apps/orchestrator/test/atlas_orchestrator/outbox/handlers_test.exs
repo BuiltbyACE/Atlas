@@ -21,7 +21,12 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
 
     assert :ok = Handlers.dispatch(event)
 
-    assert_receive %Phoenix.Socket.Broadcast{topic: "user:demo", event: "signal", payload: payload}
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "user:demo",
+      event: "signal",
+      payload: payload
+    }
+
     assert payload.message == "hi"
     # The channel JSON-encodes the payload on push, so it must contain no structs.
     assert is_binary(payload.occurred_at)
@@ -136,8 +141,29 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
     }
   end
 
+  test "a merged pull request event is routed to the work handler" do
+    project = Ecto.UUID.generate()
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "work:project:#{project}")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "integrations.git.pull_request.merged.v1",
+      seq: 7,
+      payload: %{"evidence_id" => Ecto.UUID.generate(), "project_id" => project},
+      occurred_at: ~U[2026-10-17 12:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: topic, event: "evidence.changed"}
+    assert topic == "work:project:#{project}"
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
   test "an unknown event type is ignored, not failed" do
-    assert :ok = Handlers.dispatch(%Event{id: Ecto.UUID.generate(), type: "x.y.z.v1", payload: %{}})
+    assert :ok =
+             Handlers.dispatch(%Event{id: Ecto.UUID.generate(), type: "x.y.z.v1", payload: %{}})
+
     refute_receive %Phoenix.Socket.Broadcast{}, 50
   end
 end

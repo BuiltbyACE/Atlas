@@ -15,7 +15,10 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
       project board and any named person, plus `dashboard.changed` to the
       dashboard (task/board and overdue-work tiles);
     * `people.*.v1` — push `<entity>.changed` to any named person plus
-      `dashboard.changed` to the dashboard (daily-report and leave tiles).
+      `dashboard.changed` to the dashboard (daily-report and leave tiles);
+    * `integrations.git.pull_request.merged.v1` — a merged pull request the
+      integration linked to a task (`work` entity): the same project board and
+      dashboard nudges as `work.evidence.added.v1`.
 
   Reacting means *signalling*, never writing business data (ADR-009): Go remains
   the authority, the orchestrator nudges.
@@ -46,6 +49,13 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   end
 
   def dispatch(%Event{type: "work." <> _} = event) do
+    WorkHandler.handle_event(event)
+  end
+
+  # The Go integration emits this when it links a merged PR to a task (D6,
+  # ADR-018). Go's payload mirrors work.go (`evidence_id`, `project_id`), so the
+  # work handler nudges the same project board and dashboard topics.
+  def dispatch(%Event{type: "integrations.git.pull_request.merged.v1"} = event) do
     WorkHandler.handle_event(event)
   end
 
