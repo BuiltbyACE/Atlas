@@ -11,6 +11,9 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
       named approver/escalation target;
     * `core.file.*.v1` — push `dashboard.changed` to the dashboard, because a
       file upload or archive moves the recent-highlights tile;
+    * `core.notification.failed.v1` — push `dashboard.changed` to the dashboard,
+      so an exhausted delivery attempt is visible rather than only in the audit
+      trail;
     * `work.*.v1` and `core.escalation.*.v1` — push `<entity>.changed` to the
       project board and any named person, plus `dashboard.changed` to the
       dashboard (task/board and overdue-work tiles);
@@ -38,6 +41,14 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
 
   def dispatch(%Event{type: "core.notification.requested.v1"} = event) do
     NotificationsHandler.handle_event(event)
+  end
+
+  # A failed send is written to the audit trail and is an operational signal, so
+  # it nudges the dashboard's tile invalidation like a file event (D6-adjacent,
+  # §6.4). The recipient's account id is not on the event, so there is no
+  # per-user push.
+  def dispatch(%Event{type: "core.notification.failed.v1"} = event) do
+    DashboardHandler.handle_event(event)
   end
 
   def dispatch(%Event{type: "core.approval." <> _} = event) do

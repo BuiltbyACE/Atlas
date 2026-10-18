@@ -8,6 +8,11 @@ defmodule AtlasOrchestrator.Dashboard.Handler do
   trail and so moves the recent-highlights tile, so on `core.file.uploaded.v1`
   and `core.file.deleted.v1` it pushes a generic `dashboard.changed` signal to
   `exec:dashboard` (ADR-009). Clients refetch the tiles from Go.
+
+  It also carries `core.notification.failed.v1` (emitted by the dispatcher once a
+  send exhausts its retries, §6.4/§7.4) with reason `notification.failed`, so a
+  failed delivery surfaces on the dashboard instead of being visible only in the
+  audit trail.
   """
 
   require Logger
@@ -19,7 +24,8 @@ defmodule AtlasOrchestrator.Dashboard.Handler do
 
   @reasons %{
     "core.file.uploaded.v1" => "file.uploaded",
-    "core.file.deleted.v1" => "file.deleted"
+    "core.file.deleted.v1" => "file.deleted",
+    "core.notification.failed.v1" => "notification.failed"
   }
 
   @doc "Handles one event. Types it does not know are ignored, not failed."

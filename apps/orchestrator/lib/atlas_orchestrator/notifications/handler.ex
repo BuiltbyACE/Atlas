@@ -6,11 +6,6 @@ defmodule AtlasOrchestrator.Notifications.Handler do
   transaction as the notification rows). On receipt it publishes a
   `notification.changed` signal to `user:{recipient_user_id}`, the recipient's
   *account* id (§7.5, §10.1), which is what a socket is addressed by (ADR-009).
-
-  Consumes `core.notification.failed.v1` when delivery attempts are exhausted;
-  because the event does not carry the recipient's account id, the handler nudges
-  the executive dashboard (`exec:dashboard`) with a `notification.failed` signal
-  so failures remain visible without requiring a per-user lookup.
   """
 
   require Logger
@@ -19,7 +14,6 @@ defmodule AtlasOrchestrator.Notifications.Handler do
   alias AtlasOrchestrator.Realtime
 
   @event_requested "core.notification.requested.v1"
-  @event_failed "core.notification.failed.v1"
 
   @doc """
   handle_event/2 is invoked by the outbox consumer's event router.
@@ -59,59 +53,7 @@ defmodule AtlasOrchestrator.Notifications.Handler do
     end
   end
 
-  def handle_event(%{type: @event_failed, payload: payload} = event, _meta) do
-    with {:ok, notification_id} <- extract_failed_notification_id(payload),
-         {:ok, occurred_at} <- extract_failed_occurred_at(event, payload) do
-      signal = Signals.notification_failed(notification_id, occurred_at)
-
-      case Realtime.broadcast("exec:dashboard", signal["type"], signal) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning("notifications.handler.broadcast_failed",
-            topic: "exec:dashboard",
-            event_type: @event_failed,
-            reason: inspect(reason)
-          )
-
-          :ok
-      end
-    else
-      {:error, reason} ->
-        Logger.warning("notifications.handler.skipping_event",
-          event_type: @event_failed,
-          reason: reason,
-          payload_keys: payload_keys(payload)
-        )
-
-        :ok
-    end
-  end
-
   def handle_event(_event, _meta), do: :ok
-
-  defp extract_failed_occurred_at(%{occurred_at: at}, _payload) when not is_nil(at) do
-    {:ok, at}
-  end
-
-  defp extract_failed_occurred_at(_event, %{"failed_at" => at}) when is_binary(at) do
-    {:ok, at}
-  end
-
-  defp extract_failed_occurred_at(_event, %{failed_at: at}) when is_binary(at) do
-    {:ok, at}
-  end
-
-  defp extract_failed_occurred_at(_event, %{"occurred_at" => at}) when is_binary(at) do
-    {:ok, at}
-  end
-
-  defp extract_failed_occurred_at(_event, %{occurred_at: at}) when is_binary(at) do
-    {:ok, at}
-  end
-
-  defp extract_failed_occurred_at(_event, _payload), do: {:ok, nil}
 
   defp extract_recipient(%{"recipient_user_id" => id}) when is_binary(id) and id != "" do
     {:ok, id}
@@ -142,12 +84,6 @@ defmodule AtlasOrchestrator.Notifications.Handler do
   defp extract_occurred_at(%{"occurred_at" => at}) when is_binary(at), do: {:ok, at}
   defp extract_occurred_at(%{occurred_at: at}) when is_binary(at), do: {:ok, at}
   defp extract_occurred_at(_), do: {:ok, nil}
-
-  defp extract_failed_notification_id(%{"notification_id" => id}) when is_binary(id) and id != "" do
-    {:ok, id}
-  end
-
-  defp extract_failed_notification_id(_), do: {:error, "missing notification_id"}
 
   defp payload_keys(%{} = p) when is_map(p), do: Map.keys(p) |> Enum.map(&to_string/1)
   defp payload_keys(_), do: []

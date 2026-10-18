@@ -59,6 +59,31 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
     assert topic == "user:#{recipient}"
   end
 
+  test "a notification.failed event nudges the dashboard" do
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "core.notification.failed.v1",
+      seq: 4,
+      payload: %{
+        "recipient_person_id" => Ecto.UUID.generate(),
+        "notification_id" => Ecto.UUID.generate(),
+        "reason" => "smtp: connection timeout",
+        "failed_at" => "2026-10-18T10:00:00Z"
+      },
+      occurred_at: ~U[2026-10-18 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "exec:dashboard",
+      event: "dashboard.changed",
+      payload: payload
+    }
+
+    assert payload["reason"] == "notification.failed"
+  end
+
   test "an approval event is routed to the approvals handler" do
     event = %Event{
       id: Ecto.UUID.generate(),

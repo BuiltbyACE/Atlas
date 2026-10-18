@@ -22,9 +22,6 @@ defmodule AtlasOrchestrator.Notifications.Signals do
     }
   end
 
-  @doc """
-  Builds the payload for `notification.failed` sent to `exec:dashboard`.
-  """
   defp format_time(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   defp format_time(other) when is_binary(other), do: other
   defp format_time(_), do: DateTime.to_iso8601(DateTime.utc_now())
