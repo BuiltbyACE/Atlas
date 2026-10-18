@@ -147,9 +147,7 @@ defmodule AtlasOrchestrator.Notifications.Handler do
     {:ok, id}
   end
 
-  defp extract_failed_notification_id(%{notification_id: id}) when is_binary(id) and id != "" do
-    {:ok, id}
-  end
+  defp extract_failed_notification_id(_), do: {:error, "missing notification_id"}
 
   defp payload_keys(%{} = p) when is_map(p), do: Map.keys(p) |> Enum.map(&to_string/1)
   defp payload_keys(_), do: []
