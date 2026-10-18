@@ -25,7 +25,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={outfit.variable}>
-      <body className="min-h-screen bg-milk font-sans text-slate-900 antialiased">
+      <body
+        className="min-h-screen bg-milk font-sans text-slate-900 antialiased"
+        suppressHydrationWarning
+      >
         {children}
       </body>
     </html>

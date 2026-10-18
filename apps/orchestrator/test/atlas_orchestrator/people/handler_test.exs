@@ -75,9 +75,7 @@ defmodule AtlasOrchestrator.People.HandlerTest do
 
     for type <- ["people.daily_report.due.v1", "people.daily_report.missed.v1"] do
       assert :ok =
-               Handler.handle_event(
-                 event(type, %{"report_id" => Ecto.UUID.generate()})
-               )
+               Handler.handle_event(event(type, %{"report_id" => Ecto.UUID.generate()}))
 
       assert_receive %Phoenix.Socket.Broadcast{
         topic: "exec:dashboard",
