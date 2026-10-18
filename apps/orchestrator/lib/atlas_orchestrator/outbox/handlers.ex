@@ -36,7 +36,7 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   @spec dispatch(Event.t()) :: :ok
   def dispatch(%Event{type: "core.system.hello.v1"} = event), do: handle_hello(event)
 
-  def dispatch(%Event{type: "core.notification.requested.v1"} = event) do
+  def dispatch(%Event{type: "core.notification.failed.v1"} = event) do
     NotificationsHandler.handle_event(event)
   end
 
