@@ -15,6 +15,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/ed25519jwt"
 	"github.com/safaristack/atlas/apps/api/internal/platform/routing"
 	"github.com/safaristack/atlas/apps/api/internal/seed"
+	"github.com/safaristack/atlas/apps/api/internal/systems"
 	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
@@ -67,8 +68,9 @@ func testDeps(t *testing.T) Deps {
 		// Mounting work and people ensures their routes are covered by the
 		// registry and permission-catalogue checks above. The stores are never
 		// called here (there is no database).
-		Work:   work.NewHandler(work.NewService(work.NewPGStore(nil), nil, nil, logger, nil), logger),
-		People: people.NewHandler(people.NewService(people.NewPGStore(nil), nil, logger, 0), logger),
+		Work:    work.NewHandler(work.NewService(work.NewPGStore(nil), nil, nil, logger, nil), logger),
+		People:  people.NewHandler(people.NewService(people.NewPGStore(nil), nil, logger, 0), logger),
+		Systems: systems.NewHandler(systems.NewService(systems.NewPGStore(nil), logger), logger),
 	}
 }
 

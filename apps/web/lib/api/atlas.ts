@@ -2147,3 +2147,352 @@ export function getExecutiveSummary(): Promise<ExecutiveSummary> {
     cache: "no-store",
   });
 }
+
+// ── systems (§8.6) ──────────────────────────────────────────────────────────
+
+/**
+ * The systems headline (`GET /api/v1/systems/overview`, §8.6). Every figure is
+ * measured by Go: failing and unprobed checks, the open incidents by severity,
+ * MTTA/MTTR over the last quarter, how often Atlas detected first, and what is
+ * about to expire. `availability_bp` is basis points (9900 = 99.00%).
+ */
+export interface SystemsOverview {
+  as_of: string;
+  systems_total: number;
+  systems_tier1: number;
+  systems_tier2: number;
+  systems_tier3: number;
+  checks_total: number;
+  checks_failing: number;
+  checks_warning: number;
+  checks_unprobed: number;
+  open_incidents: number;
+  open_sev1: number;
+  open_sev2: number;
+  open_incidents_by_severity: { severity: string; label: string; count: number }[];
+  incidents_30d: number;
+  detected_by_atlas_30d: number;
+  detected_by_client_30d: number;
+  mtta_seconds?: number;
+  mttr_seconds?: number;
+  reviews_outstanding: number;
+  expiring_count: number;
+  rotations_due_count: number;
+  availability: {
+    system_id: string;
+    ref: string;
+    name: string;
+    criticality: SystemCriticality | string;
+    passed: number;
+    total: number;
+    availability_bp: number;
+  }[];
+  expiry_warning_days: number[];
+}
+
+export const SYSTEM_TYPES = [
+  "website",
+  "web_app",
+  "api",
+  "mobile_backend",
+  "integration",
+  "background_job",
+  "database",
+] as const;
+export type SystemType = (typeof SYSTEM_TYPES)[number];
+
+export const SYSTEM_ENVIRONMENTS = ["prod", "staging"] as const;
+export type SystemEnvironment = (typeof SYSTEM_ENVIRONMENTS)[number];
+
+export const SYSTEM_CRITICALITIES = ["tier1", "tier2", "tier3"] as const;
+export type SystemCriticality = (typeof SYSTEM_CRITICALITIES)[number];
+
+export const SYSTEM_STATUSES = ["active", "retired"] as const;
+export type SystemStatus = (typeof SYSTEM_STATUSES)[number];
+
+export const CHECK_TYPES = [
+  "http_status",
+  "http_content",
+  "tcp",
+  "tls_expiry",
+  "dns_expiry",
+  "heartbeat",
+  "latency",
+  "dependency",
+] as const;
+export type CheckType = (typeof CHECK_TYPES)[number];
+
+export const CHECK_STATUSES = ["pass", "warn", "fail"] as const;
+export type CheckStatus = (typeof CHECK_STATUSES)[number];
+
+export const INCIDENT_SEVERITIES = ["sev1", "sev2", "sev3", "sev4"] as const;
+export type IncidentSeverity = (typeof INCIDENT_SEVERITIES)[number];
+
+export const INCIDENT_STATUSES = [
+  "open",
+  "acknowledged",
+  "mitigated",
+  "resolved",
+  "closed",
+] as const;
+export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
+
+/** One registered system (`systems.system`, §8.6). */
+export interface AtlasSystem {
+  id: string;
+  /** Human reference allocated by Go, e.g. `SYS-2026-0007`. */
+  ref: string;
+  name: string;
+  system_type: SystemType | string;
+  owner?: { id: string; name: string };
+  /** Set only when the system is client-hosted by us. */
+  client?: { id: string; name: string };
+  environment: SystemEnvironment | string;
+  criticality: SystemCriticality | string;
+  contract_ref?: string;
+  runbook_url?: string;
+  repository_url?: string;
+  description?: string;
+  status: SystemStatus | string;
+  /** Derived: a check's health is its latest result, never a stored counter. */
+  checks_total: number;
+  checks_failing: number;
+  checks_warning: number;
+  open_incidents: number;
+  /** Basis points over the last 30 days; absent when the system has no probes. */
+  availability_bp?: number;
+  /** Present only on the single-system read. Locations, never secrets (§8.6). */
+  credentials?: SystemCredential[];
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A credential record: where a credential is kept, never the credential. */
+export interface SystemCredential {
+  id: string;
+  label: string;
+  credential_kind: string;
+  /** Secrets-manager path, e.g. `sm://atlas/stripe`. */
+  store_path: string;
+  owner?: { id: string; name: string };
+  rotated_on?: string;
+  next_rotation_on?: string;
+  notes?: string;
+  active: boolean;
+  version: number;
+}
+
+/** One probe (`systems.check`, §8.6) with its latest result. */
+export interface SystemsCheck {
+  id: string;
+  system_id: string;
+  system_name: string;
+  system_criticality: SystemCriticality | string;
+  name: string;
+  check_type: CheckType | string;
+  target: string;
+  expect?: string;
+  interval_seconds: number;
+  timeout_seconds: number;
+  regions: string[];
+  warn_ms?: number;
+  fail_ms?: number;
+  /** Failures in a row before an incident opens (flap protection). */
+  failure_threshold: number;
+  heartbeat_window_seconds?: number;
+  active: boolean;
+  /** Absent when the check has never run — not `pass`. */
+  last_status?: CheckStatus | string;
+  last_at?: string;
+  last_latency_ms?: number;
+  consecutive_failures: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One probe outcome (`systems.check_result`, §8.6). */
+export interface SystemsCheckResult {
+  id: string;
+  check_id: string;
+  at: string;
+  status: CheckStatus | string;
+  latency_ms?: number;
+  detail?: string;
+  source: string;
+  region?: string;
+}
+
+/** An outage or degradation (`systems.incident`, §8.6). */
+export interface SystemsIncident {
+  id: string;
+  /** Human reference, e.g. `INC-2026-0031`. */
+  ref: string;
+  title: string;
+  severity: IncidentSeverity | string;
+  severity_label: string;
+  status: IncidentStatus | string;
+  detected_at: string;
+  detected_source: string;
+  acknowledged_at?: string;
+  mitigated_at?: string;
+  resolved_at?: string;
+  closed_at?: string;
+  commander?: { id: string; name: string };
+  client_impact?: string;
+  root_cause?: string;
+  summary?: string;
+  /** Set when a SEV1/SEV2 resolves: the post-incident review is owed. */
+  review_required: boolean;
+  review_at?: string;
+  /** The list projection: names of the systems the incident touched. */
+  system_names: string[];
+  /** Detail only. */
+  systems?: { system_id: string; ref: string; name: string; criticality: string }[];
+  timeline?: {
+    id: string;
+    at: string;
+    actor?: { id: string; name: string };
+    entry_type: string;
+    note: string;
+  }[];
+  actions?: {
+    id: string;
+    title: string;
+    owner?: { id: string; name: string };
+    due_on?: string;
+    status: string;
+    task_id?: string;
+    version: number;
+    created_at: string;
+    updated_at: string;
+  }[];
+  /** Derived from the timestamps, so they always agree with them. */
+  mtta_seconds?: number;
+  mttr_seconds?: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Something about to lapse (`GET /api/v1/systems/expiring`, §8.6). */
+export interface SystemsExpiry {
+  kind: "domain" | "certificate" | "credential" | string;
+  id: string;
+  name: string;
+  expires_on: string;
+  days_out: number;
+  auto_renew: boolean;
+  /** The tightest band it falls in: 7, 14, 30, or 0 beyond every band. */
+  warning_band: number;
+  system?: { id: string; name: string };
+  owner?: { id?: string; name: string };
+}
+
+export type SystemsListQuery = {
+  type?: string;
+  environment?: string;
+  criticality?: string;
+  status?: string;
+  owner_person_id?: string;
+  organization_id?: string;
+  unhealthy?: boolean;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type SystemsCheckListQuery = {
+  system_id?: string;
+  type?: string;
+  status?: string;
+  active?: boolean;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type SystemsIncidentListQuery = {
+  severity?: string;
+  status?: string;
+  system_id?: string;
+  commander_person_id?: string;
+  open?: boolean;
+  review_required?: boolean;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export function getSystemsOverview(): Promise<SystemsOverview> {
+  return apiFetch<SystemsOverview>("/api/v1/systems/overview", {
+    cache: "no-store",
+  });
+}
+
+export function listSystems(
+  query: SystemsListQuery = {},
+): Promise<Page<AtlasSystem>> {
+  return apiFetch<Page<AtlasSystem>>("/api/v1/systems", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Single system read; unlike the list, it carries the credential records. */
+export function getSystem(id: string): Promise<AtlasSystem> {
+  return apiFetch<AtlasSystem>(`/api/v1/systems/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listChecks(
+  query: SystemsCheckListQuery = {},
+): Promise<Page<SystemsCheck>> {
+  return apiFetch<Page<SystemsCheck>>("/api/v1/systems/checks", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function listCheckResults(
+  checkId: string,
+  query: { limit?: number; cursor?: string } = {},
+): Promise<Page<SystemsCheckResult>> {
+  return apiFetch<Page<SystemsCheckResult>>(
+    `/api/v1/systems/checks/${checkId}/results`,
+    { query, cache: "no-store" },
+  );
+}
+
+export function listIncidents(
+  query: SystemsIncidentListQuery = {},
+): Promise<Page<SystemsIncident>> {
+  return apiFetch<Page<SystemsIncident>>("/api/v1/systems/incidents", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Single incident read; carries the systems, timeline and follow-up actions. */
+export function getIncident(id: string): Promise<SystemsIncident> {
+  return apiFetch<SystemsIncident>(`/api/v1/systems/incidents/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listExpiring(
+  withinDays?: number,
+): Promise<{ items: SystemsExpiry[]; within_days: number; expiry_warning_days: number[] }> {
+  return apiFetch<{
+    items: SystemsExpiry[];
+    within_days: number;
+    expiry_warning_days: number[];
+  }>("/api/v1/systems/expiring", {
+    query: { within_days: withinDays },
+    cache: "no-store",
+  });
+}

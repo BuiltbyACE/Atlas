@@ -32,6 +32,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/httpx"
 	"github.com/safaristack/atlas/apps/api/internal/platform/routing"
 	"github.com/safaristack/atlas/apps/api/internal/settings"
+	"github.com/safaristack/atlas/apps/api/internal/systems"
 	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
@@ -79,6 +80,9 @@ type Deps struct {
 	// receivables, project profitability, budgets and spending); mounted when
 	// present.
 	Finance *finance.Handler
+	// Systems is the Phase 5 systems observability surface (the register, the
+	// checks watching it, incidents, and what expires); mounted when present.
+	Systems *systems.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -162,6 +166,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Finance != nil {
 		registerFinance(reg, d.Finance)
+	}
+
+	if d.Systems != nil {
+		registerSystems(reg, d.Systems)
 	}
 
 	reg.Mount(r, gate)
@@ -544,6 +552,41 @@ func registerFinance(reg *routing.Registry, h *finance.Handler) {
 		"Record a standing vendor cost", h.CreateRecurringCost)
 	reg.Gated("finance.recurring_cost.manage", http.MethodPut, "/api/v1/finance/recurring-costs/{id}",
 		"Edit a standing vendor cost", h.UpdateRecurringCost)
+}
+
+// registerSystems declares the Phase 5 systems observability surface (§8.6):
+// what we run, the checks watching it, incidents, and what expires. This pass
+// is read-only; the register and incident lifecycle are a later pass, so every
+// route here is a GET.
+//
+// Static segments are declared before /{id} so chi matches them first: /systems
+// /overview, /checks, /incidents and /expiring are collections, not ids.
+func registerSystems(reg *routing.Registry, h *systems.Handler) {
+	// The headline, the register and what expires are all things you need
+	// systems.system.read to see.
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/overview",
+		"Systems headline: what is up, what is down, how fast we respond", h.Overview)
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/expiring",
+		"Domains, certificates and credential rotations about to lapse", h.Expiring)
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems",
+		"List registered systems with their derived health", h.ListSystems)
+
+	// Checks and their results.
+	reg.Gated("systems.check.read", http.MethodGet, "/api/v1/systems/checks",
+		"List health checks with their latest result", h.ListChecks)
+	reg.Gated("systems.check.read", http.MethodGet, "/api/v1/systems/checks/{id}/results",
+		"Recent results for a check", h.ListCheckResults)
+
+	// Incidents.
+	reg.Gated("systems.incident.read", http.MethodGet, "/api/v1/systems/incidents",
+		"List incidents", h.ListIncidents)
+	reg.Gated("systems.incident.read", http.MethodGet, "/api/v1/systems/incidents/{id}",
+		"Get an incident with its systems, timeline and follow-up actions", h.GetIncident)
+
+	// A system and its credential records. Last, so it does not shadow the
+	// static collection routes above.
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/{id}",
+		"Get a system with its credential records (locations, never secrets)", h.GetSystem)
 }
 
 // registerWork declares the Phase 2 work-orchestration surface (§8.2).

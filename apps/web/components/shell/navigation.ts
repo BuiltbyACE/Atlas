@@ -56,11 +56,16 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Finance", href: "/finance", icon: "card", section: "Revenue", keywords: "cash receivables expenses invoices budgets payments profitability recurring" },
     ],
   },
+  {
+    title: "Platform",
+    links: [
+      { label: "Systems", href: "/systems", icon: "server", section: "Platform", keywords: "monitoring uptime incidents checks domains certificates credentials health" },
+    ],
+  },
 ];
 
 /** Modules on the roadmap, shown dimmed with a "Soon" tag. */
 export const COMING_NEXT: Array<{ label: string; icon: IconName }> = [
-  { label: "Systems", icon: "server" },
   { label: "Units", icon: "building" },
   { label: "Intel", icon: "pie" },
 ];

@@ -41,6 +41,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/logging"
 	"github.com/safaristack/atlas/apps/api/internal/platform/telemetry"
 	"github.com/safaristack/atlas/apps/api/internal/settings"
+	"github.com/safaristack/atlas/apps/api/internal/systems"
 	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
@@ -196,6 +197,12 @@ func run() error {
 	financeService.SetSettings(settingsService)
 	financeHandler := finance.NewHandler(financeService, logger)
 
+	// Systems is the Phase 5 register of everything we run and its health
+	// (§8.6). This pass is the read model: the monitoring probes live in
+	// atlas-worker and write what this surface reads.
+	systemsService := systems.NewService(systems.NewPGStore(pool), logger)
+	systemsHandler := systems.NewHandler(systemsService, logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -215,6 +222,7 @@ func run() error {
 		CRM:          crmHandler,
 		Contracts:    contractsHandler,
 		Finance:      financeHandler,
+		Systems:      systemsHandler,
 	})
 
 	srv := &http.Server{
