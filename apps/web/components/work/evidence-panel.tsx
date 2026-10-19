@@ -1,33 +1,26 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState, type FormEvent } from "react";
+import { useState } from "react";
 
-import { Button, Field, TextInput } from "@/components/form";
-import { Badge, Card, EmptyState, ProblemNotice } from "@/components/ui";
-import {
-  addProjectEvidence,
-  addTaskEvidence,
-  downloadFile,
-  uploadFile,
-  verifyEvidence,
-  type Evidence,
-} from "@/lib/api/atlas";
-import { formatDateTime, humanise, shortId } from "@/lib/format";
+import { Button } from "@/components/form";
+import { Icon } from "@/components/icons";
+import { useToast } from "@/components/toast";
+import { Badge, Card, EmptyState, IconTile, ProblemNotice } from "@/components/ui";
+import { downloadFile, verifyEvidence, type Evidence } from "@/lib/api/atlas";
+import { formatDateTime, humanise } from "@/lib/format";
 import { useMutation } from "@/lib/use-mutation";
+
+import { EVIDENCE_LABELS } from "./board";
+import { EvidenceForm } from "./evidence-form";
 
 /**
  * Evidence for a task or a project (blueprint §6.5, §8.2).
  *
- * Uploading is two steps: Go hands out a pre-signed ticket (`POST /api/v1/files`)
- * and the bytes go straight to object storage, then Go is told the object is in
- * place and the branch attaches the resulting file as evidence. Bytes never pass
- * through the API. A different person verifies the evidence (separation of
- * duties, §3.3) - Go rejects self-verification with 409.
- *
- * Not everything is a file: a provider (GitHub's merged PR, ADR-018) attaches
- * evidence by `reference`, with no `file_id` to download. The subject of a row
- * is therefore rendered by `EvidenceSubject`, not assumed to be a file.
+ * Proof is usually a reference - a merged PR (GitHub records those itself,
+ * ADR-018), a test run, a client sign-off - or an uploaded file. A different
+ * person verifies it (separation of duties, §3.3): Go refuses self-verification
+ * with 409 and the reason is shown as Go gave it.
  */
 export function EvidencePanel({
   taskId,
@@ -41,44 +34,19 @@ export function EvidencePanel({
   title?: string;
 }) {
   const router = useRouter();
+  const notify = useToast();
   const { busy, problem, run } = useMutation();
   const [verifying, setVerifying] = useState<string | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const file = fileInput.current?.files?.[0];
-    if (!file) return;
-    const data = new FormData(form);
-
-    const attached = await run(async () => {
-      const record = await uploadFile(file, {
-        entity_type: taskId ? "work.task" : "work.project",
-        entity_id: taskId ?? projectId,
-      });
-      const body = {
-        file_id: record.id,
-        kind: String(data.get("kind") ?? "").trim(),
-        description: String(data.get("description") ?? ""),
-      };
-      return taskId
-        ? addTaskEvidence(taskId, body)
-        : addProjectEvidence(projectId as string, body);
-    });
-
-    if (attached) {
-      form.reset();
-      if (fileInput.current) fileInput.current.value = "";
-      router.refresh();
-    }
-  }
+  const [adding, setAdding] = useState(false);
 
   async function onVerify(id: string) {
     setVerifying(id);
     const verified = await run(() => verifyEvidence(id));
     setVerifying(null);
-    if (verified) router.refresh();
+    if (verified) {
+      notify("Evidence verified");
+      router.refresh();
+    }
   }
 
   async function onDownload(fileId: string) {
@@ -89,42 +57,84 @@ export function EvidencePanel({
   return (
     <Card
       title={title}
-      description="Files and links that prove the work. A reviewer verifies them."
+      description="Links and files that prove the work. Someone other than the submitter verifies them."
+      actions={
+        !adding && (
+          <Button size="sm" variant="secondary" onClick={() => setAdding(true)}>
+            <Icon name="paperclip" className="h-4 w-4" />
+            Attach evidence
+          </Button>
+        )
+      }
     >
       {problem && (
         <div className="mb-3">
-          <ProblemNotice error={problem} title="Evidence change failed" />
+          <ProblemNotice error={problem} title="That didn’t go through" />
+        </div>
+      )}
+
+      {adding && (
+        <div className="mb-4 rounded-[14px] border border-line bg-[#FAFBFC] p-4">
+          <EvidenceForm
+            taskId={taskId}
+            projectId={projectId}
+            onCancel={() => setAdding(false)}
+            onAttached={() => {
+              setAdding(false);
+              notify("Evidence attached");
+              router.refresh();
+            }}
+          />
         </div>
       )}
 
       {evidence.length === 0 ? (
-        <EmptyState>Nothing attached yet.</EmptyState>
+        !adding && (
+          <EmptyState icon="paperclip" iconTone="info" title="Nothing attached yet">
+            {taskId
+              ? "A task moves to Done once evidence is attached: a merged pull request, a document, a test result or a client approval."
+              : "Attach the documents and sign-offs that prove this project delivered."}
+          </EmptyState>
+        )
       ) : (
-        <ul className="mb-4 space-y-2">
+        <ul className="flex flex-col gap-2.5">
           {evidence.map((item) => {
             const fileId = item.file_id;
+            const label =
+              EVIDENCE_LABELS[(item.evidence_type ?? "file") as keyof typeof EVIDENCE_LABELS] ??
+              humanise(item.evidence_type ?? "evidence");
             return (
               <li
                 key={item.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2"
+                className="flex flex-wrap items-center gap-3 rounded-[14px] border border-line px-3.5 py-3"
               >
-                <div className="min-w-0">
-                  <p className="text-sm text-slate-800">
-                    {item.kind ? <span className="font-medium">{item.kind} · </span> : null}
-                    <EvidenceSubject item={item} />
+                <IconTile
+                  icon={fileId ? "document" : "link"}
+                  tone={item.verified_at ? "success" : "info"}
+                  size="sm"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-night">
+                    {label}
+                    {item.kind && <span className="font-normal text-muted"> · {item.kind}</span>}
                   </p>
+                  <EvidenceSubject item={item} />
                   {item.description && (
-                    <p className="text-xs text-slate-500">{item.description}</p>
+                    <p className="text-[13px] text-muted">{item.description}</p>
                   )}
-                  <p className="mt-0.5 text-xs text-slate-400">
+                  <p className="mt-0.5 text-xs text-[#7A879C]">
                     Added {formatDateTime(item.created_at)}
+                    {!item.uploader_person_id && " by an integration"}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
                   {item.verified_at ? (
-                    <Badge tone="success">verified</Badge>
+                    <Badge tone="success" dot>
+                      Verified
+                    </Badge>
                   ) : (
                     <Button
+                      size="sm"
                       variant="secondary"
                       disabled={busy && verifying === item.id}
                       onClick={() => onVerify(item.id)}
@@ -133,7 +143,7 @@ export function EvidencePanel({
                     </Button>
                   )}
                   {fileId && (
-                    <Button variant="ghost" onClick={() => onDownload(fileId)}>
+                    <Button size="sm" variant="ghost" onClick={() => onDownload(fileId)}>
                       Download
                     </Button>
                   )}
@@ -143,29 +153,6 @@ export function EvidencePanel({
           })}
         </ul>
       )}
-
-      <form onSubmit={onSubmit} className="space-y-3 border-t border-slate-100 pt-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Field label="File" htmlFor="evidence-file">
-            <input
-              id="evidence-file"
-              ref={fileInput}
-              type="file"
-              required
-              className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
-            />
-          </Field>
-          <Field label="Kind" hint="optional" htmlFor="evidence-kind">
-            <TextInput id="evidence-kind" name="kind" placeholder="pull_request, document…" />
-          </Field>
-          <Field label="Note" hint="optional" htmlFor="evidence-note">
-            <TextInput id="evidence-note" name="description" />
-          </Field>
-        </div>
-        <Button type="submit" disabled={busy}>
-          {busy ? "Uploading…" : "Attach evidence"}
-        </Button>
-      </form>
     </Card>
   );
 }
@@ -175,26 +162,20 @@ export function EvidencePanel({
  * `reference` (a pull request URL, say) that is linked when it looks like one.
  */
 function EvidenceSubject({ item }: { item: Evidence }) {
-  if (item.file_id) {
-    return (
-      <span className="font-mono text-xs text-slate-500">file {shortId(item.file_id)}</span>
-    );
-  }
   if (item.reference) {
     return /^https?:\/\//i.test(item.reference) ? (
       <a
         href={item.reference}
         target="_blank"
         rel="noreferrer"
-        className="text-xs text-sky-700 underline decoration-sky-300 underline-offset-2"
+        className="block truncate text-[13px] text-atlas-ink underline decoration-atlas/30 underline-offset-2"
       >
         {item.reference}
       </a>
     ) : (
-      <span className="font-mono text-xs text-slate-500">{item.reference}</span>
+      <p className="truncate font-mono text-xs text-muted">{item.reference}</p>
     );
   }
-  return (
-    <span className="text-xs text-slate-500">{humanise(item.evidence_type ?? "evidence")}</span>
-  );
+  if (item.file_id) return <p className="text-[13px] text-muted">Uploaded file</p>;
+  return null;
 }

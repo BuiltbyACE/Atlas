@@ -104,6 +104,8 @@ export const PRIORITIES: Priority[] = ["low", "medium", "high", "urgent"];
 
 export interface Project {
   id: string;
+  /** Human reference allocated by Go, e.g. `PRJ-2026-007` (D6). */
+  ref?: string;
   name: string;
   description?: string;
   project_type?: string;
@@ -113,6 +115,8 @@ export interface Project {
   started_at?: string;
   due_at?: string;
   completed_at?: string;
+  /** D7: true when this project's type requires timesheets (advisory). */
+  timesheet_required?: boolean;
   version: number;
   created_at: string;
   updated_at: string;
@@ -134,6 +138,8 @@ export interface Milestone {
 
 export interface Task {
   id: string;
+  /** Human reference allocated by Go, e.g. `PRJ-2026-007/T-0142` (D6). */
+  ref?: string;
   project_id: string;
   milestone_id?: string;
   parent_id?: string;
@@ -241,11 +247,31 @@ export interface TaskBody {
   actual_hours?: number | null;
 }
 
+/**
+ * Attach evidence. A `file` (the default type) names an uploaded `file_id`;
+ * every other §6.5 type carries an external `reference` instead (a PR URL, a
+ * commit sha, a test-run link). Go validates the pairing.
+ */
 export interface EvidenceBody {
-  file_id: string;
+  evidence_type?: EvidenceType;
+  file_id?: string;
+  reference?: string;
   kind?: string;
   description?: string;
 }
+
+/** The §6.5 evidence types, in the order the UI offers them. */
+export const EVIDENCE_TYPES = [
+  "pull_request",
+  "url",
+  "test_run",
+  "client_approval",
+  "git_commit",
+  "payment_reference",
+  "file",
+] as const;
+
+export type EvidenceType = (typeof EVIDENCE_TYPES)[number];
 
 // ── work: queries ───────────────────────────────────────────────────────────
 
@@ -391,6 +417,46 @@ export function createTask(projectId: string, body: TaskBody): Promise<Task> {
     method: "POST",
     body,
   });
+}
+
+/**
+ * The full replacement body for `PUT /api/v1/work/tasks/{id}` from a task as
+ * read, with `patch` applied. PUT replaces the record, so a field left out is
+ * cleared; this keeps every field a quick edit (a status move, a new owner)
+ * does not mean to touch.
+ */
+export function taskBody(task: Task, patch: Partial<TaskBody> = {}): TaskBody {
+  return {
+    title: task.title,
+    description: task.description ?? "",
+    milestone_id: task.milestone_id ?? null,
+    parent_id: task.parent_id ?? null,
+    assignee_person_id: task.assignee_person_id ?? null,
+    status: task.status,
+    priority: task.priority,
+    due_at: task.due_at ?? null,
+    estimate_hours: task.estimate_hours ?? null,
+    actual_hours: task.actual_hours ?? null,
+    ...patch,
+  };
+}
+
+/** The same for `PUT /api/v1/work/projects/{id}`. */
+export function projectBody(
+  project: Project,
+  patch: Partial<ProjectBody> = {},
+): ProjectBody {
+  return {
+    name: project.name,
+    description: project.description ?? "",
+    project_type: project.project_type ?? "",
+    status: project.status,
+    owner_person_id: project.owner_person_id ?? null,
+    department_id: project.department_id ?? null,
+    started_at: project.started_at ?? null,
+    due_at: project.due_at ?? null,
+    ...patch,
+  };
 }
 
 export function updateTask(
@@ -732,6 +798,383 @@ export function listSessions(
   });
 }
 
+// ── CRM (§8.1) ──────────────────────────────────────────────────────────────
+
+/**
+ * Lead lifecycle state (§8.1). `openLead` on the Go side decides which of these
+ * count as still-open; the UI just offers them as filters.
+ */
+export const LEAD_STATUSES = [
+  "new",
+  "assigned",
+  "contacted",
+  "qualified",
+  "nurture",
+  "disqualified",
+  "converted",
+] as const;
+
+export type LeadStatus = (typeof LEAD_STATUSES)[number];
+
+/** Lead triage priority (§8.1) - note `normal`, not work's `medium`. */
+export const CRM_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+
+export type CrmPriority = (typeof CRM_PRIORITIES)[number];
+
+/** A configured origin for leads (`crm.lead_sources`, §8.1 [CONFIG]). */
+export interface LeadSource {
+  key: string;
+  label: string;
+}
+
+/** A configured opportunity stage (`crm.pipeline_stages`, §8.1 [CONFIG]). */
+export interface PipelineStage {
+  key: string;
+  label: string;
+  is_won: boolean;
+  is_lost: boolean;
+}
+
+export interface CrmOrganization {
+  id: string;
+  name: string;
+  industry?: string;
+  size?: string;
+  location?: string;
+  kra_pin?: string;
+  status: string;
+  owner_person_id?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CrmContact {
+  id: string;
+  organization_id?: string;
+  name: string;
+  role?: string;
+  phones: string[];
+  emails: string[];
+  whatsapp_number?: string;
+  consent_marketing: boolean;
+  consent_marketing_at?: string;
+  consent_marketing_source?: string;
+  consent_whatsapp: boolean;
+  consent_whatsapp_at?: string;
+  consent_call_recording: boolean;
+  consent_call_recording_at?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Lead {
+  id: string;
+  /** Human reference allocated by Go, e.g. `LEAD-2026-0042` (D6). */
+  ref: string;
+  source_key: string;
+  source_detail?: string;
+  organization_id?: string;
+  contact_id?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  need_summary?: string;
+  /** Minor units with `currency` (ADR-010). */
+  estimated_value_minor?: number;
+  currency: string;
+  priority: CrmPriority | string;
+  owner_person_id?: string;
+  status: LeadStatus | string;
+  next_action?: string;
+  next_action_due_at?: string;
+  qualification_notes?: string;
+  lost_reason?: string;
+  converted_opportunity_id?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Opportunity {
+  id: string;
+  /** Human reference allocated by Go, e.g. `OPP-2026-0011`. */
+  ref: string;
+  organization_id?: string;
+  title: string;
+  /** Minor units with `currency` (ADR-010). */
+  value_minor?: number;
+  currency: string;
+  probability?: number;
+  stage_key: string;
+  expected_close_at?: string;
+  owner_person_id?: string;
+  lost_reason?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CrmInteraction {
+  id: string;
+  interaction_type: string;
+  direction: string;
+  contact_id?: string;
+  lead_id?: string;
+  opportunity_id?: string;
+  occurred_at: string;
+  duration_minutes?: number;
+  outcome: string;
+  summary?: string;
+  next_action?: string;
+  next_action_due_at?: string;
+  recording_file_id?: string;
+  recorded_by: string;
+  version: number;
+  created_at: string;
+}
+
+export interface Followup {
+  id: string;
+  lead_id?: string;
+  opportunity_id?: string;
+  owner_person_id: string;
+  due_at: string;
+  channel: string;
+  reason: string;
+  status: string;
+  outcome?: string;
+  completed_at?: string;
+  version: number;
+  created_at: string;
+}
+
+/** One pipeline stage's open-deal roll-up (`GET /api/v1/crm/pipeline`). */
+export interface PipelineStageTotal {
+  stage_key: string;
+  label: string;
+  count: number;
+  /** Minor units. */
+  value_minor: number;
+}
+
+export interface PipelineSummary {
+  stages: PipelineStageTotal[];
+  /** Sum of the stages' open value, minor units. */
+  open_value_minor: number;
+  open_opportunities: number;
+}
+
+export type LeadListQuery = {
+  status?: string;
+  source_key?: string;
+  owner_person_id?: string;
+  organization_id?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type OpportunityListQuery = {
+  stage_key?: string;
+  owner_person_id?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type OrganizationListQuery = {
+  /** Free-text name search handled by Go. */
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type ContactListQuery = {
+  organization_id?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type FollowupListQuery = {
+  status?: string;
+  owner_person_id?: string;
+  lead_id?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type InteractionListQuery = {
+  lead_id?: string;
+  opportunity_id?: string;
+  contact_id?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export function listLeadSources(): Promise<LeadSource[]> {
+  return apiFetch<{ items: LeadSource[] }>("/api/v1/crm/lead-sources", {
+    cache: "no-store",
+  }).then((body) => body.items);
+}
+
+export function listPipelineStages(): Promise<PipelineStage[]> {
+  return apiFetch<{ items: PipelineStage[] }>("/api/v1/crm/pipeline-stages", {
+    cache: "no-store",
+  }).then((body) => body.items);
+}
+
+export function getPipeline(): Promise<PipelineSummary> {
+  return apiFetch<PipelineSummary>("/api/v1/crm/pipeline", { cache: "no-store" });
+}
+
+export function listLeads(query: LeadListQuery = {}): Promise<Page<Lead>> {
+  return apiFetch<Page<Lead>>("/api/v1/crm/leads", { query, cache: "no-store" });
+}
+
+export function listOpportunities(
+  query: OpportunityListQuery = {},
+): Promise<Page<Opportunity>> {
+  return apiFetch<Page<Opportunity>>("/api/v1/crm/opportunities", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function listOrganizations(
+  query: OrganizationListQuery = {},
+): Promise<Page<CrmOrganization>> {
+  return apiFetch<Page<CrmOrganization>>("/api/v1/crm/organizations", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function listContacts(query: ContactListQuery = {}): Promise<Page<CrmContact>> {
+  return apiFetch<Page<CrmContact>>("/api/v1/crm/contacts", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function listFollowups(query: FollowupListQuery = {}): Promise<Page<Followup>> {
+  return apiFetch<Page<Followup>>("/api/v1/crm/followups", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function listInteractions(
+  query: InteractionListQuery = {},
+): Promise<Page<CrmInteraction>> {
+  return apiFetch<Page<CrmInteraction>>("/api/v1/crm/interactions", {
+    query,
+    cache: "no-store",
+  });
+}
+
+// ── contracts (§8.3) ────────────────────────────────────────────────────────
+
+/** Contract lifecycle state (§8.3), in the order the UI offers as filters. */
+export const CONTRACT_STATUSES = [
+  "draft",
+  "internal_review",
+  "approved",
+  "sent",
+  "signed",
+  "active",
+  "renewal_due",
+  "renewed",
+  "completed",
+  "terminated",
+] as const;
+
+export type ContractStatus = (typeof CONTRACT_STATUSES)[number];
+
+/** The commercial shape of an agreement (§8.3). */
+export const CONTRACT_TYPES = [
+  "fixed_price_project",
+  "retainer",
+  "support_sla",
+  "licence",
+  "hosting",
+] as const;
+
+export type ContractType = (typeof CONTRACT_TYPES)[number];
+
+export interface Contract {
+  id: string;
+  /** Human reference allocated by Go, e.g. `CTR-2026-007`. */
+  ref: string;
+  organization_id: string;
+  opportunity_id?: string;
+  contract_type: ContractType | string;
+  status: ContractStatus | string;
+  /**
+   * Minor units with `currency`. Omitted entirely when the viewer lacks
+   * `contracts.contract_value.sensitive.read`; `undefined` is not zero.
+   */
+  value_minor?: number;
+  currency: string;
+  start_at?: string;
+  end_at?: string;
+  payment_terms?: string;
+  renewal_terms?: string;
+  governing_docs: unknown;
+  signatories: unknown;
+  signed_at?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContractMilestone {
+  id: string;
+  contract_id: string;
+  title: string;
+  due_at?: string;
+  amount_minor?: number;
+  currency: string;
+  project_milestone_id?: string;
+  version: number;
+}
+
+export interface ContractObligation {
+  id: string;
+  contract_id: string;
+  party: string;
+  description: string;
+  due_at?: string;
+  recurrence?: string;
+  status: string;
+  owner_person_id?: string;
+  version: number;
+}
+
+export type ContractListQuery = {
+  status?: string;
+  organization_id?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export function listContracts(query: ContractListQuery = {}): Promise<Page<Contract>> {
+  return apiFetch<Page<Contract>>("/api/v1/contracts", { query, cache: "no-store" });
+}
+
+export function listContractMilestones(id: string): Promise<ContractMilestone[]> {
+  return apiFetch<{ items: ContractMilestone[] }>(
+    `/api/v1/contracts/${id}/milestones`,
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+export function listContractObligations(id: string): Promise<ContractObligation[]> {
+  return apiFetch<{ items: ContractObligation[] }>(
+    `/api/v1/contracts/${id}/obligations`,
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
 // ── files (§6.5) - evidence attaches a stored file ──────────────────────────
 
 export interface FileRecord {
@@ -814,6 +1257,47 @@ export async function uploadFile(
   }
 
   return completeUpload(ticket.file_id);
+}
+
+// ── notifications (§6.4) ────────────────────────────────────────────────────
+
+/** One in-app notification for the caller (`GET /api/v1/notifications`). */
+export interface AtlasNotification {
+  id: string;
+  template?: string;
+  subject?: string;
+  body?: string;
+  critical: boolean;
+  status: string;
+  entity_type?: string;
+  entity_id?: string;
+  created_at: string;
+  read_at?: string;
+}
+
+export function listNotifications(
+  query: { limit?: number; cursor?: string } = {},
+): Promise<Page<AtlasNotification>> {
+  return apiFetch<Page<AtlasNotification>>("/api/v1/notifications", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function unreadNotificationCount(): Promise<number> {
+  return apiFetch<{ count: number }>("/api/v1/notifications/unread-count", {
+    cache: "no-store",
+  }).then((body) => body.count);
+}
+
+export function markNotificationRead(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/notifications/${id}/read`, { method: "POST" });
+}
+
+export function markAllNotificationsRead(): Promise<number> {
+  return apiFetch<{ marked: number }>("/api/v1/notifications/read-all", {
+    method: "POST",
+  }).then((body) => body.marked);
 }
 
 // ── dashboard (§8.8) ────────────────────────────────────────────────────────

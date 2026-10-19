@@ -1,0 +1,179 @@
+/*
+ * Atlas web - the blob button.
+ *
+ * From the "Blob Button" CodePen: four circles rise from below on hover and,
+ * through an SVG "goo" filter (#atlas-goo, mounted once by the app layout),
+ * melt into one fill. Colours come from custom properties so each variant is a
+ * few lines.
+ *
+ * Speed: the goo filter is a Gaussian blur, re-run on every frame of the
+ * transition. That is fine on a handful of large buttons. `.blob-btn--fast`
+ * (the sidebar) drops the filter entirely and animates `transform` only, so
+ * hovering down the sidebar is pure compositor work with no repaints.
+ */
+
+.blob-btn {
+  --blob-fg: #00204d;
+  --blob-fg-hover: #ffffff;
+  --blob-border: #00204d;
+  --blob-bg: #ffffff;
+  --blob-fill: #1a6cf5;
+  --blob-scale: 1.4;
+  --blob-time: 0.45s;
+  --blob-step: 0.08s;
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--blob-fg);
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.35s;
+}
+
+/* The outline sits above the fill so the edge stays crisp. */
+.blob-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 2px solid var(--blob-border);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.blob-btn:hover,
+.blob-btn:focus-visible,
+.blob-btn[aria-expanded="true"] {
+  color: var(--blob-fg-hover);
+}
+
+.blob-btn__inner {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  border-radius: inherit;
+  background: var(--blob-bg);
+}
+
+/* A separate wrapper: in Firefox the goo filter breaks overflow:hidden. */
+.blob-btn__blobs {
+  position: relative;
+  display: block;
+  height: 100%;
+  filter: url("#atlas-goo");
+}
+
+.blob-btn__blob {
+  position: absolute;
+  top: 2px;
+  width: 25%;
+  height: 100%;
+  border-radius: 100%;
+  background: var(--blob-fill);
+  transform: translate3d(0, 150%, 0) scale(var(--blob-scale));
+  transition: transform var(--blob-time);
+}
+
+.blob-btn__blob:nth-child(1) { left: 0; }
+.blob-btn__blob:nth-child(2) { left: 30%; transition-delay: var(--blob-step); }
+.blob-btn__blob:nth-child(3) { left: 60%; transition-delay: calc(var(--blob-step) * 2); }
+.blob-btn__blob:nth-child(4) { left: 90%; transition-delay: calc(var(--blob-step) * 3); }
+
+.blob-btn:hover .blob-btn__blob,
+.blob-btn:focus-visible .blob-btn__blob,
+.blob-btn[aria-expanded="true"] .blob-btn__blob {
+  transform: translateZ(0) scale(var(--blob-scale));
+}
+
+/* ── variants ─────────────────────────────────────────────────────────── */
+
+/* Action blue at rest, navy fill on hover (top bar "New"). */
+.blob-btn--primary {
+  --blob-fg: #ffffff;
+  --blob-border: #1a6cf5;
+  --blob-bg: #1a6cf5;
+  --blob-fill: #00204d;
+  box-shadow: 0 6px 16px rgba(26, 108, 245, 0.24);
+}
+
+/* White on the navy hero, action blue fill (hero "New task"). */
+.blob-btn--light {
+  --blob-fg: #00204d;
+  --blob-border: #ffffff;
+  --blob-bg: #ffffff;
+  --blob-fill: #1a6cf5;
+}
+
+/* Outlined on navy, white fill with navy text (hero secondary actions). */
+.blob-btn--on-navy {
+  --blob-fg: #ffffff;
+  --blob-fg-hover: #00204d;
+  --blob-border: rgba(255, 255, 255, 0.4);
+  --blob-bg: rgba(255, 255, 255, 0.06);
+  --blob-fill: #ffffff;
+}
+
+/* ── fast: the sidebar ────────────────────────────────────────────────── */
+
+.blob-btn--fast {
+  --blob-scale: 1.7; /* without the goo the circles need more overlap */
+  --blob-time: 0.22s;
+  --blob-step: 0.03s;
+  transition: color 0.15s;
+}
+
+.blob-btn--fast::before {
+  display: none;
+}
+
+.blob-btn--fast .blob-btn__inner {
+  contain: paint; /* keep the moving blobs from invalidating anything else */
+}
+
+.blob-btn--fast .blob-btn__blobs {
+  filter: none;
+}
+
+.blob-btn--fast .blob-btn__blob {
+  top: 0;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blob-btn,
+  .blob-btn__blob {
+    transition-duration: 0.01s !important;
+    transition-delay: 0s !important;
+  }
+}
+
+/* A sidebar row: left-aligned, the nav's own shape and type, a lighter navy
+   fill. Doubled class so it outranks the base rules regardless of CSS order. */
+.blob-btn.blob-btn--nav {
+  --blob-fg: #d5e1f5;
+  --blob-fg-hover: #ffffff;
+  --blob-bg: transparent;
+  --blob-fill: #12397a;
+  justify-content: flex-start;
+  gap: 12px;
+  width: 100%;
+  height: auto;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 11px;
+  font-size: 15px;
+  font-weight: 500;
+}

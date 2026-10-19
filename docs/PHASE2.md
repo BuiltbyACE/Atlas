@@ -41,6 +41,10 @@ tick an item only when its code, tests and migrations are in place.
 - [x] Wire router (`Deps.Work` → `registerWork`) + `cmd/atlas-api`
 - [x] Unit + DB integration tests (lifecycle, transitions, cycles, blockers,
       overdue filter, registry/permission-catalogue checks)
+- [x] "Done means evidenced" (§2 principle 5, §8.2): a move to `done` on a task
+      with no evidence is refused with `409 TASK_EVIDENCE_REQUIRED`, and a task
+      cannot be created as `done`. Per-task-type required evidence (§8.2
+      [CONFIG]) and "Done only from InReview" are not modelled yet
 
 ## 3. Evidence (`work.evidence`) — done
 
@@ -207,7 +211,11 @@ tick an item only when its code, tests and migrations are in place.
       5. raise one **L2** per person at/over the miss threshold, keyed
          `entity_type = 'person'` in the same `work.escalations` table and
          ladder as the task sweep (ADR-016), and resolve it when the count falls
-         back below
+         back below. An escalation someone resolved closes that episode: the
+         person is not re-escalated until a report is missed after the
+         resolution (`LastResolvedAt` on the work seam). Without it, resolving
+         by hand while still over the threshold re-raised a fresh copy on the
+         very next pass ("same reason raised 3x")
 - [x] Events `people.daily_report.due.v1` / `.missed.v1`
       (`internal/outbox/people.go`)
 - [x] `internal/people/notifier.go`: the line-manager notice via the

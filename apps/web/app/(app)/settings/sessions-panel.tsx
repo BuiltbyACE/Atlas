@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/form";
-import { Badge, Card, EmptyState } from "@/components/ui";
+import { Icon } from "@/components/icons";
+import { Badge, Card, EmptyState, IconTile } from "@/components/ui";
 import { ApiError } from "@/lib/api/client";
 import {
   getSessions,
@@ -88,48 +89,51 @@ export function SessionsPanel() {
       actions={
         <Button
           type="button"
+          size="sm"
           variant="secondary"
           onClick={signOutEverywhere}
           disabled={signingOutAll || count === 0}
         >
-          {signingOutAll ? "Signing out." : "Sign out everywhere"}
+          <Icon name="signOut" className="h-4 w-4" />
+          {signingOutAll ? "Signing out…" : "Sign out everywhere"}
         </Button>
       }
     >
       {problem && (
         <p
           role="alert"
-          className="border-b border-amber-100 bg-amber-50 px-5 py-2.5 text-sm text-amber-900"
+          className="mx-[22px] mb-3 rounded-control bg-[#FFF8EB] px-3.5 py-2.5 text-sm text-[#7A4300]"
         >
           {problem}
         </p>
       )}
 
       {sessions === null ? (
-        <p className="px-5 py-6 text-sm text-slate-500">Loading your sessions.</p>
+        <p className="px-[22px] pb-6 text-sm text-muted">Loading your sessions…</p>
       ) : sessions.length === 0 ? (
-        <div className="px-5 py-4">
-          <EmptyState>No active sessions.</EmptyState>
+        <div className="px-[22px] pb-[22px]">
+          <EmptyState icon="monitor" iconTone="info" title="No active sessions" />
         </div>
       ) : (
-        <ul className="divide-y divide-slate-100">
+        <ul className="border-t border-line">
           {sessions.map((session) => (
             <li
               key={session.id}
-              className="flex flex-wrap items-start justify-between gap-3 px-5 py-4"
+              className="flex flex-wrap items-start gap-3.5 border-t border-line px-[22px] py-4 first:border-t-0"
             >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-medium text-slate-800">
+              <IconTile icon="monitor" tone={session.current ? "success" : "info"} size="sm" />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate text-sm font-semibold text-night">
                     {session.user_agent || "Unknown device"}
                   </span>
-                  {session.current && <Badge tone="success">This device</Badge>}
+                  {session.current && <Badge tone="success" dot>This device</Badge>}
                 </div>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-[13px] text-muted">
                   {session.ip ? `${session.ip} · ` : ""}
                   last active {formatDateTime(session.last_seen_at)}
                 </p>
-                <p className="mt-0.5 text-xs text-slate-400">
+                <p className="mt-0.5 text-xs text-[#7A879C]">
                   signed in {formatDateTime(session.created_at)} · expires{" "}
                   {formatDateTime(session.expires_at)}
                 </p>
@@ -137,11 +141,12 @@ export function SessionsPanel() {
               {!session.current && (
                 <Button
                   type="button"
+                  size="sm"
                   variant="danger"
                   onClick={() => revoke(session.id)}
                   disabled={busyId === session.id}
                 >
-                  {busyId === session.id ? "Revoking." : "Revoke"}
+                  {busyId === session.id ? "Revoking…" : "Revoke"}
                 </Button>
               )}
             </li>

@@ -1,78 +1,106 @@
-import { Badge, Card, EmptyState, PageHeader, ProblemNotice, Table, Td, Th, statusTone } from "@/components/ui";
-import { getTodayReport, listDailyReports, type DailyReport, type Page } from "@/lib/api/atlas";
+import {
+  Badge,
+  Card,
+  DateBlock,
+  EmptyState,
+  PageHeader,
+  Table,
+  Td,
+  Th,
+  statusTone,
+} from "@/components/ui";
+import {
+  getTodayReport,
+  listDailyReports,
+  listTasks,
+  type DailyReport,
+  type Task,
+} from "@/lib/api/atlas";
 import { ApiError } from "@/lib/api/client";
-import { personDirectory } from "@/lib/directory";
-import { formatDateTime, formatDay, humanise, shortId } from "@/lib/format";
+import { requireUser } from "@/lib/auth/session";
+import { personDirectory, personName } from "@/lib/directory";
+import { dayParts, formatDay, statusLabel, today } from "@/lib/format";
 
-import { ReportForm } from "./report-form";
+import { DailyReportWorkspace } from "./report-form";
 
 /**
- * Daily reports (blueprint §8.5). The caller files their own report for today;
- * the same form updates it if it already exists (`GET /api/v1/daily-reports/
- * today` 404s until then, which is expected, not an error).
- *
- * A recent-reports read needs `people.daily_report.read`; when the viewer does
- * not hold it the section is simply omitted.
+ * Daily reports (blueprint §8.5; prototype 08). The caller files their own
+ * report for today; the same form updates it if it already exists (`GET
+ * /api/v1/daily-reports/today` 404s until then, which is expected, not an
+ * error). Beside it: the caller's open tasks to report against, and their
+ * recent reports. Below, the team's reports for viewers who may read them
+ * (`people.daily_report.read`).
  */
 
 export const dynamic = "force-dynamic";
 
+const OPEN = new Set(["todo", "in_progress", "blocked", "review"]);
+
+/** A read that may be refused: 403/404 become `null`, anything else throws. */
+async function maybe<T>(promise: Promise<T>): Promise<T | null> {
+  try {
+    return await promise;
+  } catch (error) {
+    if (error instanceof ApiError) return null;
+    throw error;
+  }
+}
+
 export default async function DailyReportsPage() {
-  let todayReport: DailyReport | null = null;
-  try {
-    todayReport = await getTodayReport();
-  } catch (error) {
-    // 404 means "not filed yet" - the form is what we want to show.
-    if (!(error instanceof ApiError && error.status === 404)) {
-      if (!(error instanceof ApiError)) throw error;
-    }
-  }
+  const user = await requireUser();
+  const me = user.person_id;
 
-  let recent: DailyReport[] = [];
-  let recentRefused = false;
-  try {
-    const page: Page<DailyReport> = await listDailyReports({ limit: 30 });
-    recent = page.items;
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 403) {
-      recentRefused = true;
-    } else if (!(error instanceof ApiError)) {
-      throw error;
-    }
-  }
+  const [todayReport, mine, team, myTasks] = await Promise.all([
+    maybe(getTodayReport()),
+    me ? maybe(listDailyReports({ reporter_person_id: me, limit: 7 })) : Promise.resolve(null),
+    maybe(listDailyReports({ limit: 30 })),
+    me ? maybe(listTasks({ assignee_person_id: me, limit: 100 })) : Promise.resolve(null),
+  ]);
 
-  const names = recentRefused ? new Map<string, string>() : await personDirectory();
+  const openMine: Task[] = (myTasks?.items ?? []).filter((task) => OPEN.has(task.status));
+  const unowned =
+    openMine.length === 0
+      ? await maybe(listTasks({ limit: 200 })).then((page) =>
+          page ? page.items.filter((t) => OPEN.has(t.status) && !t.assignee_person_id).length : null,
+        )
+      : null;
+
+  const others = (team?.items ?? []).filter((report) => report.reporter_person_id !== me);
+  const names = others.length > 0 ? await personDirectory() : new Map<string, string>();
+  const recent = (mine?.items ?? []).filter((report) => report.submitted_at);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Daily report"
-        description="What moved, what is blocked and what is next — filed in one place (blueprint §8.5)."
+        description="What moved, what is blocked and what is next — filed in one place."
       />
 
-      <Card
-        title="Today"
-        description={
-          todayReport?.submitted_at
-            ? `Filed ${formatDateTime(todayReport.submitted_at)} · version ${todayReport.version}`
-            : "Nothing filed for today yet."
-        }
-      >
-        <ReportForm existing={todayReport} />
-      </Card>
+      <DailyReportWorkspace
+        existing={todayReport}
+        today={today()}
+        myTasks={openMine}
+        unowned={unowned}
+        hasPerson={Boolean(me)}
+      />
 
-      {recentRefused ? (
-        <ProblemNotice
-          error={{ message: "You do not have permission to read the team's reports." }}
-          title="Team reports hidden"
-        />
-      ) : (
-        <Card title="Recent reports" description={`${recent.length} most recent`} padded={false}>
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.8fr)]">
+        <Card title="Your recent reports" description="Your last filed reports, newest first.">
           {recent.length === 0 ? (
-            <div className="px-5 py-6">
-              <EmptyState>No reports filed yet.</EmptyState>
-            </div>
+            <EmptyState icon="clipboard" iconTone="info" title="Nothing filed yet">
+              Your filed reports appear here, newest first.
+            </EmptyState>
           ) : (
+            <ul className="flex flex-col gap-2.5">
+              {recent.map((report) => (
+                <RecentReport key={report.id} report={report} />
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        {team !== null && others.length > 0 && (
+          <Card title="Team reports" description={`The ${others.length} most recent from others`} padded={false}>
             <Table>
               <thead>
                 <tr>
@@ -80,35 +108,50 @@ export default async function DailyReportsPage() {
                   <Th>Reporter</Th>
                   <Th>Status</Th>
                   <Th>Hours</Th>
-                  <Th>Work done</Th>
+                  <Th>What moved</Th>
                 </tr>
               </thead>
               <tbody>
-                {recent.map((report) => (
+                {others.map((report) => (
                   <tr key={report.id}>
-                    <Td className="whitespace-nowrap text-slate-600">
-                      {formatDay(report.report_date)}
-                    </Td>
-                    <Td className="text-slate-600">
-                      {names.get(report.reporter_person_id) ??
-                        shortId(report.reporter_person_id)}
-                    </Td>
+                    <Td className="whitespace-nowrap text-muted">{formatDay(report.report_date)}</Td>
+                    <Td className="whitespace-nowrap font-medium">{personName(names, report.reporter_person_id)}</Td>
                     <Td>
-                      <Badge tone={statusTone(report.status)}>{humanise(report.status)}</Badge>
+                      <Badge tone={statusTone(report.status)} dot>
+                        {report.status === "submitted" ? "Filed" : statusLabel(report.status)}
+                      </Badge>
                     </Td>
-                    <Td className="tabular-nums text-slate-600">
-                      {report.hours_worked ?? "—"}
-                    </Td>
-                    <Td className="max-w-md text-slate-600">
+                    <Td className="tabular text-muted">{report.hours_worked ?? "—"}</Td>
+                    <Td className="max-w-md text-muted">
                       <span className="line-clamp-2">{report.work_done || "—"}</span>
                     </Td>
                   </tr>
                 ))}
               </tbody>
             </Table>
-          )}
-        </Card>
-      )}
+          </Card>
+        )}
+      </div>
     </div>
+  );
+}
+
+function RecentReport({ report }: { report: DailyReport }) {
+  const { weekday, day } = dayParts(report.report_date);
+  const firstLine = (report.work_done ?? "").split("\n").find((line) => line.trim()) ?? "—";
+  return (
+    <li className="flex items-start gap-3 rounded-[14px] border border-line p-3">
+      <DateBlock top={weekday} day={day} />
+      <span className="min-w-0 flex-1">
+        <b className="block truncate text-[14.5px] font-semibold">{firstLine}</b>
+        <span className="mt-1.5 flex flex-wrap gap-1.5">
+          <Badge tone={statusTone(report.status)} dot>
+            {report.status === "late" ? "Filed late" : report.status === "submitted" ? "Filed" : statusLabel(report.status)}
+          </Badge>
+          {report.hours_worked != null && <Badge tone="neutral">{report.hours_worked}h</Badge>}
+          {report.blockers && <Badge tone="warning" dot>Blocker</Badge>}
+        </span>
+      </span>
+    </li>
   );
 }

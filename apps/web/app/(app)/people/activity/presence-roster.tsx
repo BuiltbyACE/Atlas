@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-import { Badge, EmptyState } from "@/components/ui";
+import { Avatar, Badge, EmptyState } from "@/components/ui";
 import { getPresence, type Presence } from "@/lib/api/atlas";
-import { formatDuration, formatTime } from "@/lib/format";
+import { formatDuration, formatTime, initials } from "@/lib/format";
 
 /** How often the live roster re-reads the presence endpoint. */
 const POLL_MS = 30_000;
@@ -20,9 +20,11 @@ const POLL_MS = 30_000;
  * leave. A failed refresh flips the pill to "reconnecting" and keeps the last
  * good reading rather than emptying the roster.
  */
-export function PresenceRoster({ initial }: { initial: Presence }) {
+export function PresenceRoster({ initial, me }: { initial: Presence; me?: string }) {
   const [presence, setPresence] = useState<Presence>(initial);
   const [stale, setStale] = useState(false);
+
+  useEffect(() => setPresence(initial), [initial]);
 
   useEffect(() => {
     let disposed = false;
@@ -51,42 +53,50 @@ export function PresenceRoster({ initial }: { initial: Presence }) {
     };
   }, []);
 
-  const online = presence.online;
+  // One row per person: a person signed in on two devices is one person here.
+  const online = [...new Map(presence.online.map((s) => [s.person_id, s])).values()];
 
   return (
-    <div className="space-y-3">
-      <p className="flex items-center gap-2 text-xs text-slate-500">
-        <Badge tone={stale ? "warning" : "success"}>
-          {stale ? "reconnecting" : "live"}
+    <>
+      <p className="flex flex-wrap items-center gap-2.5 px-[22px] pb-3.5 text-[13.5px] text-muted">
+        <Badge tone={stale ? "warning" : "success"} dot>
+          {stale ? "Reconnecting" : "Live"}
         </Badge>
-        <span>
-          {online.length} online · updated {formatTime(presence.generated_at)}
-        </span>
+        {online.length} online · updated {formatTime(presence.generated_at)}
       </p>
 
       {online.length === 0 ? (
-        <EmptyState>Nobody is signed in and active right now.</EmptyState>
+        <div className="px-[22px] pb-4">
+          <EmptyState icon="signal" iconTone="info" title="Nobody is active right now">
+            People appear here while Atlas is open in their browser.
+          </EmptyState>
+        </div>
       ) : (
-        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="flex max-h-[360px] flex-col gap-2.5 overflow-y-auto px-[22px] pb-4 scroll-quiet">
           {online.map((session) => (
-            <li
-              key={session.id}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-sm font-medium text-slate-900">
+            <li key={session.id} className="flex items-center gap-3 rounded-[14px] border border-line px-3.5 py-3">
+              <span className="rounded-full p-[2px] ring-2 ring-[#22A55A]">
+                <Avatar initials={initials(session.full_name)} size="lg" variant={session.person_id === me ? "me" : "default"} />
+              </span>
+              <span className="min-w-0">
+                <b className="block truncate text-[15px] font-semibold">
                   {session.full_name}
-                </span>
-                <Badge tone="success">online</Badge>
-              </div>
-              <p className="mt-0.5 text-xs text-slate-500">
-                since {formatTime(session.started_at)} ·{" "}
-                {formatDuration(session.active_seconds)}
-              </p>
+                  {session.person_id === me && <span className="font-normal text-muted"> (you)</span>}
+                </b>
+                <small className="block text-[13px] text-muted">
+                  Since {formatTime(session.started_at)} · {formatDuration(session.active_seconds)}
+                </small>
+              </span>
+              <span className="ml-auto">
+                <Badge tone="success" dot>Online</Badge>
+              </span>
             </li>
           ))}
         </ul>
       )}
-    </div>
+      <p className="px-[22px] pb-5 text-[13px] text-muted">
+        People drop off this list a few minutes after their last heartbeat.
+      </p>
+    </>
   );
 }

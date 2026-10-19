@@ -10,3 +10,26 @@ html,
 body {
   height: 100%;
 }
+
+@layer base {
+  /* Workspace focus ring (prototype: 2px action blue, offset 2px). The navy
+     sidebar swaps it for sky so it stays visible on the dark ground. */
+  .app-shell :is(a, button, select, input, textarea, summary):focus-visible {
+    outline: 2px solid theme("colors.atlas.DEFAULT");
+    outline-offset: 2px;
+  }
+  .app-shell .on-navy :is(a, button):focus-visible {
+    outline-color: theme("colors.sky");
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Thin, quiet scrollbars for the board and side panels. */
+  .scroll-quiet {
+    scrollbar-width: thin;
+    scrollbar-color: #c7cfdd transparent;
+  }
+}

@@ -465,3 +465,36 @@ Tracked in ATLAS.md §21. Most relevant to you:
 5. Wire `generate:api` and migrate to generated types.
 6. Dashboard and the authenticated shell polish — with honest empty states —
    ready for the first data modules.
+
+## 10. The workspace redesign (October 2026)
+
+The authenticated screens follow the workspace prototypes in `images/Atlas
+Design – 01…08` (unpacked, each is a bundled HTML page). Where things live:
+
+- **Tokens** in `tailwind.config.ts` (`canvas`, `navy`, `night`, `muted`,
+  `line`, `sky`, radii `card`/`control`, shadows). Login keeps `milk`/`ink`.
+- **Primitives** in `components/ui.tsx` (Card, Badge pills, Stat tiles, Chips,
+  Avatar, IconTile, Meter, EmptyState, Table), `components/form.tsx`,
+  `components/drawer.tsx`, `components/toast.tsx`, `components/icons.tsx`,
+  `components/person-select.tsx`, `components/day-picker.tsx`.
+- **Shell** in `components/shell/` (sidebar, top bar with Ctrl K jump, live
+  pill, notifications bell on the real `/api/v1/notifications`, New menu).
+  `?new=task|project|leave` opens the matching drawer.
+- **Task board** (`app/(app)/work/tasks/task-board.tsx`): pointer-event drag
+  and drop (mouse anywhere on a card; touch via the grip; keyboard via the grip's
+  "Move to" menu). Every move is `PUT /work/tasks/{id}` with `If-Match`;
+  refusals roll the card back and show Go's reason. `TASK_EVIDENCE_REQUIRED`
+  opens the card on its evidence section.
+- **Realtime**: `lib/realtime/socket.ts` reads the token through a closure and
+  refreshes it before expiry and on socket errors; one channel per topic is
+  shared by all subscribers (Phoenix evicts a duplicate join); a dev build
+  reaches the orchestrator on :4000 (see `NEXT_PUBLIC_REALTIME_URL`).
+
+Names: the people pickers and every name lookup use the availability roster,
+which needs `people.person.read`. Engineers and staff do not hold it, so for
+them names fall back to `Person 01a1…` and pickers to an id field. A
+people-search endpoint with a narrower permission is the open backend item.
+
+Deliberately not built (no backend for them): the daily report's "needs
+management's attention" flag, and task "type" tags. "What moved" is required
+in the form but not yet enforced by Go.

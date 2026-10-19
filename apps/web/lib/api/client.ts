@@ -41,13 +41,30 @@ export interface ProblemDetails {
   [key: string]: unknown;
 }
 
+/**
+ * Go's module errors wrap a sentinel (`work: conflict: cannot move a task
+ * from todo to done`). The sentinel is for logs; a person reads the rest,
+ * sentence-cased. The stable `code` is unchanged and still what callers switch on.
+ */
+function readableDetail(detail: string): string {
+  const stripped = detail.replace(
+    /^(?:[a-z_]+: (?:conflict|invalid(?: request)?|not found|forbidden): )+/,
+    "",
+  );
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+}
+
 /** Error thrown for any non-2xx response from the Go API. */
 export class ApiError extends Error {
   readonly status: number;
   readonly problem: ProblemDetails;
 
   constructor(status: number, problem: ProblemDetails) {
-    super(problem.detail ?? problem.title ?? `API request failed (${status})`);
+    super(
+      problem.detail
+        ? readableDetail(problem.detail)
+        : (problem.title ?? `API request failed (${status})`),
+    );
     this.name = "ApiError";
     this.status = status;
     this.problem = problem;

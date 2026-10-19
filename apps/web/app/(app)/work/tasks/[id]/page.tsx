@@ -1,7 +1,19 @@
 import Link from "next/link";
 
+import { ButtonLink } from "@/components/form";
+import { Icon } from "@/components/icons";
 import { SignalRefresh } from "@/components/signal-refresh";
-import { Badge, Card, EmptyState, PageHeader, ProblemNotice, priorityTone, statusTone } from "@/components/ui";
+import {
+  Badge,
+  Card,
+  PageHeader,
+  ProblemNotice,
+  Tag,
+  priorityTone,
+  statusTone,
+} from "@/components/ui";
+import { columnLabel } from "@/components/work/board";
+import { EvidencePanel } from "@/components/work/evidence-panel";
 import {
   getProject,
   getTask,
@@ -13,12 +25,12 @@ import {
   type Task,
 } from "@/lib/api/atlas";
 import { ApiError } from "@/lib/api/client";
-import { personDirectory } from "@/lib/directory";
-import { dueLabel, formatDateTime, humanise, shortId } from "@/lib/format";
+import { requireUser } from "@/lib/auth/session";
+import { personDirectory, personName, rosterOf } from "@/lib/directory";
+import { dueLabel, formatDateTime, formatDay, humanise, isOverdue } from "@/lib/format";
 import { projectTopic } from "@/lib/realtime/topics";
 
 import { BlockerPanel } from "./blocker-panel";
-import { EvidencePanel } from "@/components/work/evidence-panel";
 import { TaskEditor } from "./task-editor";
 
 /**
@@ -48,6 +60,7 @@ export default async function TaskDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const user = await requireUser();
 
   let task: Task;
   try {
@@ -76,58 +89,68 @@ export default async function TaskDetailPage({
     personDirectory(),
   ]);
 
-  const assignee = task.assignee_person_id
-    ? (names.get(task.assignee_person_id) ?? shortId(task.assignee_person_id))
-    : "Unassigned";
   const due = dueLabel(task.due_at);
+  const overdue = isOverdue(task.due_at, task.status);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title={task.title}
-        description={
+        eyebrow={
           <span className="flex flex-wrap items-center gap-2">
-            <Badge tone={statusTone(task.status)}>{humanise(task.status)}</Badge>
-            <Badge tone={priorityTone(task.priority)}>{task.priority} priority</Badge>
-            {task.blocked && <Badge tone="warning">blocked</Badge>}
-            <Link
-              href={`/work/projects/${task.project_id}`}
-              className="text-atlas hover:underline"
-            >
-              {project ? project.name : shortId(task.project_id)}
-            </Link>
-            <span className="text-slate-400">·</span>
-            <span>{assignee}</span>
-            {due && (
-              <>
-                <span className="text-slate-400">·</span>
-                <span className={due.includes("overdue") ? "text-red-600" : ""}>
-                  {due}
-                </span>
-              </>
-            )}
+            <Badge tone={statusTone(task.status)} dot>
+              {columnLabel(task.status)}
+            </Badge>
+            <Badge tone={priorityTone(task.priority)}>{humanise(task.priority)} priority</Badge>
+            {task.blocked && <Badge tone="danger">Blocked</Badge>}
+            {task.ref && <Tag>{task.ref}</Tag>}
           </span>
         }
-        actions={<SignalRefresh topic={projectTopic(task.project_id)} />}
+        description={
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Link
+              href={`/work/projects/${task.project_id}`}
+              className="font-semibold text-atlas-ink hover:underline"
+            >
+              {project ? project.name : "Project"}
+            </Link>
+            <span aria-hidden="true">·</span>
+            <span>{task.assignee_person_id ? personName(names, task.assignee_person_id) : "Unassigned"}</span>
+            <span aria-hidden="true">·</span>
+            <span className={overdue ? "font-semibold text-[#C0352B]" : undefined}>
+              {task.due_at ? `${formatDay(task.due_at)}${due ? ` (${due})` : ""}` : "No deadline"}
+            </span>
+            <SignalRefresh topic={projectTopic(task.project_id)} quiet />
+          </span>
+        }
+        actions={
+          <ButtonLink href={`/work/tasks?project_id=${task.project_id}`} variant="secondary">
+            <Icon name="board" />
+            Back to the board
+          </ButtonLink>
+        }
       />
 
-      {task.description && (
-        <Card title="Description">
-          <p className="whitespace-pre-wrap text-sm text-slate-700">
-            {task.description}
-          </p>
-        </Card>
-      )}
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+        <div className="flex flex-col gap-5">
+          <Card title="What needs doing">
+            {task.description ? (
+              <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-night">
+                {task.description}
+              </p>
+            ) : (
+              <p className="text-sm text-muted">No description yet. Add one in “Edit task”.</p>
+            )}
+          </Card>
+          <BlockerPanel taskId={task.id} blockers={blockers} />
+          <EvidencePanel taskId={task.id} evidence={evidence} />
+        </div>
+        <TaskEditor task={task} people={rosterOf(names)} me={user.person_id} />
+      </div>
 
-      <TaskEditor task={task} />
-
-      <BlockerPanel taskId={task.id} blockers={blockers} />
-
-      <EvidencePanel taskId={task.id} evidence={evidence} />
-
-      <p className="text-xs text-slate-400">
-        Created {formatDateTime(task.created_at)} · updated{" "}
-        {formatDateTime(task.updated_at)} · version {task.version}
+      <p className="text-xs text-[#7A879C]">
+        Created {formatDateTime(task.created_at)} · updated {formatDateTime(task.updated_at)} ·
+        version {task.version}
       </p>
     </div>
   );
