@@ -53,7 +53,7 @@ import {
 } from "@/lib/api/atlas";
 import { ApiError } from "@/lib/api/client";
 import { requireUser } from "@/lib/auth/session";
-import { personDirectory, personName, rosterOf } from "@/lib/directory";
+import { personDirectory, personName, rosterOf, type PersonOption } from "@/lib/directory";
 import { FINANCE_TOPIC } from "@/lib/realtime/topics";
 import {
   formatDateTime,
@@ -68,7 +68,7 @@ import { BudgetActions, NewBudgetButton } from "./budget-form";
 import { ExpenseActions, NewExpenseButton } from "./expense-form";
 import { InvoiceActions, NewInvoiceButton } from "./invoice-form";
 import { PaymentActions, RecordPaymentButton, type OpenInvoice } from "./payment-form";
-import { financeCapabilities } from "./permissions";
+import { financeCapabilities, type FinanceCapability } from "./permissions";
 import { NewRecurringCostButton, RecurringCostActions } from "./recurring-cost-form";
 
 /**
@@ -162,6 +162,34 @@ function Restricted({ className }: { className?: string }) {
     <span className={cx("text-muted", className)} title="Restricted for your role">
       Restricted
     </span>
+  );
+}
+
+/**
+ * A payment's state from its own figures: freshly received money is
+ * unallocated until it is spread across invoices, and reconciled once the bank
+ * line is matched. Derived here only for the badge's wording — Go owns the
+ * allocation maths that produced the amounts.
+ */
+function PaymentState({ payment }: { payment: FinancePayment }) {
+  if (payment.reconciled) {
+    return (
+      <Badge tone="success" dot>
+        Reconciled
+      </Badge>
+    );
+  }
+  if (payment.unallocated_minor !== undefined && payment.unallocated_minor > 0) {
+    return (
+      <Badge tone="info" dot>
+        Unallocated
+      </Badge>
+    );
+  }
+  return (
+    <Badge tone="info" dot>
+      Allocated
+    </Badge>
   );
 }
 
@@ -381,6 +409,21 @@ export default async function FinancePage({
               <Icon name="document" />
               Contracts
             </ButtonLink>
+            <NewExpenseButton
+              people={people}
+              me={me}
+              categories={categoryList}
+              projects={projectOptions}
+              currency={currency}
+              capabilities={capabilities}
+              variant="secondary"
+            />
+            <NewInvoiceButton
+              organizations={organizationOptions}
+              contracts={contractOptions}
+              currency={currency}
+              capabilities={capabilities}
+            />
           </>
         }
       />
@@ -594,8 +637,74 @@ export default async function FinancePage({
       </div>
 
       <Card
+        title="Accounts"
+        description="Bank, cash and M-Pesa accounts we hold money in. Opening balances are set once; Go derives the rest."
+        actions={<NewAccountButton currency={currency} capabilities={capabilities} />}
+        padded={false}
+      >
+        {accounts.length === 0 ? (
+          <div className="p-[22px]">
+            <EmptyState
+              icon="card"
+              iconTone="info"
+              className="min-h-[160px]"
+              title="No accounts yet"
+            >
+              Every payment and expense settles against an account. Open one to start recording money
+              movements.
+            </EmptyState>
+          </div>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Account</Th>
+                <Th>Type</Th>
+                <Th className="text-right">Balance</Th>
+                <Th>State</Th>
+                <Th className="text-right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {accounts.map((account) => (
+                <tr key={account.id}>
+                  <Td className="font-medium">{account.name}</Td>
+                  <Td className="text-muted">{humanise(account.account_type)}</Td>
+                  <Td className="tabular text-right">
+                    <Money minor={account.balance_minor} currency={account.currency || currency} />
+                  </Td>
+                  <Td>
+                    <Badge tone={account.active ? "success" : "neutral"}>
+                      {account.active ? "Active" : "Inactive"}
+                    </Badge>
+                  </Td>
+                  <Td className="text-right">
+                    <AccountActions
+                      account={account}
+                      currency={account.currency || currency}
+                      capabilities={capabilities}
+                    />
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
+
+      <Card
         title="Expenses"
         description="Claims from the field, by category and status."
+        actions={
+          <NewExpenseButton
+            people={people}
+            me={me}
+            categories={categoryList}
+            projects={projectOptions}
+            currency={currency}
+            capabilities={capabilities}
+          />
+        }
         padded={false}
       >
         <div className="flex flex-col gap-3 px-[22px] pb-3.5 pt-1">
@@ -662,6 +771,7 @@ export default async function FinancePage({
                 <Th>Status</Th>
                 <Th>Date</Th>
                 <Th className="text-right">Amount</Th>
+                <Th className="text-right">Actions</Th>
               </tr>
             </thead>
             <tbody>
@@ -672,6 +782,9 @@ export default async function FinancePage({
                   currency={currency}
                   category={categoryLabel(expense.category_key)}
                   claimant={personName(names, expense.claimant_person_id)}
+                  me={me}
+                  accounts={accounts}
+                  capabilities={capabilities}
                 />
               ))}
             </tbody>
@@ -682,6 +795,14 @@ export default async function FinancePage({
       <Card
         title="Invoices"
         description="Raised from contract milestones and schedules."
+        actions={
+          <NewInvoiceButton
+            organizations={organizationOptions}
+            contracts={contractOptions}
+            currency={currency}
+            capabilities={capabilities}
+          />
+        }
         padded={false}
       >
         <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 px-[22px] pb-3.5 pt-1">
@@ -740,6 +861,7 @@ export default async function FinancePage({
                 <Th>Due</Th>
                 <Th className="text-right">Total</Th>
                 <Th className="text-right">Outstanding</Th>
+                <Th className="text-right">Actions</Th>
               </tr>
             </thead>
             <tbody>
@@ -748,7 +870,86 @@ export default async function FinancePage({
                   key={invoice.id}
                   invoice={invoice}
                   currency={currency}
+                  capabilities={capabilities}
                 />
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
+
+      <Card
+        title="Payments"
+        description="Money received, and how it was spread across invoices."
+        actions={
+          <RecordPaymentButton
+            accounts={accounts}
+            openInvoices={openInvoices}
+            currency={currency}
+            capabilities={capabilities}
+          />
+        }
+        padded={false}
+      >
+        {payments.length === 0 ? (
+          <div className="p-[22px]">
+            <EmptyState
+              icon="card"
+              iconTone="info"
+              className="min-h-[200px]"
+              title="No payments yet"
+            >
+              Payments recorded against an account appear here; each can be allocated across the
+              invoices it settles.
+            </EmptyState>
+          </div>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Payment</Th>
+                <Th>Method</Th>
+                <Th>Received</Th>
+                <Th className="text-right">Amount</Th>
+                <Th className="text-right">Unallocated</Th>
+                <Th>State</Th>
+                <Th className="text-right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {payments.map((payment) => (
+                <tr key={payment.id}>
+                  <Td>
+                    <div className="flex flex-col items-start gap-1">
+                      <Tag>{payment.ref}</Tag>
+                      {payment.reference && (
+                        <span className="text-[13px] text-muted">{payment.reference}</span>
+                      )}
+                    </div>
+                  </Td>
+                  <Td className="text-muted">{humanise(payment.method)}</Td>
+                  <Td className="text-muted">{formatDay(payment.received_on)}</Td>
+                  <Td className="tabular text-right">
+                    <Money minor={payment.amount_minor} currency={payment.currency || currency} />
+                  </Td>
+                  <Td className="tabular text-right">
+                    <Money
+                      minor={payment.unallocated_minor}
+                      currency={payment.currency || currency}
+                    />
+                  </Td>
+                  <Td>
+                    <PaymentState payment={payment} />
+                  </Td>
+                  <Td className="text-right">
+                    <PaymentActions
+                      payment={payment}
+                      openInvoices={openInvoices}
+                      currency={payment.currency || currency}
+                      capabilities={capabilities}
+                    />
+                  </Td>
+                </tr>
               ))}
             </tbody>
           </Table>
@@ -758,6 +959,16 @@ export default async function FinancePage({
       <Card
         title="Budgets"
         description={budgetNote}
+        actions={
+          <NewBudgetButton
+            categories={categoryList}
+            people={people}
+            projects={projectOptions}
+            me={me}
+            currency={currency}
+            capabilities={capabilities}
+          />
+        }
         padded={false}
       >
         {budgets.length === 0 ? (
@@ -781,6 +992,7 @@ export default async function FinancePage({
                 <Th className="text-right">Amount</Th>
                 <Th className="text-right">Actual</Th>
                 <Th className="text-right">Utilisation</Th>
+                <Th className="text-right">Actions</Th>
               </tr>
             </thead>
             <tbody>
@@ -790,6 +1002,11 @@ export default async function FinancePage({
                   budget={budget}
                   currency={currency}
                   category={budget.category_key ? categoryLabel(budget.category_key) : "—"}
+                  categories={categoryList}
+                  people={people}
+                  projects={projectOptions}
+                  me={me}
+                  capabilities={capabilities}
                 />
               ))}
             </tbody>
@@ -800,6 +1017,14 @@ export default async function FinancePage({
       <Card
         title="Recurring costs"
         description="Standing vendor commitments and their next renewal."
+        actions={
+          <NewRecurringCostButton
+            people={people}
+            me={me}
+            currency={currency}
+            capabilities={capabilities}
+          />
+        }
         padded={false}
       >
         {recurringCosts.length === 0 ? (
@@ -824,6 +1049,7 @@ export default async function FinancePage({
                 <Th>Next renewal</Th>
                 <Th>Owner</Th>
                 <Th>State</Th>
+                <Th className="text-right">Actions</Th>
               </tr>
             </thead>
             <tbody>
@@ -855,6 +1081,15 @@ export default async function FinancePage({
                     <Badge tone={cost.active ? "success" : "neutral"}>
                       {cost.active ? "Active" : "Inactive"}
                     </Badge>
+                  </Td>
+                  <Td className="text-right">
+                    <RecurringCostActions
+                      cost={cost}
+                      people={people}
+                      me={me}
+                      currency={cost.currency || currency}
+                      capabilities={capabilities}
+                    />
                   </Td>
                 </tr>
               ))}
@@ -941,11 +1176,17 @@ function ExpenseRow({
   currency,
   category,
   claimant,
+  me,
+  accounts,
+  capabilities,
 }: {
   expense: FinanceExpense;
   currency: string;
   category: string;
   claimant: string;
+  me?: string;
+  accounts: FinanceAccount[];
+  capabilities: FinanceCapability[];
 }) {
   return (
     <tr>
@@ -968,6 +1209,15 @@ function ExpenseRow({
       <Td className="tabular text-right">
         <Money minor={expense.amount_minor} currency={expense.currency || currency} />
       </Td>
+      <Td className="text-right">
+        <ExpenseActions
+          expense={expense}
+          me={me}
+          accounts={accounts}
+          currency={expense.currency || currency}
+          capabilities={capabilities}
+        />
+      </Td>
     </tr>
   );
 }
@@ -975,9 +1225,11 @@ function ExpenseRow({
 function InvoiceRow({
   invoice,
   currency,
+  capabilities,
 }: {
   invoice: FinanceInvoice;
   currency: string;
+  capabilities: FinanceCapability[];
 }) {
   const overdue = isInvoiceOverdue(invoice);
   return (
@@ -1006,6 +1258,9 @@ function InvoiceRow({
       <Td className="tabular text-right">
         <Money minor={invoice.outstanding_minor} currency={invoice.currency || currency} />
       </Td>
+      <Td className="text-right">
+        <InvoiceActions invoice={invoice} capabilities={capabilities} />
+      </Td>
     </tr>
   );
 }
@@ -1014,10 +1269,20 @@ function BudgetRow({
   budget,
   currency,
   category,
+  categories,
+  people,
+  projects,
+  me,
+  capabilities,
 }: {
   budget: FinanceBudget;
   currency: string;
   category: string;
+  categories: FinanceExpenseCategory[];
+  people: PersonOption[];
+  projects: { id: string; name: string }[];
+  me?: string;
+  capabilities: FinanceCapability[];
 }) {
   return (
     <tr>
@@ -1042,6 +1307,17 @@ function BudgetRow({
       </Td>
       <Td className="text-right">
         <BudgetUsage budget={budget} currency={currency} />
+      </Td>
+      <Td className="text-right">
+        <BudgetActions
+          budget={budget}
+          categories={categories}
+          people={people}
+          projects={projects}
+          me={me}
+          currency={budget.currency || currency}
+          capabilities={capabilities}
+        />
       </Td>
     </tr>
   );
