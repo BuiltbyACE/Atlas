@@ -87,7 +87,7 @@ func (f *fakeStore) GetBudget(context.Context, uuid.UUID) (*Budget, error) { ret
 
 // ── request plumbing ────────────────────────────────────────────────────────
 
-func financeRouter(h *Handler) http.Handler {
+func financeRouter(h *Handler) chi.Router {
 	r := chi.NewRouter()
 	r.Get("/api/v1/finance/overview", h.Overview)
 	r.Get("/api/v1/finance/accounts", h.ListAccounts)

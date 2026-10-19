@@ -68,6 +68,26 @@ defmodule AtlasOrchestrator.Finance.HandlerTest do
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
   end
 
+  test "a scheduled invoice reaches the board and the dashboard" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "finance:board")
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "exec:dashboard")
+
+    assert :ok =
+             Handler.handle_event(
+               event("finance.invoice.scheduled.v1", %{
+                 "invoice_id" => Ecto.UUID.generate(),
+                 "ref" => "INV-2026-0005",
+                 "organization_id" => Ecto.UUID.generate(),
+                 "total_minor" => 250_000,
+                 "currency" => "KES",
+                 "status" => "scheduled"
+               })
+             )
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "finance:board", event: "invoice.changed"}
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
   test "a received payment reaches the board and the dashboard" do
     Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "finance:board")
     Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "exec:dashboard")

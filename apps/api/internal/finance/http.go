@@ -118,6 +118,9 @@ type expenseView struct {
 	DecidedAt        string `json:"decided_at,omitempty"`
 	DecisionReason   string `json:"decision_reason,omitempty"`
 	Notes            string `json:"notes,omitempty"`
+	ReceiptFileID    string `json:"receipt_file_id,omitempty"`
+	TaxInvoiceRef    string `json:"tax_invoice_ref,omitempty"`
+	PaidOn           string `json:"paid_on,omitempty"`
 	Version          int    `json:"version"`
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
@@ -261,6 +264,13 @@ func idStr(id *uuid.UUID) string {
 	return id.String()
 }
 
+func strOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 // money returns the amount when the viewer may see it, and nil when they may
 // not. A withheld amount is absent from the JSON; it is never a zero, which
 // would read as a real balance.
@@ -349,6 +359,7 @@ func expenseOf(e Expense, visible bool) expenseView {
 		SpentOn: day(e.SpentOn), Vendor: e.Vendor, AccountID: idStr(e.AccountID),
 		Status: string(e.Status), SubmittedAt: rfcPtr(e.SubmittedAt), DecidedBy: idStr(e.DecidedBy),
 		DecidedAt: rfcPtr(e.DecidedAt), DecisionReason: e.DecisionReason, Notes: e.Notes,
+		ReceiptFileID: idStr(e.ReceiptFileID), TaxInvoiceRef: strOrEmpty(e.TaxInvoiceRef), PaidOn: dayPtr(e.PaidOn),
 		Version: e.Version, CreatedAt: rfc(e.CreatedAt), UpdatedAt: rfc(e.UpdatedAt),
 	}
 	if e.PaymentMethod != nil {
@@ -834,6 +845,1016 @@ func (h *Handler) GetBudget(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, budgetOf(b, principal.Can(sensitiveAmount)))
 }
 
+// ── writes (§8.4) ───────────────────────────────────────────────────────────
+//
+// Every write route carries its own permission (declared in the router), takes
+// If-Match where the resource is versioned, and returns the record after the
+// change together with its new ETag. Go owns the money: amounts and totals are
+// computed here, never accepted from the request.
+
+// expenseReq is a claim as a client sends it. AmountMinor is a pointer so a
+// missing amount is rejected rather than read as zero.
+type expenseReq struct {
+	ClaimantPersonID *string `json:"claimant_person_id"`
+	CategoryKey      string  `json:"category_key"`
+	ProjectID        *string `json:"project_id"`
+	AmountMinor      *int64  `json:"amount_minor"`
+	Currency         string  `json:"currency"`
+	SpentOn          string  `json:"spent_on"`
+	Vendor           string  `json:"vendor"`
+	PaymentMethod    string  `json:"payment_method"`
+	AccountID        *string `json:"account_id"`
+	ReceiptFileID    *string `json:"receipt_file_id"`
+	TaxInvoiceRef    string  `json:"tax_invoice_ref"`
+	Notes            string  `json:"notes"`
+}
+
+func (req expenseReq) input() (ExpenseInput, error) {
+	var in ExpenseInput
+	var err error
+	if in.ClaimantPersonID, err = optUUID(req.ClaimantPersonID, "claimant_person_id"); err != nil {
+		return in, err
+	}
+	if in.ProjectID, err = optUUID(req.ProjectID, "project_id"); err != nil {
+		return in, err
+	}
+	if in.AccountID, err = optUUID(req.AccountID, "account_id"); err != nil {
+		return in, err
+	}
+	if in.ReceiptFileID, err = optUUID(req.ReceiptFileID, "receipt_file_id"); err != nil {
+		return in, err
+	}
+	in.CategoryKey = trim(req.CategoryKey)
+	if req.AmountMinor != nil {
+		in.AmountMinor = *req.AmountMinor
+	}
+	in.Currency = req.Currency
+	if in.SpentOn, err = parseDateField(req.SpentOn, "spent_on"); err != nil {
+		return in, err
+	}
+	in.Vendor = req.Vendor
+	if raw := trim(req.PaymentMethod); raw != "" {
+		m := PaymentMethod(raw)
+		in.PaymentMethod = &m
+	}
+	in.TaxInvoiceRef = req.TaxInvoiceRef
+	in.Notes = req.Notes
+	return in, nil
+}
+
+// CreateExpense handles POST /api/v1/finance/expenses.
+func (h *Handler) CreateExpense(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req expenseReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.input()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	e, err := h.service.CreateExpense(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(e.Version))
+	httpx.WriteJSON(w, http.StatusCreated, expenseOf(e, principal.Can(sensitiveAmount)))
+}
+
+// UpdateExpense handles PUT /api/v1/finance/expenses/{id}.
+func (h *Handler) UpdateExpense(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "expense")
+	if !ok {
+		return
+	}
+	current, err := h.service.Expense(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req expenseReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.input()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	e, err := h.service.UpdateExpense(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(e.Version))
+	httpx.WriteJSON(w, http.StatusOK, expenseOf(e, principal.Can(sensitiveAmount)))
+}
+
+// SubmitExpense handles POST /api/v1/finance/expenses/{id}/submit.
+func (h *Handler) SubmitExpense(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "expense")
+	if !ok {
+		return
+	}
+	current, err := h.service.Expense(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	e, err := h.service.SubmitExpense(r.Context(), principal.PersonID, id, current.Version)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(e.Version))
+	httpx.WriteJSON(w, http.StatusOK, expenseOf(e, principal.Can(sensitiveAmount)))
+}
+
+type decideReq struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
+// DecideExpense handles POST /api/v1/finance/expenses/{id}/decide.
+func (h *Handler) DecideExpense(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "expense")
+	if !ok {
+		return
+	}
+	current, err := h.service.Expense(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req decideReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	e, err := h.service.DecideExpense(r.Context(), principal.PersonID, id, current.Version,
+		Decision(trim(req.Decision)), req.Reason)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(e.Version))
+	httpx.WriteJSON(w, http.StatusOK, expenseOf(e, principal.Can(sensitiveAmount)))
+}
+
+type settleReq struct {
+	Method    string  `json:"method"`
+	AccountID *string `json:"account_id"`
+	PaidOn    *string `json:"paid_on"`
+}
+
+// SettleExpense handles POST /api/v1/finance/expenses/{id}/settle.
+func (h *Handler) SettleExpense(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "expense")
+	if !ok {
+		return
+	}
+	current, err := h.service.Expense(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req settleReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in := ExpenseSettleInput{Method: ExpenseStatus(trim(req.Method))}
+	if in.AccountID, err = optUUID(req.AccountID, "account_id"); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if req.PaidOn != nil && trim(*req.PaidOn) != "" {
+		d, err := parseDateField(*req.PaidOn, "paid_on")
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		in.PaidOn = &d
+	}
+	e, err := h.service.SettleExpense(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(e.Version))
+	httpx.WriteJSON(w, http.StatusOK, expenseOf(e, principal.Can(sensitiveAmount)))
+}
+
+// ReconcileExpense handles POST /api/v1/finance/expenses/{id}/reconcile.
+func (h *Handler) ReconcileExpense(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "expense")
+	if !ok {
+		return
+	}
+	current, err := h.service.Expense(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	e, err := h.service.ReconcileExpense(r.Context(), principal.PersonID, id, current.Version)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(e.Version))
+	httpx.WriteJSON(w, http.StatusOK, expenseOf(e, principal.Can(sensitiveAmount)))
+}
+
+// ── invoice writes ──────────────────────────────────────────────────────────
+
+type invoiceLineReq struct {
+	Description    string  `json:"description"`
+	Quantity       float64 `json:"quantity"`
+	UnitPriceMinor int64   `json:"unit_price_minor"`
+	TaxRateBP      int     `json:"tax_rate_bp"`
+	SortOrder      int     `json:"sort_order"`
+}
+
+type invoiceReq struct {
+	OrganizationID string           `json:"organization_id"`
+	ContractID     *string          `json:"contract_id"`
+	MilestoneID    *string          `json:"milestone_id"`
+	IssueDate      *string          `json:"issue_date"`
+	DueDate        *string          `json:"due_date"`
+	Currency       string           `json:"currency"`
+	Notes          string           `json:"notes"`
+	Lines          []invoiceLineReq `json:"lines"`
+}
+
+func (req invoiceReq) input() (InvoiceInput, error) {
+	var in InvoiceInput
+	var err error
+	if in.OrganizationID, err = reqUUID(req.OrganizationID, "organization_id"); err != nil {
+		return in, err
+	}
+	if in.ContractID, err = optUUID(req.ContractID, "contract_id"); err != nil {
+		return in, err
+	}
+	if in.MilestoneID, err = optUUID(req.MilestoneID, "milestone_id"); err != nil {
+		return in, err
+	}
+	if in.IssueDate, err = optDateField(req.IssueDate, "issue_date"); err != nil {
+		return in, err
+	}
+	if in.DueDate, err = optDateField(req.DueDate, "due_date"); err != nil {
+		return in, err
+	}
+	in.Currency = req.Currency
+	in.Notes = req.Notes
+	in.Lines = make([]InvoiceLineInput, 0, len(req.Lines))
+	for i, l := range req.Lines {
+		sortOrder := l.SortOrder
+		if sortOrder == 0 {
+			sortOrder = i
+		}
+		in.Lines = append(in.Lines, InvoiceLineInput{
+			Description: l.Description, Quantity: l.Quantity, UnitPriceMinor: l.UnitPriceMinor,
+			TaxRateBP: l.TaxRateBP, SortOrder: sortOrder,
+		})
+	}
+	return in, nil
+}
+
+// CreateInvoice handles POST /api/v1/finance/invoices.
+func (h *Handler) CreateInvoice(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req invoiceReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.input()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	inv, err := h.service.CreateInvoice(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(inv.Version))
+	httpx.WriteJSON(w, http.StatusCreated, invoiceOf(inv, principal.Can(sensitiveAmount), nil))
+}
+
+// UpdateInvoice handles PUT /api/v1/finance/invoices/{id}.
+func (h *Handler) UpdateInvoice(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "invoice")
+	if !ok {
+		return
+	}
+	current, _, err := h.service.Invoice(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req invoiceReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.input()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	inv, err := h.service.UpdateInvoice(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(inv.Version))
+	httpx.WriteJSON(w, http.StatusOK, invoiceOf(inv, principal.Can(sensitiveAmount), nil))
+}
+
+// ApproveInvoice handles POST /api/v1/finance/invoices/{id}/approve.
+func (h *Handler) ApproveInvoice(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "invoice")
+	if !ok {
+		return
+	}
+	current, _, err := h.service.Invoice(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	inv, err := h.service.ApproveInvoice(r.Context(), principal.PersonID, id, current.Version)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(inv.Version))
+	httpx.WriteJSON(w, http.StatusOK, invoiceOf(inv, principal.Can(sensitiveAmount), nil))
+}
+
+type issueReq struct {
+	IssueDate *string `json:"issue_date"`
+	DueDate   *string `json:"due_date"`
+}
+
+// IssueInvoice handles POST /api/v1/finance/invoices/{id}/issue.
+func (h *Handler) IssueInvoice(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "invoice")
+	if !ok {
+		return
+	}
+	current, _, err := h.service.Invoice(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req issueReq
+	if err := decodeOptionalJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in := InvoiceIssueInput{}
+	if in.IssueDate, err = optDateField(req.IssueDate, "issue_date"); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if in.DueDate, err = optDateField(req.DueDate, "due_date"); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	inv, err := h.service.IssueInvoice(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(inv.Version))
+	httpx.WriteJSON(w, http.StatusOK, invoiceOf(inv, principal.Can(sensitiveAmount), nil))
+}
+
+type reasonReq struct {
+	Reason string `json:"reason"`
+}
+
+// DisputeInvoice handles POST /api/v1/finance/invoices/{id}/dispute.
+func (h *Handler) DisputeInvoice(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "invoice")
+	if !ok {
+		return
+	}
+	current, _, err := h.service.Invoice(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req reasonReq
+	if err := decodeOptionalJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	inv, err := h.service.DisputeInvoice(r.Context(), principal.PersonID, id, current.Version, req.Reason)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(inv.Version))
+	httpx.WriteJSON(w, http.StatusOK, invoiceOf(inv, principal.Can(sensitiveAmount), nil))
+}
+
+// WriteOffInvoice handles POST /api/v1/finance/invoices/{id}/write-off.
+func (h *Handler) WriteOffInvoice(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "invoice")
+	if !ok {
+		return
+	}
+	current, _, err := h.service.Invoice(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req reasonReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	inv, err := h.service.WriteOffInvoice(r.Context(), principal.PersonID, id, current.Version, req.Reason)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(inv.Version))
+	httpx.WriteJSON(w, http.StatusOK, invoiceOf(inv, principal.Can(sensitiveAmount), nil))
+}
+
+// ── payment writes ──────────────────────────────────────────────────────────
+
+type allocationReq struct {
+	InvoiceID   string `json:"invoice_id"`
+	AmountMinor int64  `json:"amount_minor"`
+}
+
+func allocationsOf(reqs []allocationReq) ([]PaymentAllocationInput, error) {
+	out := make([]PaymentAllocationInput, 0, len(reqs))
+	for _, a := range reqs {
+		invoiceID, err := reqUUID(a.InvoiceID, "allocations.invoice_id")
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, PaymentAllocationInput{InvoiceID: invoiceID, AmountMinor: a.AmountMinor})
+	}
+	return out, nil
+}
+
+type paymentReq struct {
+	AmountMinor *int64          `json:"amount_minor"`
+	Currency    string          `json:"currency"`
+	Method      string          `json:"method"`
+	Reference   string          `json:"reference"`
+	ReceivedOn  string          `json:"received_on"`
+	AccountID   *string         `json:"account_id"`
+	Notes       string          `json:"notes"`
+	Allocations []allocationReq `json:"allocations"`
+}
+
+func (req paymentReq) input() (PaymentInput, error) {
+	var in PaymentInput
+	var err error
+	if req.AmountMinor != nil {
+		in.AmountMinor = *req.AmountMinor
+	}
+	in.Currency = req.Currency
+	in.Method = PaymentMethod(trim(req.Method))
+	in.Reference = req.Reference
+	if in.ReceivedOn, err = parseDateField(req.ReceivedOn, "received_on"); err != nil {
+		return in, err
+	}
+	if in.AccountID, err = optUUID(req.AccountID, "account_id"); err != nil {
+		return in, err
+	}
+	in.Notes = req.Notes
+	if in.Allocations, err = allocationsOf(req.Allocations); err != nil {
+		return in, err
+	}
+	return in, nil
+}
+
+// CreatePayment handles POST /api/v1/finance/payments.
+func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req paymentReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.input()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	p, err := h.service.CreatePayment(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(p.Version))
+	httpx.WriteJSON(w, http.StatusCreated, paymentOf(p, principal.Can(sensitiveAmount)))
+}
+
+type allocateReq struct {
+	Allocations []allocationReq `json:"allocations"`
+}
+
+// AllocatePayment handles POST /api/v1/finance/payments/{id}/allocate.
+func (h *Handler) AllocatePayment(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "payment")
+	if !ok {
+		return
+	}
+	current, err := h.service.Payment(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req allocateReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	allocations, err := allocationsOf(req.Allocations)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	p, err := h.service.AllocatePayment(r.Context(), principal.PersonID, id, current.Version, allocations)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(p.Version))
+	httpx.WriteJSON(w, http.StatusOK, paymentOf(p, principal.Can(sensitiveAmount)))
+}
+
+type reconcilePaymentReq struct {
+	Reconciled *bool `json:"reconciled"`
+}
+
+// ReconcilePayment handles POST /api/v1/finance/payments/{id}/reconcile.
+func (h *Handler) ReconcilePayment(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "payment")
+	if !ok {
+		return
+	}
+	current, err := h.service.Payment(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req reconcilePaymentReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if req.Reconciled == nil {
+		h.writeError(w, r, errInvalidField("reconciled"))
+		return
+	}
+	p, err := h.service.ReconcilePayment(r.Context(), principal.PersonID, id, current.Version, *req.Reconciled)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(p.Version))
+	httpx.WriteJSON(w, http.StatusOK, paymentOf(p, principal.Can(sensitiveAmount)))
+}
+
+// ── budget writes ───────────────────────────────────────────────────────────
+
+type budgetReq struct {
+	Scope         string  `json:"scope"`
+	ScopeRef      string  `json:"scope_ref"`
+	PeriodStart   string  `json:"period_start"`
+	PeriodEnd     string  `json:"period_end"`
+	CategoryKey   string  `json:"category_key"`
+	AmountMinor   *int64  `json:"amount_minor"`
+	Currency      string  `json:"currency"`
+	OwnerPersonID *string `json:"owner_person_id"`
+}
+
+func (req budgetReq) input() (BudgetInput, error) {
+	var in BudgetInput
+	var err error
+	in.Scope = BudgetScope(trim(req.Scope))
+	in.ScopeRef = req.ScopeRef
+	if in.PeriodStart, err = parseDateField(req.PeriodStart, "period_start"); err != nil {
+		return in, err
+	}
+	if in.PeriodEnd, err = parseDateField(req.PeriodEnd, "period_end"); err != nil {
+		return in, err
+	}
+	in.CategoryKey = req.CategoryKey
+	if req.AmountMinor != nil {
+		in.AmountMinor = *req.AmountMinor
+	}
+	in.Currency = req.Currency
+	if in.OwnerPersonID, err = optUUID(req.OwnerPersonID, "owner_person_id"); err != nil {
+		return in, err
+	}
+	return in, nil
+}
+
+// CreateBudget handles POST /api/v1/finance/budgets.
+func (h *Handler) CreateBudget(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req budgetReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.input()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	b, err := h.service.CreateBudget(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(b.Version))
+	httpx.WriteJSON(w, http.StatusCreated, budgetOf(b, principal.Can(sensitiveAmount)))
+}
+
+// UpdateBudget handles PUT /api/v1/finance/budgets/{id}.
+func (h *Handler) UpdateBudget(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "budget")
+	if !ok {
+		return
+	}
+	current, err := h.service.Budget(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req budgetReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.input()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	b, err := h.service.UpdateBudget(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(b.Version))
+	httpx.WriteJSON(w, http.StatusOK, budgetOf(b, principal.Can(sensitiveAmount)))
+}
+
+// ApproveBudget handles POST /api/v1/finance/budgets/{id}/approve.
+func (h *Handler) ApproveBudget(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "budget")
+	if !ok {
+		return
+	}
+	current, err := h.service.Budget(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	b, err := h.service.ApproveBudget(r.Context(), principal.PersonID, id, current.Version)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(b.Version))
+	httpx.WriteJSON(w, http.StatusOK, budgetOf(b, principal.Can(sensitiveAmount)))
+}
+
+// CloseBudget handles POST /api/v1/finance/budgets/{id}/close.
+func (h *Handler) CloseBudget(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "budget")
+	if !ok {
+		return
+	}
+	current, err := h.service.Budget(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	b, err := h.service.CloseBudget(r.Context(), principal.PersonID, id, current.Version)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(b.Version))
+	httpx.WriteJSON(w, http.StatusOK, budgetOf(b, principal.Can(sensitiveAmount)))
+}
+
+// ── account writes ──────────────────────────────────────────────────────────
+
+type accountReq struct {
+	Name                string `json:"name"`
+	AccountType         string `json:"account_type"`
+	Currency            string `json:"currency"`
+	OpeningBalanceMinor *int64 `json:"opening_balance_minor"`
+	Active              *bool  `json:"active"`
+}
+
+func (req accountReq) input() AccountInput {
+	return AccountInput{
+		Name: req.Name, AccountType: AccountType(trim(req.AccountType)), Currency: req.Currency,
+		OpeningBalanceMinor: req.OpeningBalanceMinor, Active: req.Active,
+	}
+}
+
+// CreateAccount handles POST /api/v1/finance/accounts.
+func (h *Handler) CreateAccount(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req accountReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	a, err := h.service.CreateAccount(r.Context(), principal.PersonID, req.input())
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(a.Version))
+	httpx.WriteJSON(w, http.StatusCreated, accountOf(a, principal.Can(sensitiveAmount)))
+}
+
+// UpdateAccount handles PUT /api/v1/finance/accounts/{id}.
+func (h *Handler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "account")
+	if !ok {
+		return
+	}
+	current, err := h.service.Account(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req accountReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	a, err := h.service.UpdateAccount(r.Context(), principal.PersonID, id, current.Version, req.input())
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(a.Version))
+	httpx.WriteJSON(w, http.StatusOK, accountOf(a, principal.Can(sensitiveAmount)))
+}
+
+// ── recurring-cost writes ───────────────────────────────────────────────────
+
+type recurringCostReq struct {
+	Vendor        string  `json:"vendor"`
+	Description   string  `json:"description"`
+	AmountMinor   *int64  `json:"amount_minor"`
+	Currency      string  `json:"currency"`
+	Cycle         string  `json:"cycle"`
+	NextRenewalOn string  `json:"next_renewal_on"`
+	OwnerPersonID *string `json:"owner_person_id"`
+	Active        *bool   `json:"active"`
+}
+
+func (req recurringCostReq) input() (RecurringCostInput, error) {
+	var in RecurringCostInput
+	var err error
+	in.Vendor = req.Vendor
+	in.Description = req.Description
+	if req.AmountMinor != nil {
+		in.AmountMinor = *req.AmountMinor
+	}
+	in.Currency = req.Currency
+	in.Cycle = RecurringCycle(trim(req.Cycle))
+	if in.NextRenewalOn, err = parseDateField(req.NextRenewalOn, "next_renewal_on"); err != nil {
+		return in, err
+	}
+	if in.OwnerPersonID, err = optUUID(req.OwnerPersonID, "owner_person_id"); err != nil {
+		return in, err
+	}
+	in.Active = req.Active
+	return in, nil
+}
+
+// CreateRecurringCost handles POST /api/v1/finance/recurring-costs.
+func (h *Handler) CreateRecurringCost(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req recurringCostReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.input()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	c, err := h.service.CreateRecurringCost(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(c.Version))
+	httpx.WriteJSON(w, http.StatusCreated, recurringCostOf(c, principal.Can(sensitiveAmount)))
+}
+
+// UpdateRecurringCost handles PUT /api/v1/finance/recurring-costs/{id}.
+func (h *Handler) UpdateRecurringCost(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "recurring cost")
+	if !ok {
+		return
+	}
+	current, err := h.service.RecurringCost(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req recurringCostReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.input()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	c, err := h.service.UpdateRecurringCost(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(c.Version))
+	httpx.WriteJSON(w, http.StatusOK, recurringCostOf(c, principal.Can(sensitiveAmount)))
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (*authz.Principal, bool) {
@@ -906,10 +1927,82 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 	case errors.Is(err, ErrNotFound):
 		httpx.WriteProblem(w, r, httpx.NotFound("No such finance record."))
 	case errors.Is(err, ErrInvalid):
-		httpx.WriteProblem(w, r, httpx.BadRequest(err.Error()))
+		// A lifecycle refusal carries a stable code so the client can branch on
+		// it; a plain validation failure keeps the generic code.
+		code := problemCode(err)
+		if code == "" {
+			code = httpx.CodeValidationFailed
+		}
+		httpx.WriteProblem(w, r, httpx.New(http.StatusBadRequest, code, err.Error()))
+	case errors.Is(err, ErrForbidden):
+		httpx.WriteProblem(w, r, httpx.Forbidden(err.Error()))
+	case errors.Is(err, ErrDuplicate):
+		httpx.WriteProblem(w, r, httpx.Conflict(err.Error()))
+	case errors.Is(err, ErrConflict):
+		httpx.WriteProblem(w, r, httpx.PreconditionFailed(err.Error()))
 	default:
 		httpx.WriteError(w, r, h.logger, err)
 	}
+}
+
+// optUUID parses an optional uuid field. Absent or blank is nil; malformed is a
+// validation error naming the field.
+func optUUID(raw *string, field string) (*uuid.UUID, error) {
+	if raw == nil || trim(*raw) == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(trim(*raw))
+	if err != nil {
+		return nil, errInvalidField(field)
+	}
+	return &id, nil
+}
+
+// reqUUID parses a required uuid field.
+func reqUUID(raw, field string) (uuid.UUID, error) {
+	id, err := uuid.Parse(trim(raw))
+	if err != nil {
+		return uuid.Nil, errInvalidField(field)
+	}
+	return id, nil
+}
+
+// parseDateField parses a calendar date (2026-10-19) or an RFC 3339 instant,
+// matching how the web sends date inputs and how the API accepts instants.
+func parseDateField(raw, field string) (time.Time, error) {
+	raw = trim(raw)
+	if raw == "" {
+		return time.Time{}, errInvalidField(field)
+	}
+	if d, err := time.Parse("2006-01-02", raw); err == nil {
+		return d, nil
+	}
+	ts, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, errInvalidField(field)
+	}
+	return time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, time.UTC), nil
+}
+
+// optDateField parses an optional date field.
+func optDateField(raw *string, field string) (*time.Time, error) {
+	if raw == nil || trim(*raw) == "" {
+		return nil, nil
+	}
+	d, err := parseDateField(*raw, field)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// decodeOptionalJSON decodes a body only when one was sent, so an action with
+// optional fields (issue, dispute) can also be called with no body at all.
+func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	if r.ContentLength == 0 && !httpx.IsJSONContentType(r.Header.Get("Content-Type")) {
+		return nil
+	}
+	return httpx.DecodeJSON(w, r, dst)
 }
 
 func errInvalidField(field string) error { return &fieldError{field: field} }

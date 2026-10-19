@@ -137,6 +137,8 @@ var Permissions = []Permission{
 	{"finance.invoice.issue", "Issue invoices to clients", false},
 	{"finance.payment.read", "View payments", false},
 	{"finance.payment.record", "Record payments", false},
+	{"finance.account.manage", "Open and edit cash accounts", false},
+	{"finance.recurring_cost.manage", "Record and edit standing costs", false},
 	{"finance.report.read", "View financial reports", false},
 	{"finance.amount.sensitive.read", "View sensitive financial amounts", true},
 
@@ -173,6 +175,9 @@ var Permissions = []Permission{
 // configuration, not business records. Idempotent: only inserted if absent, so an
 // operator's later change is never overwritten.
 var SettingDefaults = map[string]string{
+	"company.name":     `"SafariStack Solutions"`,
 	"company.timezone": `"Africa/Nairobi"`,
 	"company.currency": `"KES"`,
+	// Above KES 1,000 a claim must carry a receipt (§8.4 [CONFIG]).
+	"finance.expense.receipt_min_minor": `100000`,
 }

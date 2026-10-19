@@ -1,5 +1,17 @@
 package seed
 
+// financeWrite is the full finance write set. Both CEOs carry finance end to
+// end while the company has no finance officer (§3.2, §8.4): every step is one
+// audited action, and the audit trail — who moved what, and when — is the
+// control that makes that safe (§6.6).
+var financeWrite = []string{
+	"finance.budget.manage",
+	"finance.expense.write", "finance.expense.approve",
+	"finance.invoice.write", "finance.invoice.issue",
+	"finance.payment.record",
+	"finance.account.manage", "finance.recurring_cost.manage",
+}
+
 // RolePermissions maps each role (§3.2) to the permissions it holds. The mapping
 // is a starting point derived from each role's one-line description; scopes
 // (§6.2) narrow a grant at assignment time, they do not widen the permission set.
@@ -32,7 +44,9 @@ var RolePermissions = map[string][]string{
 			"contracts.deliverable.read", "contracts.deliverable.manage",
 			"contracts.change_request.read", "contracts.change_request.approve",
 		),
-		// Work visibility; finance read with sensitive amounts.
+		// Work visibility; finance read with sensitive amounts. Both CEOs carry
+		// finance end to end (see financeWrite): the footprint in the audit
+		// trail is the control, not a signature chain (§8.4, §6.6).
 		all(
 			"work.project.read", "work.task.read", "work.evidence.read", "work.blocker.read", "work.handover.read",
 			"finance.budget.read", "finance.expense.read", "finance.invoice.read",
@@ -40,6 +54,7 @@ var RolePermissions = map[string][]string{
 			"intel.decision.read", "intel.decision.manage", "intel.risk.read", "intel.risk.manage",
 			"intel.brief.read", "intel.brief.manage", "intel.metric.read", "intel.dashboard.read",
 		),
+		all(financeWrite...),
 	),
 
 	"ceo_internal": concat(
@@ -76,17 +91,21 @@ var RolePermissions = map[string][]string{
 			"intel.decision.read", "intel.decision.manage", "intel.risk.read", "intel.risk.manage",
 			"intel.brief.read", "intel.brief.manage", "intel.metric.read", "intel.dashboard.read",
 		),
+		all(financeWrite...),
 	),
 
 	"finance_officer": all(
 		"core.notification.read", "core.file.read", "core.file.write",
 		"core.settings.read", "core.approval.read",
 		"people.person.read", "people.department.read",
-		// Records — but does not approve; separation of duties (§3.3).
+		// Carries finance end to end on the day the seat is staffed. Approval is
+		// one audited step and the counsel in this file is the control, so the
+		// officer may decide a claim as well as record it (§8.4, §6.6).
 		"finance.budget.read", "finance.budget.manage",
-		"finance.expense.read", "finance.expense.write",
+		"finance.expense.read", "finance.expense.write", "finance.expense.approve",
 		"finance.invoice.read", "finance.invoice.write", "finance.invoice.issue",
 		"finance.payment.read", "finance.payment.record",
+		"finance.account.manage", "finance.recurring_cost.manage",
 		"finance.report.read", "finance.amount.sensitive.read",
 		"contracts.contract.read", "contracts.milestone.read", "contracts.deliverable.read",
 		"work.project.read", "work.task.read",

@@ -183,14 +183,17 @@ func run() error {
 	contractsService := contracts.NewService(contracts.NewPGStore(pool), auditWriter, logger)
 	contractsHandler := contracts.NewHandler(contractsService, logger)
 
-	// Finance & commercial control (Phase 4, §8.4): the read slice over cash,
-	// receivables, project profitability, budgets and spending. Go owns the
-	// rules — how receivables age, what a budget covers, how a margin is struck
-	// — and the amount-visibility decision stays at the HTTP edge. The write
-	// lifecycle (expenses.submit/decide, invoices.issue, payments.record) is
-	// deliberately out of scope for this pass; the storage it needs already
-	// exists (migration 00022).
+	// Finance & commercial control (Phase 4, §8.4): cash, receivables, project
+	// profitability, budgets and spending, plus the write lifecycle that moves
+	// an expense through approval to settlement, an invoice from draft to
+	// issued and paid, a payment onto the invoices it settles, and a budget
+	// through approval to close. Go owns every rule and is the sole writer
+	// (ADR-002); the amount-visibility decision stays at the HTTP edge. The
+	// audit writer is what makes it safe for both CEOs to carry the module:
+	// who moved the money is always on the record (§6.6).
 	financeService := finance.NewService(finance.NewPGStore(pool), logger)
+	financeService.SetAudit(auditWriter)
+	financeService.SetSettings(settingsService)
 	financeHandler := finance.NewHandler(financeService, logger)
 
 	router := httpserver.NewRouter(httpserver.Deps{

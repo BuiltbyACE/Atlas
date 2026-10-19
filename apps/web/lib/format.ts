@@ -81,7 +81,40 @@ export function formatMinor(minor?: number | null, currency = "KES"): string {
   }
 }
 
-const ZERO_DECIMAL_CURRENCIES = new Set(["JPY", "KRW", "VND", "CLP", "XAF", "XOF"]);
+export const ZERO_DECIMAL_CURRENCIES = new Set(["JPY", "KRW", "VND", "CLP", "XAF", "XOF"]);
+
+/**
+ * Parse a typed major-unit amount (`"4500.50"`) into the integer minor units the
+ * API takes (ADR-010). Done with string arithmetic, not `parseFloat`, so
+ * `"0.1"` + `"0.2"` style inputs never drift: commas and spaces are stripped,
+ * the fractional digits are padded or truncated to the currency's exponent, and
+ * anything unparseable is zero. Presentation/input only; Go validates the value.
+ */
+export function parseMinor(amount: string, currency = "KES"): number {
+  const code = (currency || "KES").toUpperCase();
+  const fraction = ZERO_DECIMAL_CURRENCIES.has(code) ? 0 : 2;
+  const normalized = amount.trim().replace(/[,\s]/g, "").replace(/^\+/, "");
+  if (!/^-?\d*(\.\d*)?$/.test(normalized) || normalized === "" || normalized === "-") {
+    return 0;
+  }
+  const negative = normalized.startsWith("-");
+  const unsigned = negative ? normalized.slice(1) : normalized;
+  const [whole = "", frac = ""] = unsigned.split(".");
+  const digits = `${whole}${frac.slice(0, fraction).padEnd(fraction, "0")}` || "0";
+  const value = Number.parseInt(digits, 10) || 0;
+  return negative ? -value : value;
+}
+
+/**
+ * Minor units as the plain major-unit string a money field is prefilled with:
+ * `formatMinorInput(450050)` -> `"4500.50"`. The inverse of `parseMinor`.
+ */
+export function formatMinorInput(minor?: number | null, currency = "KES"): string {
+  if (minor === undefined || minor === null) return "";
+  const code = (currency || "KES").toUpperCase();
+  const fraction = ZERO_DECIMAL_CURRENCIES.has(code) ? 0 : 2;
+  return (minor / 10 ** fraction).toFixed(fraction);
+}
 
 /**
  * Money in minor units, compacted for a KPI tile: `formatMinorCompact(12_400_000)`

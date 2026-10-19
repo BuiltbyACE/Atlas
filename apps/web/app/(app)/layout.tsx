@@ -44,11 +44,14 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       <div className="app-shell min-h-screen bg-canvas text-[15px] leading-[1.45] text-night lg:grid lg:grid-cols-[264px_minmax(0,1fr)]">
         <PresenceHeartbeat />
         <GooFilter />
-        <div className="sticky top-0 hidden h-screen lg:block">
+        <div
+          data-atlas-region="sidebar"
+          className="sticky top-0 hidden h-screen lg:block"
+        >
           <Sidebar userName={user.name} userEmail={user.email} escalations={escalations} />
         </div>
 
-        <div className="flex min-w-0 flex-col">
+        <div data-atlas-region="content" className="flex min-w-0 flex-col">
           <TopBar
             userId={user.id}
             userName={user.name}

@@ -1335,9 +1335,14 @@ export interface FinanceExpense {
   decided_at?: string;
   decision_reason?: string;
   notes?: string;
+  /** The receipt file backing the claim, when one was attached (§8.4). */
+  receipt_file_id?: string;
+  /** The supplier's tax-invoice reference, where one applies (e.g. KRA eTIMS). */
+  tax_invoice_ref?: string;
   version: number;
   created_at: string;
   updated_at: string;
+  paid_on?: string;
 }
 
 /** A configured expense category (`finance.expense_category`, §8.4 [CONFIG]). */
@@ -1612,6 +1617,367 @@ export function getBudget(id: string): Promise<FinanceBudget> {
   return apiFetch<FinanceBudget>(`/api/v1/finance/budgets/${id}`, {
     cache: "no-store",
   });
+}
+
+// ── finance (§8.4) writes ──
+
+export interface FinanceExpenseBody {
+  claimant_person_id?: string | null;
+  category_key: string;
+  project_id?: string | null;
+  amount_minor: number;
+  currency?: string;
+  spent_on: string;
+  vendor?: string;
+  payment_method?: string;
+  account_id?: string | null;
+  receipt_file_id?: string | null;
+  tax_invoice_ref?: string;
+  notes?: string;
+}
+
+export interface FinanceInvoiceLineBody {
+  description: string;
+  quantity: number;
+  unit_price_minor: number;
+  tax_rate_bp: number;
+  sort_order?: number;
+}
+
+export interface FinanceInvoiceBody {
+  organization_id: string;
+  contract_id?: string | null;
+  milestone_id?: string | null;
+  issue_date?: string;
+  due_date?: string;
+  currency?: string;
+  notes?: string;
+  lines: FinanceInvoiceLineBody[];
+}
+
+export interface FinancePaymentAllocationBody {
+  invoice_id: string;
+  amount_minor: number;
+}
+
+export interface FinancePaymentBody {
+  amount_minor: number;
+  currency?: string;
+  method: string;
+  reference?: string;
+  received_on: string;
+  account_id?: string | null;
+  notes?: string;
+  allocations?: FinancePaymentAllocationBody[];
+}
+
+export interface FinanceBudgetBody {
+  scope: string;
+  scope_ref?: string;
+  period_start: string;
+  period_end: string;
+  category_key?: string;
+  amount_minor: number;
+  currency?: string;
+  owner_person_id?: string | null;
+}
+
+export interface FinanceAccountBody {
+  name: string;
+  account_type: string;
+  currency?: string;
+  opening_balance_minor?: number;
+  active?: boolean;
+}
+
+export interface FinanceRecurringCostBody {
+  vendor: string;
+  description?: string;
+  amount_minor: number;
+  currency?: string;
+  cycle: string;
+  next_renewal_on: string;
+  owner_person_id?: string | null;
+  active?: boolean;
+}
+
+// expense
+export function createExpense(body: FinanceExpenseBody): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>("/api/v1/finance/expenses", { method: "POST", body });
+}
+
+export function updateExpense(
+  id: string,
+  body: FinanceExpenseBody,
+  version: number,
+): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>(`/api/v1/finance/expenses/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function submitExpense(id: string, version: number): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>(`/api/v1/finance/expenses/${id}/submit`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function decideExpense(
+  id: string,
+  version: number,
+  decision: "approve" | "reject",
+  reason?: string,
+): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>(`/api/v1/finance/expenses/${id}/decide`, {
+    method: "POST",
+    body: { decision, reason },
+    headers: ifMatch(version),
+  });
+}
+
+export function settleExpense(
+  id: string,
+  version: number,
+  body: { method: "paid" | "reimbursed"; account_id?: string; paid_on?: string },
+): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>(`/api/v1/finance/expenses/${id}/settle`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function reconcileExpense(id: string, version: number): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>(`/api/v1/finance/expenses/${id}/reconcile`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+// invoice
+export function createInvoice(body: FinanceInvoiceBody): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>("/api/v1/finance/invoices", { method: "POST", body });
+}
+
+export function updateInvoice(
+  id: string,
+  body: FinanceInvoiceBody,
+  version: number,
+): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>(`/api/v1/finance/invoices/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function approveInvoice(id: string, version: number): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>(`/api/v1/finance/invoices/${id}/approve`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function issueInvoice(
+  id: string,
+  version: number,
+  body?: { issue_date?: string; due_date?: string },
+): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>(`/api/v1/finance/invoices/${id}/issue`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function disputeInvoice(id: string, version: number, reason?: string): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>(`/api/v1/finance/invoices/${id}/dispute`, {
+    method: "POST",
+    body: { reason },
+    headers: ifMatch(version),
+  });
+}
+
+export function writeOffInvoice(id: string, version: number, reason: string): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>(`/api/v1/finance/invoices/${id}/write-off`, {
+    method: "POST",
+    body: { reason },
+    headers: ifMatch(version),
+  });
+}
+
+// payment
+export function createPayment(body: FinancePaymentBody): Promise<FinancePayment> {
+  return apiFetch<FinancePayment>("/api/v1/finance/payments", { method: "POST", body });
+}
+
+export function allocatePayment(
+  id: string,
+  version: number,
+  allocations: FinancePaymentAllocationBody[],
+): Promise<FinancePayment> {
+  return apiFetch<FinancePayment>(`/api/v1/finance/payments/${id}/allocate`, {
+    method: "POST",
+    body: { allocations },
+    headers: ifMatch(version),
+  });
+}
+
+export function reconcilePayment(
+  id: string,
+  version: number,
+  reconciled: boolean,
+): Promise<FinancePayment> {
+  return apiFetch<FinancePayment>(`/api/v1/finance/payments/${id}/reconcile`, {
+    method: "POST",
+    body: { reconciled },
+    headers: ifMatch(version),
+  });
+}
+
+// budget
+export function createBudget(body: FinanceBudgetBody): Promise<FinanceBudget> {
+  return apiFetch<FinanceBudget>("/api/v1/finance/budgets", { method: "POST", body });
+}
+
+export function updateBudget(
+  id: string,
+  body: FinanceBudgetBody,
+  version: number,
+): Promise<FinanceBudget> {
+  return apiFetch<FinanceBudget>(`/api/v1/finance/budgets/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function approveBudget(id: string, version: number): Promise<FinanceBudget> {
+  return apiFetch<FinanceBudget>(`/api/v1/finance/budgets/${id}/approve`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function closeBudget(id: string, version: number): Promise<FinanceBudget> {
+  return apiFetch<FinanceBudget>(`/api/v1/finance/budgets/${id}/close`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+// account
+export function createAccount(body: FinanceAccountBody): Promise<FinanceAccount> {
+  return apiFetch<FinanceAccount>("/api/v1/finance/accounts", { method: "POST", body });
+}
+
+export function updateAccount(
+  id: string,
+  body: FinanceAccountBody,
+  version: number,
+): Promise<FinanceAccount> {
+  return apiFetch<FinanceAccount>(`/api/v1/finance/accounts/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+// recurring cost
+export function createRecurringCost(body: FinanceRecurringCostBody): Promise<FinanceRecurringCost> {
+  return apiFetch<FinanceRecurringCost>("/api/v1/finance/recurring-costs", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateRecurringCost(
+  id: string,
+  body: FinanceRecurringCostBody,
+  version: number,
+): Promise<FinanceRecurringCost> {
+  return apiFetch<FinanceRecurringCost>(`/api/v1/finance/recurring-costs/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+// ── settings (§6.7) ─────────────────────────────────────────────────────────
+
+/** One typed configuration value (`core.settings`, §6.7). */
+export interface Setting {
+  key: string;
+  value: unknown;
+  type?: string;
+  description?: string;
+  version: number;
+  updated_by?: string;
+  updated_at?: string;
+}
+
+/** Every setting the caller may read (`core.settings.read`). */
+export function listSettings(): Promise<Page<Setting>> {
+  return apiFetch<Page<Setting>>("/api/v1/settings", { cache: "no-store" });
+}
+
+/** A single setting's raw value by key (`GET /api/v1/settings/{key}`). */
+export function getSetting(key: string): Promise<Setting> {
+  return apiFetch<Setting>(`/api/v1/settings/${encodeURIComponent(key)}`, {
+    cache: "no-store",
+  });
+}
+
+// ── audit (§6.6) - the footprint of every write ─────────────────────────────
+
+/** One audit row (`core.audit_log`): who did what, and when. */
+export interface AuditEntry {
+  id: string;
+  occurred_at: string;
+  actor_type: string;
+  actor_id: string;
+  on_behalf_of?: string;
+  action: string;
+  entity_type: string;
+  entity_id?: string;
+  reason?: string;
+  request_id?: string;
+}
+
+export interface AuditQuery extends Record<string, string | number | boolean | null | undefined> {
+  /** Exact entity type, e.g. `finance.invoice`. */
+  entity_type?: string;
+  /** Entity-type prefix, e.g. `finance` - one feed for a whole module (§8.4). */
+  module?: string;
+  actor_type?: string;
+  actor_id?: string;
+  action?: string;
+  entity_id?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+/** The audit trail (`GET /api/v1/audit`, `core.audit.read`). */
+export function listAudit(query: AuditQuery = {}): Promise<Page<AuditEntry>> {
+  return apiFetch<Page<AuditEntry>>("/api/v1/audit", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** One record's history (`GET /api/v1/audit/{entity_type}/{entity_id}`). */
+export function auditHistory(
+  entityType: string,
+  entityId: string,
+  query: { limit?: number; cursor?: string } = {},
+): Promise<Page<AuditEntry>> {
+  return apiFetch<Page<AuditEntry>>(
+    `/api/v1/audit/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
+    { query, cache: "no-store" },
+  );
 }
 
 // ── files (§6.5) - evidence attaches a stored file ──────────────────────────

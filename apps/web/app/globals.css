@@ -33,3 +33,30 @@ body {
     scrollbar-color: #c7cfdd transparent;
   }
 }
+
+/* Printing an Atlas page prints the page. The navy sidebar and the sticky top
+   bar are screen chrome (ADR-007) and mean nothing on paper, so Ctrl+P drops
+   them and the content takes the whole sheet - which is what makes the
+   printable invoice at /finance/invoices/{id}/print usable straight off the
+   printer. Regions are marked in the app shell layout. */
+@media print {
+  .app-shell {
+    display: block;
+    min-height: 0;
+    background: #fff;
+  }
+
+  .app-shell [data-atlas-region="sidebar"],
+  .app-shell [data-atlas-region="content"] > header {
+    display: none !important;
+  }
+
+  .app-shell main {
+    max-width: none;
+    padding: 0;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

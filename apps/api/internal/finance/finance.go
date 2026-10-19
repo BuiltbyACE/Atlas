@@ -2,12 +2,14 @@
 // position, receivables, project profitability, budgets and spending
 // (docs/ATLAS.md §8.4).
 //
-// This pass is read-only. It answers the questions the finance screens ask —
-// what cash is on hand, what clients owe and how overdue it is, what a project
-// really earns, what is budgeted against actuals, and which standing costs are
-// about to renew. The write lifecycle (expenses.submit/decide, invoices.issue,
-// payments.record) is deliberately out of scope; the storage it needs already
-// exists (migration 00022).
+// This package owns both halves: the read queries that answer the questions
+// the finance screens ask — what cash is on hand, what clients owe and how
+// overdue it is, what a project really earns, what is budgeted against
+// actuals, and which standing costs are about to renew — and the write
+// lifecycle that moves an expense through approval to settlement, an invoice
+// from draft to issued and paid, a payment onto the invoices it settles, and a
+// budget through approval to close. Storage for both came in migration 00022;
+// the receipt, tax-reference and settlement columns came in 00023.
 //
 // Money is integer minor units with a currency (ADR-010): no floats, and never
 // an amount without a currency. Go is the sole writer (ADR-002) and owns every
@@ -19,6 +21,7 @@ package finance
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -27,9 +30,61 @@ import (
 
 // Sentinel errors. The HTTP layer maps these onto problem responses.
 var (
-	ErrNotFound = errors.New("finance: not found")
-	ErrInvalid  = errors.New("finance: invalid")
+	ErrNotFound  = errors.New("finance: not found")
+	ErrInvalid   = errors.New("finance: invalid")
+	ErrConflict  = errors.New("finance: conflict")
+	ErrForbidden = errors.New("finance: forbidden")
+	ErrDuplicate = errors.New("finance: duplicate")
 )
+
+// Stable problem codes for the write lifecycle. Clients branch on `code`, so
+// every refusal the service can raise has one constant here rather than a
+// hand-written string at the raise site.
+const (
+	CodeExpenseNotEditable     = "FINANCE_EXPENSE_NOT_EDITABLE"
+	CodeExpenseNotSubmittable  = "FINANCE_EXPENSE_NOT_SUBMITTABLE"
+	CodeExpenseNotDecidable    = "FINANCE_EXPENSE_NOT_DECIDABLE"
+	CodeExpenseNotSettleable   = "FINANCE_EXPENSE_NOT_SETTLEABLE"
+	CodeExpenseNotReconcilable = "FINANCE_EXPENSE_NOT_RECONCILABLE"
+	CodeReceiptRequired        = "FINANCE_RECEIPT_REQUIRED"
+	CodeInvoiceNotIssuable     = "FINANCE_INVOICE_NOT_ISSUABLE"
+	CodeInvoiceNotEditable     = "FINANCE_INVOICE_NOT_EDITABLE"
+	CodeInvoiceNotAllocable    = "FINANCE_INVOICE_NOT_ALLOCABLE"
+	CodeBudgetNotEditable      = "FINANCE_BUDGET_NOT_EDITABLE"
+	CodeBudgetNotApprovable    = "FINANCE_BUDGET_NOT_APPROVABLE"
+	CodeBudgetNotClosable      = "FINANCE_BUDGET_NOT_CLOSABLE"
+	CodeReasonRequired         = "FINANCE_REASON_REQUIRED"
+	CodePaymentOverAllocated   = "FINANCE_PAYMENT_OVER_ALLOCATED"
+)
+
+// codedError overlays a stable problem code on top of a sentinel error. The
+// HTTP layer still derives the status from the sentinel; the code is what the
+// client keys on.
+type codedError struct {
+	err  error
+	code string
+}
+
+func (e *codedError) Error() string { return e.err.Error() }
+func (e *codedError) Unwrap() error { return e.err }
+
+// withCode attaches a stable problem code to err. Non-sentinel errors pass
+// through untouched so wrapping never hides an unexpected failure.
+func withCode(err error, code string) error {
+	if err == nil {
+		return nil
+	}
+	return &codedError{err: err, code: code}
+}
+
+// problemCode reports the stable problem code for err, or "" when it has none.
+func problemCode(err error) string {
+	var ce *codedError
+	if errors.As(err, &ce) {
+		return ce.code
+	}
+	return ""
+}
 
 // BaseCurrency is the currency the finance headline consolidates into. The
 // management-finance views report a single figure, so multi-currency
@@ -210,7 +265,9 @@ type ExpenseCategory struct {
 	Active    bool
 }
 
-// Expense is a claim (§8.4).
+// Expense is a claim (§8.4). The decision is one audited step: the approver is
+// recorded on the row (decided_by/decided_at/decision_reason) and in the audit
+// trail, which is the control that makes self-approval safe (§6.6).
 type Expense struct {
 	ID               uuid.UUID
 	Ref              string
@@ -229,6 +286,9 @@ type Expense struct {
 	DecidedAt        *time.Time
 	DecisionReason   string
 	Notes            string
+	ReceiptFileID    *uuid.UUID
+	TaxInvoiceRef    *string
+	PaidOn           *time.Time
 	Version          int
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
@@ -435,7 +495,12 @@ func normalizeCurrency(c string) string {
 	return c
 }
 
+// validateCurrency accepts a three-letter ISO code in any case. Currency is
+// normalised to upper case on the way into a record, so a lower-case code is a
+// formatting difference, not a bad value; an omitted code falls back to the
+// base currency.
 func validateCurrency(c string) error {
+	c = normalizeCurrency(c)
 	if len(c) != 3 {
 		return fmt.Errorf("%w: currency must be a three-letter code", ErrInvalid)
 	}
@@ -468,3 +533,212 @@ func monthlyEquivalent(amount *int64, cycle RecurringCycle) *int64 {
 	v := *amount / months
 	return &v
 }
+
+// ── write inputs (§8.4) ─────────────────────────────────────────────────────
+
+// Entity types carried on audit events and quoted by the audit feed.
+const (
+	EntityExpense       = "finance.expense"
+	EntityInvoice       = "finance.invoice"
+	EntityPayment       = "finance.payment"
+	EntityBudget        = "finance.budget"
+	EntityAccount       = "finance.account"
+	EntityRecurringCost = "finance.recurring_cost"
+)
+
+// Decision is an approver's answer to a submitted claim. Approval is one
+// audited step; a rejection always carries a reason (§8.4).
+type Decision string
+
+const (
+	DecisionApprove Decision = "approve"
+	DecisionReject  Decision = "reject"
+)
+
+func validDecision(d Decision) bool {
+	return d == DecisionApprove || d == DecisionReject
+}
+
+// ExpenseInput is a claim's editable fields. ClaimantPersonID is optional on
+// create (it defaults to the actor) and required on update.
+type ExpenseInput struct {
+	ClaimantPersonID *uuid.UUID
+	CategoryKey      string
+	ProjectID        *uuid.UUID
+	AmountMinor      int64
+	Currency         string
+	SpentOn          time.Time
+	Vendor           string
+	PaymentMethod    *PaymentMethod
+	AccountID        *uuid.UUID
+	ReceiptFileID    *uuid.UUID
+	TaxInvoiceRef    string
+	Notes            string
+}
+
+// ExpenseSettleInput carries a settlement: the target status (paid for money
+// that left an account, reimbursed for money owed back to the claimant), the
+// account it left from and the day it moved.
+type ExpenseSettleInput struct {
+	Method    ExpenseStatus
+	AccountID *uuid.UUID
+	PaidOn    *time.Time
+}
+
+// InvoiceLineInput is one line as a client sends it. AmountMinor is derived by
+// Go from Quantity × UnitPriceMinor; a client cannot set it.
+type InvoiceLineInput struct {
+	Description    string
+	Quantity       float64
+	UnitPriceMinor int64
+	TaxRateBP      int
+	SortOrder      int
+}
+
+// InvoiceInput is an invoice's editable fields and its lines.
+type InvoiceInput struct {
+	OrganizationID uuid.UUID
+	ContractID     *uuid.UUID
+	MilestoneID    *uuid.UUID
+	IssueDate      *time.Time
+	DueDate        *time.Time
+	Currency       string
+	Notes          string
+	Lines          []InvoiceLineInput
+}
+
+// InvoiceIssueInput optionally re-dates an invoice at issue. A blank date is
+// filled by Go from the contract terms (or today plus the default term).
+type InvoiceIssueInput struct {
+	IssueDate *time.Time
+	DueDate   *time.Time
+}
+
+// PaymentAllocationInput says how much of a payment settles which invoice.
+type PaymentAllocationInput struct {
+	InvoiceID   uuid.UUID
+	AmountMinor int64
+}
+
+// PaymentInput is money received, optionally allocated in the same write.
+type PaymentInput struct {
+	AmountMinor int64
+	Currency    string
+	Method      PaymentMethod
+	Reference   string
+	ReceivedOn  time.Time
+	AccountID   *uuid.UUID
+	Notes       string
+	Allocations []PaymentAllocationInput
+}
+
+// BudgetInput is a ceiling for a scope and period.
+type BudgetInput struct {
+	Scope         BudgetScope
+	ScopeRef      string
+	PeriodStart   time.Time
+	PeriodEnd     time.Time
+	CategoryKey   string
+	AmountMinor   int64
+	Currency      string
+	OwnerPersonID *uuid.UUID
+}
+
+// AccountInput is a cash account's editable fields. Active is optional so a
+// create defaults to true and an update can leave it untouched.
+type AccountInput struct {
+	Name                string
+	AccountType         AccountType
+	Currency            string
+	OpeningBalanceMinor *int64
+	Active              *bool
+}
+
+// RecurringCostInput is a standing vendor cost's editable fields.
+type RecurringCostInput struct {
+	Vendor        string
+	Description   string
+	AmountMinor   int64
+	Currency      string
+	Cycle         RecurringCycle
+	NextRenewalOn time.Time
+	OwnerPersonID *uuid.UUID
+	Active        *bool
+}
+
+// ── lifecycle rules (§8.4) ──────────────────────────────────────────────────
+//
+// Each predicate is the single place a transition is allowed from. The store
+// writes the status; the service checks these first, so an illegal move is a
+// stable problem code rather than a silent no-op.
+
+func expenseEditable(s ExpenseStatus) bool { return s == ExpenseDraft }
+
+// expenseSubmittable includes rejected: a rejected claim can be corrected and
+// sent again without being retyped from scratch.
+func expenseSubmittable(s ExpenseStatus) bool {
+	return s == ExpenseDraft || s == ExpenseRejected
+}
+
+func expenseDecidable(s ExpenseStatus) bool  { return s == ExpenseSubmitted }
+func expenseSettleable(s ExpenseStatus) bool { return s == ExpenseApproved }
+
+func expenseReconcilable(s ExpenseStatus) bool {
+	return s == ExpensePaid || s == ExpenseReimbursed
+}
+
+func invoiceEditable(s InvoiceStatus) bool {
+	return s == InvoiceDraft || s == InvoiceScheduled
+}
+
+func invoiceApprovable(s InvoiceStatus) bool { return invoiceEditable(s) }
+func invoiceIssuable(s InvoiceStatus) bool   { return s == InvoiceApproved }
+
+// invoiceDisputable and invoiceWritableOff cover the open states a client can
+// still argue about; a draft has not been sent, so it cannot be disputed.
+func invoiceDisputable(s InvoiceStatus) bool {
+	return s == InvoiceIssued || s == InvoicePartiallyPaid || s == InvoiceOverdue
+}
+
+func invoiceWritableOff(s InvoiceStatus) bool {
+	return invoiceDisputable(s) || s == InvoiceDisputed
+}
+
+// invoiceAllocable is the set of invoices a payment may be matched against.
+// A disputed invoice can still be paid (the dispute may be about part of the
+// bill); a written-off one cannot.
+func invoiceAllocable(s InvoiceStatus) bool {
+	return s == InvoiceIssued || s == InvoicePartiallyPaid || s == InvoiceOverdue || s == InvoiceDisputed
+}
+
+func budgetEditable(s BudgetStatus) bool   { return s == BudgetDraft }
+func budgetApprovable(s BudgetStatus) bool { return s == BudgetDraft }
+func budgetClosable(s BudgetStatus) bool   { return s == BudgetApproved }
+
+// ── money arithmetic ────────────────────────────────────────────────────────
+
+// lineAmountMinor is a line's pre-tax amount: quantity × unit price, rounded
+// to the nearest minor unit. Quantity is decimal, the money stays integer.
+func lineAmountMinor(quantity float64, unitPriceMinor int64) int64 {
+	return int64(math.Round(quantity * float64(unitPriceMinor)))
+}
+
+// lineTaxMinor is the tax on an amount at a basis-point rate (1600 = 16%).
+func lineTaxMinor(amountMinor int64, taxRateBP int) int64 {
+	return int64(math.Round(float64(amountMinor) * float64(taxRateBP) / 10000))
+}
+
+// invoiceLinesTotal is what the client owes: the pre-tax lines plus each
+// line's tax. It is computed here, never trusted from the request.
+func invoiceLinesTotal(lines []InvoiceLineInput) int64 {
+	var total int64
+	for _, l := range lines {
+		amount := lineAmountMinor(l.Quantity, l.UnitPriceMinor)
+		total += amount + lineTaxMinor(amount, l.TaxRateBP)
+	}
+	return total
+}
+
+// defaultPaymentTermDays is the fallback due-date term when an invoice is
+// issued without one and its contract names no term.
+const defaultPaymentTermDays = 30

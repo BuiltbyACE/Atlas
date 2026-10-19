@@ -38,6 +38,7 @@ defmodule AtlasOrchestrator.Finance.Handler do
     "finance.expense.submitted.v1" => {"expense", "expense_id"},
     "finance.expense.approved.v1" => {"expense", "expense_id"},
     "finance.expense.rejected.v1" => {"expense", "expense_id"},
+    "finance.invoice.scheduled.v1" => {"invoice", "invoice_id"},
     "finance.invoice.issued.v1" => {"invoice", "invoice_id"},
     "finance.invoice.overdue.v1" => {"invoice", "invoice_id"},
     "finance.payment.received.v1" => {"payment", "payment_id"},

@@ -138,6 +138,13 @@ const PATHS = {
   ),
   more: <path d="M6 12h.01M12 12h.01M18 12h.01" strokeWidth={3} />,
   grip: <path d="M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01" strokeWidth={3} />,
+  printer: (
+    <>
+      <path d="M7 9.5V4h10v5.5" />
+      <path d="M7 17H5a2 2 0 0 1-2-2v-3.5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2V15a2 2 0 0 1-2 2h-2" />
+      <rect x="7" y="13.5" width="10" height="6.5" rx="1" />
+    </>
+  ),
   paperclip: <path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.2-8.2a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4l7.5-7.5" />,
   close: <path d="M6 6l12 12M18 6 6 18" />,
   slash: (

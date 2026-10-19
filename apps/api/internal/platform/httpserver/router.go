@@ -450,8 +450,12 @@ func registerContracts(reg *routing.Registry, h *contracts.Handler) {
 		"Reject a change request", h.RejectChangeRequest)
 }
 
-// registerFinance declares the finance & commercial-control surface (§8.4).
-// This pass is read-only: every route is a GET, and the money-bearing reads are
+// registerFinance declares the finance & commercial-control surface (§8.4):
+// the reporting reads, and the write lifecycle that moves an expense through
+// approval to settlement, an invoice from draft to issued and paid, a payment
+// onto the invoices it settles, and a budget through approval to close.
+//
+// Each write declares the permission it needs. The money-bearing reads are
 // gated by the module's read permissions, with amount visibility decided
 // separately per request by finance.amount.sensitive.read.
 func registerFinance(reg *routing.Registry, h *finance.Handler) {
@@ -476,22 +480,70 @@ func registerFinance(reg *routing.Registry, h *finance.Handler) {
 		"List expenses", h.ListExpenses)
 	reg.Gated("finance.expense.read", http.MethodGet, "/api/v1/finance/expenses/{id}",
 		"Get an expense", h.GetExpense)
+	reg.Gated("finance.expense.write", http.MethodPost, "/api/v1/finance/expenses",
+		"Record an expense claim", h.CreateExpense)
+	reg.Gated("finance.expense.write", http.MethodPut, "/api/v1/finance/expenses/{id}",
+		"Edit a draft expense claim", h.UpdateExpense)
+	reg.Gated("finance.expense.write", http.MethodPost, "/api/v1/finance/expenses/{id}/submit",
+		"Submit an expense claim for approval", h.SubmitExpense)
+	reg.Gated("finance.expense.approve", http.MethodPost, "/api/v1/finance/expenses/{id}/decide",
+		"Approve or reject a submitted expense claim", h.DecideExpense)
+	reg.Gated("finance.payment.record", http.MethodPost, "/api/v1/finance/expenses/{id}/settle",
+		"Mark an approved expense paid or reimbursed", h.SettleExpense)
+	reg.Gated("finance.payment.record", http.MethodPost, "/api/v1/finance/expenses/{id}/reconcile",
+		"Reconcile a settled expense against the statement", h.ReconcileExpense)
 
 	// Invoices.
 	reg.Gated("finance.invoice.read", http.MethodGet, "/api/v1/finance/invoices",
 		"List invoices", h.ListInvoices)
 	reg.Gated("finance.invoice.read", http.MethodGet, "/api/v1/finance/invoices/{id}",
 		"Get an invoice with its lines", h.GetInvoice)
+	reg.Gated("finance.invoice.write", http.MethodPost, "/api/v1/finance/invoices",
+		"Create a draft invoice", h.CreateInvoice)
+	reg.Gated("finance.invoice.write", http.MethodPut, "/api/v1/finance/invoices/{id}",
+		"Edit a draft invoice and its lines", h.UpdateInvoice)
+	reg.Gated("finance.invoice.write", http.MethodPost, "/api/v1/finance/invoices/{id}/approve",
+		"Approve an invoice before issue", h.ApproveInvoice)
+	reg.Gated("finance.invoice.issue", http.MethodPost, "/api/v1/finance/invoices/{id}/issue",
+		"Issue an invoice to its client", h.IssueInvoice)
+	reg.Gated("finance.invoice.write", http.MethodPost, "/api/v1/finance/invoices/{id}/dispute",
+		"Flag an issued invoice as disputed", h.DisputeInvoice)
+	reg.Gated("finance.invoice.issue", http.MethodPost, "/api/v1/finance/invoices/{id}/write-off",
+		"Write off an uncollectable invoice", h.WriteOffInvoice)
 
 	// Payments.
 	reg.Gated("finance.payment.read", http.MethodGet, "/api/v1/finance/payments",
 		"List payments", h.ListPayments)
+	reg.Gated("finance.payment.record", http.MethodPost, "/api/v1/finance/payments",
+		"Record money received and optionally allocate it", h.CreatePayment)
+	reg.Gated("finance.payment.record", http.MethodPost, "/api/v1/finance/payments/{id}/allocate",
+		"Allocate a payment onto invoices", h.AllocatePayment)
+	reg.Gated("finance.payment.record", http.MethodPost, "/api/v1/finance/payments/{id}/reconcile",
+		"Mark a payment reconciled against the statement", h.ReconcilePayment)
 
 	// Budgets.
 	reg.Gated("finance.budget.read", http.MethodGet, "/api/v1/finance/budgets",
 		"List budgets with their actuals", h.ListBudgets)
 	reg.Gated("finance.budget.read", http.MethodGet, "/api/v1/finance/budgets/{id}",
 		"Get a budget", h.GetBudget)
+	reg.Gated("finance.budget.manage", http.MethodPost, "/api/v1/finance/budgets",
+		"Draft a budget ceiling", h.CreateBudget)
+	reg.Gated("finance.budget.manage", http.MethodPut, "/api/v1/finance/budgets/{id}",
+		"Edit a draft budget", h.UpdateBudget)
+	reg.Gated("finance.budget.manage", http.MethodPost, "/api/v1/finance/budgets/{id}/approve",
+		"Approve a budget ceiling", h.ApproveBudget)
+	reg.Gated("finance.budget.manage", http.MethodPost, "/api/v1/finance/budgets/{id}/close",
+		"Close a budget at the end of its period", h.CloseBudget)
+
+	// Cash accounts and standing costs.
+	reg.Gated("finance.account.manage", http.MethodPost, "/api/v1/finance/accounts",
+		"Open a cash account", h.CreateAccount)
+	reg.Gated("finance.account.manage", http.MethodPut, "/api/v1/finance/accounts/{id}",
+		"Edit a cash account", h.UpdateAccount)
+	reg.Gated("finance.recurring_cost.manage", http.MethodPost, "/api/v1/finance/recurring-costs",
+		"Record a standing vendor cost", h.CreateRecurringCost)
+	reg.Gated("finance.recurring_cost.manage", http.MethodPut, "/api/v1/finance/recurring-costs/{id}",
+		"Edit a standing vendor cost", h.UpdateRecurringCost)
 }
 
 // registerWork declares the Phase 2 work-orchestration surface (§8.2).

@@ -30,44 +30,74 @@ import {
   getFinanceOverview,
   getReceivables,
   listBudgets,
+  listContracts,
   listExpenseCategories,
   listExpenses,
+  listFinanceAccounts,
   listInvoices,
+  listAudit,
+  listOrganizations,
+  listPayments,
+  listProjects,
   listRecurringCosts,
   type CashPosition,
+  type AuditEntry,
+  type FinanceAccount,
   type FinanceBudget,
   type FinanceExpense,
   type FinanceExpenseCategory,
   type FinanceInvoice,
   type FinanceOverview,
+  type FinancePayment,
   type ReceivablesAgeing,
 } from "@/lib/api/atlas";
 import { ApiError } from "@/lib/api/client";
-import { personDirectory, personName } from "@/lib/directory";
+import { requireUser } from "@/lib/auth/session";
+import { personDirectory, personName, rosterOf } from "@/lib/directory";
 import { FINANCE_TOPIC } from "@/lib/realtime/topics";
 import {
+  formatDateTime,
   formatDay,
   formatMinor,
   formatMinorCompact,
   humanise,
 } from "@/lib/format";
 
+import { AccountActions, NewAccountButton } from "./account-form";
+import { BudgetActions, NewBudgetButton } from "./budget-form";
+import { ExpenseActions, NewExpenseButton } from "./expense-form";
+import { InvoiceActions, NewInvoiceButton } from "./invoice-form";
+import { PaymentActions, RecordPaymentButton, type OpenInvoice } from "./payment-form";
+import { financeCapabilities } from "./permissions";
+import { NewRecurringCostButton, RecurringCostActions } from "./recurring-cost-form";
+
 /**
  * Finance (`GET /api/v1/finance/*`, gated by `finance.*`; blueprint §8.4). The
  * page reads the headline roll-up, the cash position, receivables ageing, one
- * page of expenses, invoices and budgets, the recurring costs and the expense
- * categories, then composes the management-finance picture. Go owns every rule
- * and amount; nothing here writes.
+ * page of expenses, invoices, payments and budgets, the accounts, the recurring
+ * costs and the expense categories, then composes the management-finance
+ * picture and hangs the write controls off it.
  *
  * Every `*_minor` field is withheld by Go unless the viewer holds
  * `finance.amount.sensitive.read`, so a missing amount is shown as restricted,
  * never as zero.
+ *
+ * Go owns every rule and every authorisation. The controls are shown from the
+ * viewer's roles (`financeCapabilities`), which is a convenience and never the
+ * guard: a refused write comes back from Go and is shown as it was given.
+ *
+ * The last panel is the module's own footprint (`GET /api/v1/audit?module=finance`,
+ * §6.6): every finance write in order, with the actor's name on it. It loads
+ * with the page and is left off entirely for a viewer without `core.audit.read`.
  */
 
 export const dynamic = "force-dynamic";
 
 /** Invoice states that are no longer collectable (never counted as overdue). */
 const CLOSED_INVOICE_STATUSES = new Set(["paid", "written_off"]);
+
+/** Invoice states a payment may still be allocated against (§8.4). */
+const OPEN_INVOICE_STATUSES = new Set(["issued", "partially_paid", "overdue"]);
 
 /** Ageing-bucket bar colours, oldest last (worst). */
 const AGE_COLORS = [
@@ -155,6 +185,11 @@ function kpiMoney(minor: number | undefined, currency: string): ReactNode {
   return formatMinorCompact(minor, currency);
 }
 
+/** The verb of an audit action (`finance.invoice.issued` -> "Issued"). */
+function eventTitle(action: string): string {
+  return humanise(action.split(".").pop() ?? action);
+}
+
 /** A settled load: either a value or the `ApiError` Go returned. */
 async function load<T>(fn: () => Promise<T>): Promise<{ value: T | null; error: ApiError | null }> {
   try {
@@ -181,6 +216,9 @@ export default async function FinancePage({
   const overdueOnly = params.overdue === "1";
   const categoryParam = params.category;
 
+  // Who is looking decides which write controls appear. Go still authorises.
+  const user = await requireUser();
+
   const [
     overview,
     cash,
@@ -190,6 +228,12 @@ export default async function FinancePage({
     budgetsPage,
     recurring,
     categories,
+    accountsResult,
+    paymentsPage,
+    projectsPage,
+    organizationsPage,
+    contractsPage,
+    activityPage,
   ] = await Promise.all([
     load(() => getFinanceOverview()),
     load(() => getCashPosition()),
@@ -199,6 +243,14 @@ export default async function FinancePage({
     load(() => listBudgets({ limit: 200 })),
     load(() => listRecurringCosts()),
     load(() => listExpenseCategories()),
+    load(() => listFinanceAccounts()),
+    load(() => listPayments({ limit: 200 })),
+    load(() => listProjects({ limit: 200 })),
+    load(() => listOrganizations({ limit: 200 })),
+    load(() => listContracts({ limit: 200 })),
+    // The module's own footprint (§6.6). Not every finance reader holds
+    // `core.audit.read`, so a refusal simply leaves the panel off the page.
+    load(() => listAudit({ module: "finance", limit: 12 })),
   ]);
 
   // The overview is the page: if it cannot be read, say why and stop.
@@ -230,8 +282,41 @@ export default async function FinancePage({
   const budgets = budgetsPage.value?.items ?? [];
   const recurringCosts = recurring.value ?? [];
   const categoryList: FinanceExpenseCategory[] = categories.value ?? [];
+  const accounts: FinanceAccount[] = accountsResult.value ?? [];
+  const payments: FinancePayment[] = paymentsPage.value?.items ?? [];
+  const projectOptions = (projectsPage.value?.items ?? []).map((project) => ({
+    id: project.id,
+    name: project.name,
+  }));
+  const organizationOptions = (organizationsPage.value?.items ?? []).map((organization) => ({
+    id: organization.id,
+    name: organization.name,
+  }));
+  const contractOptions = (contractsPage.value?.items ?? []).map((contract) => ({
+    id: contract.id,
+    label: `${contract.ref} · ${humanise(contract.contract_type)}`,
+  }));
 
   const names = await personDirectory();
+  const people = rosterOf(names);
+  const capabilities = financeCapabilities(user.roles);
+  const me = user.person_id;
+
+  // Invoices a payment can still be spread over; a restricted outstanding is
+  // left in and capped per invoice by Go, never guessed here.
+  const openInvoices: OpenInvoice[] = invoices
+    .filter(
+      (invoice) =>
+        OPEN_INVOICE_STATUSES.has(invoice.status) &&
+        (invoice.outstanding_minor === undefined || invoice.outstanding_minor > 0),
+    )
+    .map((invoice) => ({
+      id: invoice.id,
+      label: `${invoice.ref}${
+        invoice.organization_name ? ` · ${invoice.organization_name}` : ""
+      }`,
+      outstanding_minor: invoice.outstanding_minor,
+    }));
 
   const currency = summary.currency || "KES";
   const categoryFilter = categoryList.find((c) => c.key === categoryParam)?.key;
@@ -777,6 +862,76 @@ export default async function FinancePage({
           </Table>
         )}
       </Card>
+
+      {/* The footprint (§6.6): only shown to a viewer Go lets read the trail. */}
+      {activityPage.value && (
+        <Card
+          title="Recent finance activity"
+          description="Who changed what in Finance, and when — every write lands in the audit trail with a name on it (§6.6)."
+          padded={false}
+        >
+          {activityPage.value.items.length === 0 ? (
+            <div className="p-[22px]">
+              <EmptyState
+                icon="pulse"
+                iconTone="info"
+                className="min-h-[180px]"
+                title="No finance activity yet"
+              >
+                Claims, invoices, payments and budgets record the actor, the change and the
+                timestamp here the moment someone makes one.
+              </EmptyState>
+            </div>
+          ) : (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Event</Th>
+                  <Th>Record</Th>
+                  <Th>By</Th>
+                  <Th>When</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {activityPage.value.items.map((entry) => {
+                  const isSystem = entry.actor_type !== "user";
+                  const isViewer = !isSystem && entry.actor_id === me;
+                  return (
+                    <tr key={entry.id}>
+                      <Td>
+                        <span className="flex flex-col items-start gap-0.5">
+                          <b className="text-[14.5px] font-semibold">
+                            {eventTitle(entry.action)}
+                          </b>
+                          <span className="font-mono text-xs text-muted">{entry.action}</span>
+                          {entry.reason && (
+                            <span className="text-[12.5px] italic text-muted">
+                              {entry.reason}
+                            </span>
+                          )}
+                        </span>
+                      </Td>
+                      <Td className="text-muted">
+                        {humanise(entry.entity_type.replace(/\./g, " "))}
+                      </Td>
+                      <Td className="whitespace-nowrap">
+                        {isSystem
+                          ? "System"
+                          : isViewer
+                            ? "You"
+                            : personName(names, entry.actor_id)}
+                      </Td>
+                      <Td className="whitespace-nowrap text-muted">
+                        {formatDateTime(entry.occurred_at)}
+                      </Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+          )}
+        </Card>
+      )}
     </div>
   );
 }
