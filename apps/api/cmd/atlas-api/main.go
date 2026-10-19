@@ -26,6 +26,8 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/contracts"
+	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
@@ -163,6 +165,23 @@ func run() error {
 	// local lands on the day the worker's sweep will look for (§8.5, ADR-017).
 	peopleService.SetPolicy(people.NewSettingsPolicy(settingsService))
 
+	// CRM & sales (Phase 3, §8.1): organizations, contacts, leads,
+	// opportunities, interactions, follow-ups and proposals. Go is the authority;
+	// state changes emit crm.* outbox events for the orchestrator to react to
+	// (ADR-009). The WhatsApp and telephony providers are deferred (ADR-011,
+	// ADR-012), so interactions are recorded manually. The public website-form
+	// webhook authenticates the website with a shared secret.
+	crmService := crm.NewService(crm.NewPGStore(pool), auditWriter, logger)
+	crmHandler := crm.NewHandler(crmService, cfg.WebsiteFormWebhookSecret, logger)
+
+	// Contracts & commitments (Phase 3, §8.3): the contract lifecycle, its
+	// milestones, deliverables, obligations and SLA terms, and the change
+	// requests that amend a signed agreement. Contracts are drafted from an
+	// accepted proposal; signing emits contracts.contract.signed.v1, which
+	// unlocks handover and the financial schedule in later phases.
+	contractsService := contracts.NewService(contracts.NewPGStore(pool), auditWriter, logger)
+	contractsHandler := contracts.NewHandler(contractsService, logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -179,6 +198,8 @@ func run() error {
 		Work:         work.NewHandler(workService, logger),
 		People:       people.NewHandler(peopleService, logger),
 		Integrations: integrationHandler,
+		CRM:          crmHandler,
+		Contracts:    contractsHandler,
 	})
 
 	srv := &http.Server{

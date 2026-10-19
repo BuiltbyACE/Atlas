@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/contracts.contract.signed.v1.schema.json",
+  "title": "contracts.contract.signed.v1",
+  "description": "A signature was recorded on a contract; this unlocks handover and the financial schedule (docs/ATLAS.md §8.3, §9.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_id", "ref", "signed_by", "signed_at", "occurred_at"],
+  "properties": {
+    "contract_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "signed_by": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "signed_at": { "type": "string", "format": "date-time" },
+    "actor_id": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

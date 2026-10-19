@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/crm.opportunity.stage_changed.v1.schema.json",
+  "title": "crm.opportunity.stage_changed.v1",
+  "description": "An opportunity moved pipeline stage (docs/ATLAS.md §8.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["opportunity_id", "ref", "from", "to", "occurred_at"],
+  "properties": {
+    "opportunity_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "from": { "type": "string", "maxLength": 60 },
+    "to": { "type": "string", "maxLength": 60 },
+    "changed_by": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

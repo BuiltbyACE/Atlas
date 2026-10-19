@@ -19,6 +19,11 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
       dashboard (task/board and overdue-work tiles);
     * `people.*.v1` — push `<entity>.changed` to any named person plus
       `dashboard.changed` to the dashboard (daily-report and leave tiles);
+    * `crm.*.v1` — push `<entity>.changed` to the commercial board (`crm:sales`),
+      any named owner, plus `dashboard.changed` to the dashboard (commercial
+      tiles);
+    * `contracts.*.v1` — push `<entity>.changed` to the contracts board
+      (`contracts:board`) plus `dashboard.changed` to the dashboard;
     * `integrations.git.pull_request.merged.v1` — a merged pull request the
       integration linked to a task (`work` entity): the same project board and
       dashboard nudges as `work.evidence.added.v1`.
@@ -29,6 +34,8 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   require Logger
 
   alias AtlasOrchestrator.Approvals.Handler, as: ApprovalsHandler
+  alias AtlasOrchestrator.Contracts.Handler, as: ContractsHandler
+  alias AtlasOrchestrator.Crm.Handler, as: CrmHandler
   alias AtlasOrchestrator.Dashboard.Handler, as: DashboardHandler
   alias AtlasOrchestrator.Notifications.Handler, as: NotificationsHandler
   alias AtlasOrchestrator.Outbox.Event
@@ -72,6 +79,17 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
 
   def dispatch(%Event{type: "people." <> _} = event) do
     PeopleHandler.handle_event(event)
+  end
+
+  # CRM & sales (§8.1): nudge the commercial board, any named owner and the
+  # dashboard. The handler reads the payload keys Go wrote (internal/outbox/crm.go).
+  def dispatch(%Event{type: "crm." <> _} = event) do
+    CrmHandler.handle_event(event)
+  end
+
+  # Contracts & commitments (§8.3): nudge the contracts board and the dashboard.
+  def dispatch(%Event{type: "contracts." <> _} = event) do
+    ContractsHandler.handle_event(event)
   end
 
   def dispatch(%Event{type: "core.escalation." <> _} = event) do

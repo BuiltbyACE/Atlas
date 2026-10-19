@@ -185,6 +185,48 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
   end
 
+  test "a crm event is routed to the crm handler" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "crm:sales")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "crm.opportunity.stage_changed.v1",
+      seq: 8,
+      payload: %{
+        "opportunity_id" => Ecto.UUID.generate(),
+        "from" => "discovery",
+        "to" => "negotiation"
+      },
+      occurred_at: ~U[2026-10-19 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "crm:sales",
+      event: "opportunity.changed"
+    }
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
+  test "a contracts event is routed to the contracts handler" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "contracts:board")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "contracts.contract.signed.v1",
+      seq: 9,
+      payload: %{"contract_id" => Ecto.UUID.generate(), "ref" => "CTR-2026-0001"},
+      occurred_at: ~U[2026-10-19 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "contracts:board", event: "contract.changed"}
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
   test "an unknown event type is ignored, not failed" do
     assert :ok =
              Handlers.dispatch(%Event{id: Ecto.UUID.generate(), type: "x.y.z.v1", payload: %{}})

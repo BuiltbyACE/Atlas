@@ -19,6 +19,8 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/contracts"
+	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
@@ -64,6 +66,14 @@ type Deps struct {
 	// mounted when present. Its route is public: the provider authenticates
 	// with an HMAC signature, not a principal.
 	Integrations *integrations.Handler
+	// CRM is the Phase 3 client-acquisition surface (organizations, contacts,
+	// leads, opportunities, interactions, follow-ups, proposals) plus the
+	// public website-form webhook; mounted when present.
+	CRM *crm.Handler
+	// Contracts is the Phase 3 contracts surface (contracts, milestones,
+	// deliverables, obligations, SLA terms, change requests); mounted when
+	// present.
+	Contracts *contracts.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -135,6 +145,14 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Integrations != nil {
 		registerIntegrations(reg, d.Integrations)
+	}
+
+	if d.CRM != nil {
+		registerCRM(reg, d.CRM)
+	}
+
+	if d.Contracts != nil {
+		registerContracts(reg, d.Contracts)
 	}
 
 	reg.Mount(r, gate)
@@ -270,6 +288,160 @@ func registerDashboard(reg *routing.Registry, h *dashboard.Handler) {
 // work.project.read / work.task.read / work.blocker.read; writes need the
 // matching manage/write permission. Every write carries the version it read in
 // If-Match (§6.6).
+// registerCRM declares the client-acquisition surface (§8.1). The website-form
+// webhook is public: the website authenticates with a shared secret, not a
+// principal.
+func registerCRM(reg *routing.Registry, h *crm.Handler) {
+	// Organizations.
+	reg.Gated("crm.organization.read", http.MethodGet, "/api/v1/crm/organizations",
+		"List organizations", h.ListOrganizations)
+	reg.Gated("crm.organization.read", http.MethodGet, "/api/v1/crm/organizations/{id}",
+		"Get an organization", h.GetOrganization)
+	reg.Gated("crm.organization.write", http.MethodPost, "/api/v1/crm/organizations",
+		"Create an organization", h.CreateOrganization)
+	reg.Gated("crm.organization.write", http.MethodPut, "/api/v1/crm/organizations/{id}",
+		"Update an organization", h.UpdateOrganization)
+
+	// Contacts.
+	reg.Gated("crm.contact.read", http.MethodGet, "/api/v1/crm/contacts",
+		"List contacts", h.ListContacts)
+	reg.Gated("crm.contact.read", http.MethodGet, "/api/v1/crm/contacts/{id}",
+		"Get a contact", h.GetContact)
+	reg.Gated("crm.contact.write", http.MethodPost, "/api/v1/crm/contacts",
+		"Create a contact", h.CreateContact)
+	reg.Gated("crm.contact.write", http.MethodPut, "/api/v1/crm/contacts/{id}",
+		"Update a contact", h.UpdateContact)
+
+	// Config.
+	reg.Gated("crm.lead.read", http.MethodGet, "/api/v1/crm/lead-sources",
+		"List lead sources", h.ListLeadSources)
+	reg.Gated("crm.pipeline.read", http.MethodGet, "/api/v1/crm/pipeline-stages",
+		"List pipeline stages", h.ListPipelineStages)
+
+	// Leads.
+	reg.Gated("crm.lead.read", http.MethodGet, "/api/v1/crm/leads",
+		"List leads", h.ListLeads)
+	reg.Gated("crm.lead.read", http.MethodGet, "/api/v1/crm/leads/{id}",
+		"Get a lead", h.GetLead)
+	reg.Gated("crm.lead.write", http.MethodPost, "/api/v1/crm/leads",
+		"Create a lead", h.CreateLead)
+	reg.Gated("crm.lead.write", http.MethodPut, "/api/v1/crm/leads/{id}",
+		"Update a lead", h.UpdateLead)
+	reg.Gated("crm.lead.assign", http.MethodPost, "/api/v1/crm/leads/{id}/assign",
+		"Assign a lead to an owner", h.AssignLead)
+	reg.Gated("crm.lead.write", http.MethodPost, "/api/v1/crm/leads/{id}/status",
+		"Change a lead's status", h.SetLeadStatus)
+	reg.Gated("crm.lead.write", http.MethodPost, "/api/v1/crm/leads/{id}/convert",
+		"Convert a qualified lead to an opportunity", h.ConvertLead)
+
+	// Opportunities.
+	reg.Gated("crm.opportunity.read", http.MethodGet, "/api/v1/crm/opportunities",
+		"List opportunities", h.ListOpportunities)
+	reg.Gated("crm.opportunity.read", http.MethodGet, "/api/v1/crm/opportunities/{id}",
+		"Get an opportunity", h.GetOpportunity)
+	reg.Gated("crm.opportunity.write", http.MethodPost, "/api/v1/crm/opportunities/{id}/stage",
+		"Move an opportunity to another stage", h.MoveOpportunityStage)
+	reg.Gated("crm.opportunity.write", http.MethodPost, "/api/v1/crm/opportunities/{id}/win",
+		"Win an opportunity", h.WinOpportunity)
+	reg.Gated("crm.opportunity.write", http.MethodPost, "/api/v1/crm/opportunities/{id}/lose",
+		"Lose an opportunity", h.LoseOpportunity)
+
+	// Interactions.
+	reg.Gated("crm.interaction.read", http.MethodGet, "/api/v1/crm/interactions",
+		"List interactions", h.ListInteractions)
+	reg.Gated("crm.interaction.read", http.MethodGet, "/api/v1/crm/interactions/{id}",
+		"Get an interaction", h.GetInteraction)
+	reg.Gated("crm.interaction.write", http.MethodPost, "/api/v1/crm/interactions",
+		"Record a call, message, email, meeting or note", h.CreateInteraction)
+
+	// Follow-ups.
+	reg.Gated("crm.lead.read", http.MethodGet, "/api/v1/crm/followups",
+		"List follow-ups", h.ListFollowups)
+	reg.Gated("crm.lead.read", http.MethodGet, "/api/v1/crm/followups/{id}",
+		"Get a follow-up", h.GetFollowup)
+	reg.Gated("crm.lead.write", http.MethodPost, "/api/v1/crm/followups",
+		"Schedule a follow-up", h.CreateFollowup)
+	reg.Gated("crm.lead.write", http.MethodPost, "/api/v1/crm/followups/{id}/complete",
+		"Complete a follow-up", h.CompleteFollowup)
+	reg.Gated("crm.lead.write", http.MethodPost, "/api/v1/crm/followups/{id}/cancel",
+		"Cancel a follow-up", h.CancelFollowup)
+
+	// Proposals.
+	reg.Gated("crm.proposal.read", http.MethodGet, "/api/v1/crm/opportunities/{id}/proposals",
+		"List an opportunity's proposals", h.ListProposals)
+	reg.Gated("crm.proposal.read", http.MethodGet, "/api/v1/crm/proposals/{id}",
+		"Get a proposal", h.GetProposal)
+	reg.Gated("crm.proposal.write", http.MethodPost, "/api/v1/crm/opportunities/{id}/proposals",
+		"Create a proposal", h.CreateProposal)
+	reg.Gated("crm.proposal.write", http.MethodPost, "/api/v1/crm/proposals/{id}/send",
+		"Send a proposal", h.SendProposal)
+
+	// Pipeline.
+	reg.Gated("crm.pipeline.read", http.MethodGet, "/api/v1/crm/pipeline",
+		"Commercial pipeline summary", h.Pipeline)
+
+	// Public website-form webhook (shared secret, not a principal).
+	reg.Public(http.MethodPost, "/webhooks/website-forms",
+		"Inbound website enquiry that creates a lead", h.WebsiteForm)
+}
+
+// registerContracts declares the contracts surface (§8.3).
+func registerContracts(reg *routing.Registry, h *contracts.Handler) {
+	reg.Gated("contracts.contract.read", http.MethodGet, "/api/v1/contracts",
+		"List contracts", h.List)
+	reg.Gated("contracts.contract.read", http.MethodGet, "/api/v1/contracts/{id}",
+		"Get a contract", h.Get)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts",
+		"Create a contract", h.Create)
+	reg.Gated("contracts.contract.write", http.MethodPut, "/api/v1/contracts/{id}",
+		"Update a contract", h.Update)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/submit",
+		"Submit a contract for internal review", h.Submit)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/approve",
+		"Approve a contract internally", h.Approve)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/send",
+		"Send an approved contract to the client", h.Send)
+	reg.Gated("contracts.contract.sign", http.MethodPost, "/api/v1/contracts/{id}/sign",
+		"Record a signature on a contract", h.Sign)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/activate",
+		"Activate a signed contract", h.Activate)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/terminate",
+		"Terminate a contract", h.Terminate)
+
+	// Milestones.
+	reg.Gated("contracts.milestone.read", http.MethodGet, "/api/v1/contracts/{id}/milestones",
+		"List contract milestones", h.ListMilestones)
+	reg.Gated("contracts.milestone.manage", http.MethodPost, "/api/v1/contracts/{id}/milestones",
+		"Create a contract milestone", h.CreateMilestone)
+
+	// Deliverables.
+	reg.Gated("contracts.deliverable.read", http.MethodGet, "/api/v1/contracts/{id}/deliverables",
+		"List contract deliverables", h.ListDeliverables)
+	reg.Gated("contracts.deliverable.manage", http.MethodPost, "/api/v1/contracts/{id}/deliverables",
+		"Create a contract deliverable", h.CreateDeliverable)
+
+	// Obligations and SLA terms (contract read/write).
+	reg.Gated("contracts.contract.read", http.MethodGet, "/api/v1/contracts/{id}/obligations",
+		"List contract obligations", h.ListObligations)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/obligations",
+		"Create a contract obligation", h.CreateObligation)
+	reg.Gated("contracts.contract.read", http.MethodGet, "/api/v1/contracts/{id}/sla-terms",
+		"List contract SLA terms", h.ListSLATerms)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/sla-terms",
+		"Create a contract SLA term", h.CreateSLATerm)
+
+	// Change requests.
+	reg.Gated("contracts.change_request.read", http.MethodGet, "/api/v1/contracts/{id}/change-requests",
+		"List a contract's change requests", h.ListChangeRequests)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/change-requests",
+		"Raise a change request", h.CreateChangeRequest)
+	reg.Gated("contracts.change_request.approve", http.MethodPost, "/api/v1/change-requests/{id}/approve",
+		"Approve a change request", h.ApproveChangeRequest)
+	reg.Gated("contracts.change_request.approve", http.MethodPost, "/api/v1/change-requests/{id}/reject",
+		"Reject a change request", h.RejectChangeRequest)
+}
+
+// registerWork declares the Phase 2 work-orchestration surface (§8.2).
 func registerWork(reg *routing.Registry, h *work.Handler) {
 	// Projects.
 	reg.Gated("work.project.read", http.MethodGet, "/api/v1/work/projects",

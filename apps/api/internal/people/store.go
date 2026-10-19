@@ -542,7 +542,8 @@ func (s *PGStore) MarkLateReports(ctx context.Context, day, deadline time.Time) 
 // since — the input to the repeated-miss escalation rule (§8.5, D5).
 func (s *PGStore) MissedCounts(ctx context.Context, since time.Time, min int) ([]MissCounts, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT reporter_person_id, count(*)::int
+		SELECT reporter_person_id, count(*)::int,
+		       COALESCE(max(missed_at), max(report_date)::timestamptz)
 		  FROM people.daily_reports
 		 WHERE status = 'missed' AND report_date >= $1::date
 		 GROUP BY reporter_person_id
@@ -555,7 +556,7 @@ func (s *PGStore) MissedCounts(ctx context.Context, since time.Time, min int) ([
 	out := make([]MissCounts, 0, 4)
 	for rows.Next() {
 		var c MissCounts
-		if err := rows.Scan(&c.PersonID, &c.Misses); err != nil {
+		if err := rows.Scan(&c.PersonID, &c.Misses, &c.LastMissedAt); err != nil {
 			return nil, fmt.Errorf("people: scan missed count: %w", err)
 		}
 		out = append(out, c)

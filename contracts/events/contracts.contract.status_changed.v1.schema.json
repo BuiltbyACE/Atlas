@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/contracts.contract.status_changed.v1.schema.json",
+  "title": "contracts.contract.status_changed.v1",
+  "description": "A contract moved between lifecycle statuses (docs/ATLAS.md §8.3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_id", "ref", "from", "to", "occurred_at"],
+  "properties": {
+    "contract_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "from": { "type": "string", "maxLength": 40 },
+    "to": { "type": "string", "maxLength": 40 },
+    "changed_by": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

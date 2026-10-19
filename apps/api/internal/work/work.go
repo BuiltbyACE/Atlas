@@ -28,6 +28,9 @@ var (
 	ErrConflict = errors.New("work: conflict")
 	// ErrForbidden marks an action the caller may not take.
 	ErrForbidden = errors.New("work: forbidden")
+	// ErrEvidenceRequired marks a move to Done on a task with no evidence
+	// (§2 principle 5 "Done means evidenced", §8.2).
+	ErrEvidenceRequired = errors.New("work: evidence required")
 )
 
 // ProjectStatus mirrors the work.projects.status check constraint.

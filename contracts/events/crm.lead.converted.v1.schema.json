@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/crm.lead.converted.v1.schema.json",
+  "title": "crm.lead.converted.v1",
+  "description": "A qualified lead became an opportunity (docs/ATLAS.md §8.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["lead_id", "ref", "opportunity_id", "occurred_at"],
+  "properties": {
+    "lead_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "opportunity_id": { "type": "string", "format": "uuid" },
+    "converted_by": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

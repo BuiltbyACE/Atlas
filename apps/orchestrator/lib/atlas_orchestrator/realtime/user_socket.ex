@@ -15,6 +15,8 @@ defmodule AtlasOrchestrator.Realtime.UserSocket do
   channel "user:*", AtlasOrchestrator.Realtime.UserChannel
   channel "exec:dashboard", AtlasOrchestrator.Realtime.DashboardChannel
   channel "work:project:*", AtlasOrchestrator.Realtime.ProjectChannel
+  channel "crm:sales", AtlasOrchestrator.Realtime.SalesChannel
+  channel "contracts:board", AtlasOrchestrator.Realtime.ContractsChannel
 
   @impl true
   def connect(%{"token" => token}, socket, _connect_info) do

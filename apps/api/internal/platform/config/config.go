@@ -123,6 +123,12 @@ type Config struct {
 	// is mounted but answers 503: an unconfigured receipt is never trusted.
 	GitHubWebhookSecret string
 
+	// WebsiteFormWebhookSecret is the shared secret the public website sends in
+	// X-Atlas-Webhook-Secret when it posts an enquiry to
+	// /webhooks/website-forms (§8.1). When it is empty the route answers 404: an
+	// unconfigured inbound receipt is never trusted.
+	WebsiteFormWebhookSecret string
+
 	// ── Files / object storage (§6.5) ────────────────────────────
 	// Evidence and documents live in an S3-compatible bucket (Cloudflare R2 in
 	// staging and production; SeaweedFS or R2 locally). Go issues pre-signed
@@ -193,6 +199,8 @@ func Load() (*Config, error) {
 		DailyReportSweepBatch:    integer("ATLAS_DAILY_REPORT_SWEEP_BATCH", 500),
 
 		GitHubWebhookSecret: get("ATLAS_GITHUB_WEBHOOK_SECRET", ""),
+
+		WebsiteFormWebhookSecret: get("ATLAS_WEBSITE_FORM_WEBHOOK_SECRET", ""),
 
 		S3Endpoint:      get("S3_ENDPOINT", ""),
 		S3Region:        get("S3_REGION", "auto"),

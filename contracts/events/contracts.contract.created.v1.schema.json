@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/contracts.contract.created.v1.schema.json",
+  "title": "contracts.contract.created.v1",
+  "description": "A contract was drafted, usually from an accepted proposal (docs/ATLAS.md §8.3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_id", "ref", "status", "organization_id", "occurred_at"],
+  "properties": {
+    "contract_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "status": { "type": "string", "maxLength": 40 },
+    "organization_id": { "type": "string", "format": "uuid" },
+    "contract_type": { "type": "string", "maxLength": 40 },
+    "value_minor": { "type": "integer", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 3 },
+    "actor_id": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/crm.interaction.recorded.v1.schema.json",
+  "title": "crm.interaction.recorded.v1",
+  "description": "A call, message, email, meeting or note was recorded against a contact, lead or opportunity (docs/ATLAS.md §8.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["interaction_id", "interaction_type", "occurred_at"],
+  "properties": {
+    "interaction_id": { "type": "string", "format": "uuid" },
+    "interaction_type": { "type": "string", "maxLength": 40 },
+    "lead_id": { "type": "string", "format": "uuid" },
+    "opportunity_id": { "type": "string", "format": "uuid" },
+    "contact_id": { "type": "string", "format": "uuid" },
+    "owner_user_id": { "type": "string", "format": "uuid" },
+    "actor_id": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

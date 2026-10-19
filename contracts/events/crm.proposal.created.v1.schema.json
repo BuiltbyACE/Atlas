@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/crm.proposal.created.v1.schema.json",
+  "title": "crm.proposal.created.v1",
+  "description": "A proposal was created against an opportunity (docs/ATLAS.md §8.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["proposal_id", "ref", "opportunity_id", "status", "price_minor", "currency", "occurred_at"],
+  "properties": {
+    "proposal_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "opportunity_id": { "type": "string", "format": "uuid" },
+    "status": { "type": "string", "maxLength": 40 },
+    "price_minor": { "type": "integer", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 3 },
+    "owner_person_id": { "type": "string", "format": "uuid" },
+    "owner_user_id": { "type": "string", "format": "uuid" },
+    "actor_id": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

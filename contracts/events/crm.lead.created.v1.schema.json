@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/crm.lead.created.v1.schema.json",
+  "title": "crm.lead.created.v1",
+  "description": "A lead was captured (docs/ATLAS.md §8.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["lead_id", "ref", "status", "occurred_at"],
+  "properties": {
+    "lead_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "status": { "type": "string", "maxLength": 40 },
+    "owner_person_id": { "type": "string", "format": "uuid" },
+    "owner_user_id": { "type": "string", "format": "uuid" },
+    "actor_id": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

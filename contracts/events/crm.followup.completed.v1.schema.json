@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/crm.followup.completed.v1.schema.json",
+  "title": "crm.followup.completed.v1",
+  "description": "A follow-up was completed (docs/ATLAS.md §8.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["followup_id", "owner_person_id", "due_at", "status", "occurred_at"],
+  "properties": {
+    "followup_id": { "type": "string", "format": "uuid" },
+    "lead_id": { "type": "string", "format": "uuid" },
+    "opportunity_id": { "type": "string", "format": "uuid" },
+    "owner_person_id": { "type": "string", "format": "uuid" },
+    "owner_user_id": { "type": "string", "format": "uuid" },
+    "due_at": { "type": "string", "format": "date-time" },
+    "status": { "type": "string", "maxLength": 40 },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}
