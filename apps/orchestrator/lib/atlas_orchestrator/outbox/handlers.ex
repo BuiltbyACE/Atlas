@@ -24,6 +24,8 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
       tiles);
     * `contracts.*.v1` — push `<entity>.changed` to the contracts board
       (`contracts:board`) plus `dashboard.changed` to the dashboard;
+    * `finance.*.v1` — push `<entity>.changed` to the finance board
+      (`finance:board`) plus `dashboard.changed` to the dashboard;
     * `integrations.git.pull_request.merged.v1` — a merged pull request the
       integration linked to a task (`work` entity): the same project board and
       dashboard nudges as `work.evidence.added.v1`.
@@ -37,6 +39,7 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   alias AtlasOrchestrator.Contracts.Handler, as: ContractsHandler
   alias AtlasOrchestrator.Crm.Handler, as: CrmHandler
   alias AtlasOrchestrator.Dashboard.Handler, as: DashboardHandler
+  alias AtlasOrchestrator.Finance.Handler, as: FinanceHandler
   alias AtlasOrchestrator.Notifications.Handler, as: NotificationsHandler
   alias AtlasOrchestrator.Outbox.Event
   alias AtlasOrchestrator.People.Handler, as: PeopleHandler
@@ -90,6 +93,13 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   # Contracts & commitments (§8.3): nudge the contracts board and the dashboard.
   def dispatch(%Event{type: "contracts." <> _} = event) do
     ContractsHandler.handle_event(event)
+  end
+
+  # Finance & commercial control (§8.4): nudge the finance board and the
+  # dashboard. The handler reads the payload keys Go wrote
+  # (internal/outbox/finance.go).
+  def dispatch(%Event{type: "finance." <> _} = event) do
+    FinanceHandler.handle_event(event)
   end
 
   def dispatch(%Event{type: "core.escalation." <> _} = event) do

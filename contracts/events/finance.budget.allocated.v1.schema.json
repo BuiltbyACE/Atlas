@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/finance.budget.allocated.v1.schema.json",
+  "title": "finance.budget.allocated.v1",
+  "description": "A budget was created, approved or its allocation changed (docs/ATLAS.md §8.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["budget_id", "scope", "period_start", "period_end", "currency", "status", "occurred_at"],
+  "properties": {
+    "budget_id": { "type": "string", "format": "uuid" },
+    "scope": { "type": "string", "maxLength": 40 },
+    "scope_ref": { "type": "string", "maxLength": 200 },
+    "period_start": { "type": "string", "format": "date" },
+    "period_end": { "type": "string", "format": "date" },
+    "category_key": { "type": "string", "maxLength": 60 },
+    "amount_minor": { "type": "integer", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 3 },
+    "status": { "type": "string", "maxLength": 40 },
+    "actor_id": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

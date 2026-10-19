@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/finance.budget.threshold_crossed.v1.schema.json",
+  "title": "finance.budget.threshold_crossed.v1",
+  "description": "A budget's actual spend crossed the review threshold, warning its owner before the ceiling is breached (docs/ATLAS.md §8.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["budget_id", "scope", "currency", "occurred_at"],
+  "properties": {
+    "budget_id": { "type": "string", "format": "uuid" },
+    "scope": { "type": "string", "maxLength": 40 },
+    "scope_ref": { "type": "string", "maxLength": 200 },
+    "amount_minor": { "type": "integer", "minimum": 0 },
+    "actual_minor": { "type": "integer", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 3 },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

@@ -3,9 +3,9 @@
  * quick-jump list all read from here, so a page is named the same everywhere.
  *
  * Modules from blueprint §4 (capability map). Phase 2 built out Work and People,
- * Phase 3 added CRM and Contracts; the modules still on the roadmap are listed
- * under "Coming next" as muted labels rather than links to a 404, so the shell
- * never promises a page that does not exist.
+ * Phase 3 added CRM, Contracts and Finance; the modules still on the roadmap are
+ * listed under "Coming next" as muted labels rather than links to a 404, so the
+ * shell never promises a page that does not exist.
  */
 
 import type { IconName } from "@/components/icons";
@@ -53,13 +53,13 @@ export const NAV_SECTIONS: NavSection[] = [
     links: [
       { label: "CRM", href: "/crm", icon: "people", section: "Revenue", keywords: "leads pipeline sales opportunities contacts clients" },
       { label: "Contracts", href: "/contracts", icon: "document", section: "Revenue", keywords: "agreements signing milestones renewals obligations" },
+      { label: "Finance", href: "/finance", icon: "card", section: "Revenue", keywords: "cash receivables expenses invoices budgets payments profitability recurring" },
     ],
   },
 ];
 
 /** Modules on the roadmap, shown dimmed with a "Soon" tag. */
 export const COMING_NEXT: Array<{ label: string; icon: IconName }> = [
-  { label: "Finance", icon: "card" },
   { label: "Systems", icon: "server" },
   { label: "Units", icon: "building" },
   { label: "Intel", icon: "pie" },

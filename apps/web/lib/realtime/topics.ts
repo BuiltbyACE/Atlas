@@ -23,6 +23,13 @@ export const SALES_TOPIC = "crm:sales";
  */
 export const CONTRACTS_TOPIC = "contracts:board";
 
+/**
+ * The finance board topic: expense, invoice, payment and budget changes
+ * (§8.4). Joining requires `finance.expense.read`, the permission the finance
+ * page reads under.
+ */
+export const FINANCE_TOPIC = "finance:board";
+
 /** A single user's notifications/approvals/escalations topic. */
 export function userTopic(userId: string): string {
   return `user:${userId}`;

@@ -30,6 +30,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/files"
+	"github.com/safaristack/atlas/apps/api/internal/finance"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/people"
@@ -182,6 +183,16 @@ func run() error {
 	contractsService := contracts.NewService(contracts.NewPGStore(pool), auditWriter, logger)
 	contractsHandler := contracts.NewHandler(contractsService, logger)
 
+	// Finance & commercial control (Phase 4, §8.4): the read slice over cash,
+	// receivables, project profitability, budgets and spending. Go owns the
+	// rules — how receivables age, what a budget covers, how a margin is struck
+	// — and the amount-visibility decision stays at the HTTP edge. The write
+	// lifecycle (expenses.submit/decide, invoices.issue, payments.record) is
+	// deliberately out of scope for this pass; the storage it needs already
+	// exists (migration 00022).
+	financeService := finance.NewService(finance.NewPGStore(pool), logger)
+	financeHandler := finance.NewHandler(financeService, logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -200,6 +211,7 @@ func run() error {
 		Integrations: integrationHandler,
 		CRM:          crmHandler,
 		Contracts:    contractsHandler,
+		Finance:      financeHandler,
 	})
 
 	srv := &http.Server{

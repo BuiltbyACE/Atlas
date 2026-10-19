@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/finance.invoice.issued.v1.schema.json",
+  "title": "finance.invoice.issued.v1",
+  "description": "An invoice was issued to a client (docs/ATLAS.md §8.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["invoice_id", "ref", "organization_id", "currency", "status", "occurred_at"],
+  "properties": {
+    "invoice_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "organization_id": { "type": "string", "format": "uuid" },
+    "contract_id": { "type": "string", "format": "uuid" },
+    "total_minor": { "type": "integer", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 3 },
+    "status": { "type": "string", "maxLength": 40 },
+    "due_date": { "type": "string", "format": "date" },
+    "actor_id": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

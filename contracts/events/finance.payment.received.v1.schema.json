@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/finance.payment.received.v1.schema.json",
+  "title": "finance.payment.received.v1",
+  "description": "Money was received and recorded as a payment (docs/ATLAS.md §8.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payment_id", "ref", "currency", "method", "occurred_at"],
+  "properties": {
+    "payment_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "amount_minor": { "type": "integer", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 3 },
+    "method": { "type": "string", "maxLength": 40 },
+    "account_id": { "type": "string", "format": "uuid" },
+    "actor_id": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

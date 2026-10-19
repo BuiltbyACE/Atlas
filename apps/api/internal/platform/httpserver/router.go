@@ -23,6 +23,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/files"
+	"github.com/safaristack/atlas/apps/api/internal/finance"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/people"
@@ -74,6 +75,10 @@ type Deps struct {
 	// deliverables, obligations, SLA terms, change requests); mounted when
 	// present.
 	Contracts *contracts.Handler
+	// Finance is the Phase 4 finance & commercial-control read surface (cash,
+	// receivables, project profitability, budgets and spending); mounted when
+	// present.
+	Finance *finance.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -153,6 +158,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Contracts != nil {
 		registerContracts(reg, d.Contracts)
+	}
+
+	if d.Finance != nil {
+		registerFinance(reg, d.Finance)
 	}
 
 	reg.Mount(r, gate)
@@ -439,6 +448,50 @@ func registerContracts(reg *routing.Registry, h *contracts.Handler) {
 		"Approve a change request", h.ApproveChangeRequest)
 	reg.Gated("contracts.change_request.approve", http.MethodPost, "/api/v1/change-requests/{id}/reject",
 		"Reject a change request", h.RejectChangeRequest)
+}
+
+// registerFinance declares the finance & commercial-control surface (§8.4).
+// This pass is read-only: every route is a GET, and the money-bearing reads are
+// gated by the module's read permissions, with amount visibility decided
+// separately per request by finance.amount.sensitive.read.
+func registerFinance(reg *routing.Registry, h *finance.Handler) {
+	// Headline, cash, receivables and profitability are all financial reports.
+	reg.Gated("finance.report.read", http.MethodGet, "/api/v1/finance/overview",
+		"Finance headline: cash, receivables and spending at a glance", h.Overview)
+	reg.Gated("finance.report.read", http.MethodGet, "/api/v1/finance/accounts",
+		"List cash accounts with their derived balances", h.ListAccounts)
+	reg.Gated("finance.report.read", http.MethodGet, "/api/v1/finance/cash-position",
+		"Cash position across accounts with 30-day flows", h.CashPosition)
+	reg.Gated("finance.report.read", http.MethodGet, "/api/v1/finance/receivables",
+		"Receivables ageing by days past due", h.Receivables)
+	reg.Gated("finance.report.read", http.MethodGet, "/api/v1/finance/recurring-costs",
+		"List standing vendor costs by next renewal", h.RecurringCosts)
+	reg.Gated("finance.report.read", http.MethodGet, "/api/v1/finance/projects/{id}/profitability",
+		"A project's revenue, cost and margin", h.ProjectProfitability)
+
+	// Expenses.
+	reg.Gated("finance.expense.read", http.MethodGet, "/api/v1/finance/expense-categories",
+		"List configured expense categories", h.ListExpenseCategories)
+	reg.Gated("finance.expense.read", http.MethodGet, "/api/v1/finance/expenses",
+		"List expenses", h.ListExpenses)
+	reg.Gated("finance.expense.read", http.MethodGet, "/api/v1/finance/expenses/{id}",
+		"Get an expense", h.GetExpense)
+
+	// Invoices.
+	reg.Gated("finance.invoice.read", http.MethodGet, "/api/v1/finance/invoices",
+		"List invoices", h.ListInvoices)
+	reg.Gated("finance.invoice.read", http.MethodGet, "/api/v1/finance/invoices/{id}",
+		"Get an invoice with its lines", h.GetInvoice)
+
+	// Payments.
+	reg.Gated("finance.payment.read", http.MethodGet, "/api/v1/finance/payments",
+		"List payments", h.ListPayments)
+
+	// Budgets.
+	reg.Gated("finance.budget.read", http.MethodGet, "/api/v1/finance/budgets",
+		"List budgets with their actuals", h.ListBudgets)
+	reg.Gated("finance.budget.read", http.MethodGet, "/api/v1/finance/budgets/{id}",
+		"Get a budget", h.GetBudget)
 }
 
 // registerWork declares the Phase 2 work-orchestration surface (§8.2).

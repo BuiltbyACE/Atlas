@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atlas.safaristack.co.ke/schemas/events/finance.expense.approved.v1.schema.json",
+  "title": "finance.expense.approved.v1",
+  "description": "An expense claim was approved (docs/ATLAS.md §8.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["expense_id", "ref", "claimant_person_id", "category_key", "currency", "status", "occurred_at"],
+  "properties": {
+    "expense_id": { "type": "string", "format": "uuid" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "claimant_person_id": { "type": "string", "format": "uuid" },
+    "category_key": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "project_id": { "type": "string", "format": "uuid" },
+    "amount_minor": { "type": "integer", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 3 },
+    "status": { "type": "string", "maxLength": 40 },
+    "actor_id": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  }
+}

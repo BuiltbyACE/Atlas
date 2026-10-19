@@ -1175,6 +1175,445 @@ export function listContractObligations(id: string): Promise<ContractObligation[
   ).then((body) => body.items);
 }
 
+// ── finance (§8.4) ──────────────────────────────────────────────────────────
+
+/** The kind of account cash sits in (`finance.account`, §8.4). */
+export const FINANCE_ACCOUNT_TYPES = [
+  "bank",
+  "cash",
+  "mpesa_till",
+  "mpesa_paybill",
+  "card",
+] as const;
+
+export type FinanceAccountType = (typeof FINANCE_ACCOUNT_TYPES)[number];
+
+/**
+ * Expense lifecycle state (§8.4), in the order the UI offers as filters:
+ * draft → submitted → approved → paid / reimbursed → reconciled, or rejected.
+ */
+export const EXPENSE_STATUSES = [
+  "draft",
+  "submitted",
+  "approved",
+  "rejected",
+  "paid",
+  "reimbursed",
+  "reconciled",
+] as const;
+
+export type ExpenseStatus = (typeof EXPENSE_STATUSES)[number];
+
+/** Invoice lifecycle state (§8.4); `overdue` is computed by Go. */
+export const INVOICE_STATUSES = [
+  "scheduled",
+  "draft",
+  "approved",
+  "issued",
+  "partially_paid",
+  "paid",
+  "overdue",
+  "disputed",
+  "written_off",
+] as const;
+
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+/** How a payment was received (§8.4). */
+export const PAYMENT_METHODS = ["bank", "mpesa", "card", "cash"] as const;
+
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/** How often a recurring cost renews (§8.4). */
+export const RECURRING_CYCLES = ["monthly", "quarterly", "annual"] as const;
+
+export type RecurringCycle = (typeof RECURRING_CYCLES)[number];
+
+/** What a budget is drawn against (§8.4). */
+export const BUDGET_SCOPES = ["company_period", "department", "project", "unit"] as const;
+
+export type BudgetScope = (typeof BUDGET_SCOPES)[number];
+
+/** Budget lifecycle state (§8.4). */
+export const BUDGET_STATUSES = ["draft", "approved", "closed"] as const;
+
+export type BudgetStatus = (typeof BUDGET_STATUSES)[number];
+
+/**
+ * The finance headline (`GET /api/v1/finance/overview`, §8.4). Every `*_minor`
+ * field is minor units with `currency` and is **omitted entirely** when the
+ * viewer lacks `finance.amount.sensitive.read`; `undefined` is not zero, so the
+ * UI shows those as restricted. The counts are not sensitive and always present.
+ */
+export interface FinanceOverview {
+  as_of: string;
+  currency: string;
+  cash_minor?: number;
+  receivables_outstanding_minor?: number;
+  receivables_overdue_minor?: number;
+  invoiced_90d_minor?: number;
+  collected_90d_minor?: number;
+  expenses_30d_minor?: number;
+  pending_expenses: number;
+  overdue_invoice_count: number;
+  upcoming_renewals_30d: number;
+  active_budget_count: number;
+  budgets_over_threshold: number;
+}
+
+/** A cash/bank/M-Pesa account (`finance.account`, §8.4). */
+export interface FinanceAccount {
+  id: string;
+  name: string;
+  account_type: FinanceAccountType | string;
+  currency: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  opening_balance_minor?: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  balance_minor?: number;
+  active: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** The cash position across accounts (`GET /api/v1/finance/cash-position`). */
+export interface CashPosition {
+  as_of: string;
+  currency: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  total_minor?: number;
+  by_account: {
+    account_id: string;
+    name: string;
+    account_type: string;
+    /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+    balance_minor?: number;
+  }[];
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  inflow_30d_minor?: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  outflow_30d_minor?: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  net_30d_minor?: number;
+}
+
+/** Receivables ageing (`GET /api/v1/finance/receivables`, §8.4). */
+export interface ReceivablesAgeing {
+  as_of: string;
+  currency: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  total_outstanding_minor?: number;
+  buckets: {
+    key: string;
+    label: string;
+    count: number;
+    /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+    amount_minor?: number;
+  }[];
+  invoices: FinanceInvoice[];
+}
+
+/** An expense claim (`finance.expense`, §8.4). */
+export interface FinanceExpense {
+  id: string;
+  /** Human reference allocated by Go, e.g. `EXP-2026-0142`. */
+  ref: string;
+  claimant_person_id: string;
+  category_key: string;
+  project_id?: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  amount_minor?: number;
+  currency: string;
+  spent_on: string;
+  vendor?: string;
+  payment_method?: string;
+  account_id?: string;
+  status: ExpenseStatus | string;
+  submitted_at?: string;
+  decided_by?: string;
+  decided_at?: string;
+  decision_reason?: string;
+  notes?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A configured expense category (`finance.expense_category`, §8.4 [CONFIG]). */
+export interface FinanceExpenseCategory {
+  key: string;
+  label: string;
+  sort_order: number;
+  active: boolean;
+}
+
+/** One line of an invoice (`finance.invoice` line items, §8.4). */
+export interface FinanceInvoiceLine {
+  id: string;
+  description: string;
+  quantity: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  unit_price_minor?: number;
+  /** Tax rate in basis points (e.g. 1600 = 16%). */
+  tax_rate_bp: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  amount_minor?: number;
+  sort_order: number;
+}
+
+/**
+ * An invoice (§8.4). `lines` is present only on the single-record read
+ * (`GET /api/v1/finance/invoices/{id}`); every `*_minor` field is omitted when
+ * the viewer lacks `finance.amount.sensitive.read`.
+ */
+export interface FinanceInvoice {
+  id: string;
+  /** Human reference allocated by Go, e.g. `INV-2026-0031`. */
+  ref: string;
+  organization_id: string;
+  organization_name?: string;
+  contract_id?: string;
+  contract_ref?: string;
+  milestone_id?: string;
+  issue_date?: string;
+  due_date?: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  total_minor?: number;
+  currency: string;
+  status: InvoiceStatus | string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  amount_paid_minor?: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  outstanding_minor?: number;
+  issued_at?: string;
+  paid_at?: string;
+  e_invoice_ref?: string;
+  notes?: string;
+  lines?: FinanceInvoiceLine[];
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A payment received against invoices (`finance.payment`, §8.4). */
+export interface FinancePayment {
+  id: string;
+  /** Human reference allocated by Go, e.g. `PAY-2026-0088`. */
+  ref: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  amount_minor?: number;
+  currency: string;
+  method: PaymentMethod | string;
+  reference?: string;
+  received_on: string;
+  account_id?: string;
+  reconciled: boolean;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  allocated_minor?: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  unallocated_minor?: number;
+  notes?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A budget and its actuals (`finance.budget`, §8.4). */
+export interface FinanceBudget {
+  id: string;
+  scope: BudgetScope | string;
+  scope_ref?: string;
+  period_start: string;
+  period_end: string;
+  category_key?: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  amount_minor?: number;
+  currency: string;
+  status: BudgetStatus | string;
+  owner_person_id?: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  actual_minor?: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  variance_minor?: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A standing vendor cost (`finance.recurring_cost`, §8.4). */
+export interface FinanceRecurringCost {
+  id: string;
+  vendor: string;
+  description?: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  amount_minor?: number;
+  currency: string;
+  cycle: RecurringCycle | string;
+  next_renewal_on: string;
+  owner_person_id?: string;
+  active: boolean;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  monthly_equivalent_minor?: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * A project's P&L (`GET /api/v1/finance/projects/{id}/profitability`, §8.4).
+ * Every `*_minor` including `margin_bp` is omitted when the viewer lacks
+ * `finance.amount.sensitive.read`.
+ */
+export interface ProjectProfitability {
+  project_id: string;
+  project_name?: string;
+  currency: string;
+  revenue_invoiced_minor?: number;
+  revenue_collected_minor?: number;
+  cost_expenses_minor?: number;
+  cost_time_minor?: number;
+  margin_minor?: number;
+  /** Margin in basis points (e.g. 3150 = 31.5%). */
+  margin_bp?: number;
+}
+
+export type FinanceExpenseListQuery = {
+  status?: string;
+  category_key?: string;
+  project_id?: string;
+  claimant_person_id?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type FinanceInvoiceListQuery = {
+  status?: string;
+  organization_id?: string;
+  contract_id?: string;
+  overdue?: boolean;
+  limit?: number;
+  cursor?: string;
+};
+
+export type FinancePaymentListQuery = {
+  from?: string;
+  to?: string;
+  method?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type FinanceBudgetListQuery = {
+  scope?: string;
+  status?: string;
+  period?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export function getFinanceOverview(): Promise<FinanceOverview> {
+  return apiFetch<FinanceOverview>("/api/v1/finance/overview", {
+    cache: "no-store",
+  });
+}
+
+export function listFinanceAccounts(): Promise<FinanceAccount[]> {
+  return apiFetch<{ items: FinanceAccount[] }>("/api/v1/finance/accounts", {
+    cache: "no-store",
+  }).then((body) => body.items);
+}
+
+export function getCashPosition(): Promise<CashPosition> {
+  return apiFetch<CashPosition>("/api/v1/finance/cash-position", {
+    cache: "no-store",
+  });
+}
+
+export function getReceivables(): Promise<ReceivablesAgeing> {
+  return apiFetch<ReceivablesAgeing>("/api/v1/finance/receivables", {
+    cache: "no-store",
+  });
+}
+
+export function listRecurringCosts(): Promise<FinanceRecurringCost[]> {
+  return apiFetch<{ items: FinanceRecurringCost[] }>(
+    "/api/v1/finance/recurring-costs",
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+export function getProjectProfitability(id: string): Promise<ProjectProfitability> {
+  return apiFetch<ProjectProfitability>(
+    `/api/v1/finance/projects/${id}/profitability`,
+    { cache: "no-store" },
+  );
+}
+
+export function listExpenseCategories(): Promise<FinanceExpenseCategory[]> {
+  return apiFetch<{ items: FinanceExpenseCategory[] }>(
+    "/api/v1/finance/expense-categories",
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+export function listExpenses(
+  query: FinanceExpenseListQuery = {},
+): Promise<Page<FinanceExpense>> {
+  return apiFetch<Page<FinanceExpense>>("/api/v1/finance/expenses", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getExpense(id: string): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>(`/api/v1/finance/expenses/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listInvoices(
+  query: FinanceInvoiceListQuery = {},
+): Promise<Page<FinanceInvoice>> {
+  return apiFetch<Page<FinanceInvoice>>("/api/v1/finance/invoices", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Single invoice read; unlike the list, it carries the invoice `lines`. */
+export function getInvoice(id: string): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>(`/api/v1/finance/invoices/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listPayments(
+  query: FinancePaymentListQuery = {},
+): Promise<Page<FinancePayment>> {
+  return apiFetch<Page<FinancePayment>>("/api/v1/finance/payments", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function listBudgets(
+  query: FinanceBudgetListQuery = {},
+): Promise<Page<FinanceBudget>> {
+  return apiFetch<Page<FinanceBudget>>("/api/v1/finance/budgets", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getBudget(id: string): Promise<FinanceBudget> {
+  return apiFetch<FinanceBudget>(`/api/v1/finance/budgets/${id}`, {
+    cache: "no-store",
+  });
+}
+
 // ── files (§6.5) - evidence attaches a stored file ──────────────────────────
 
 export interface FileRecord {

@@ -227,6 +227,28 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
   end
 
+  test "a finance event is routed to the finance handler" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "finance:board")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "finance.expense.submitted.v1",
+      seq: 10,
+      payload: %{
+        "expense_id" => Ecto.UUID.generate(),
+        "ref" => "EXP-2026-0001",
+        "currency" => "KES",
+        "status" => "submitted"
+      },
+      occurred_at: ~U[2026-10-19 11:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "finance:board", event: "expense.changed"}
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
   test "an unknown event type is ignored, not failed" do
     assert :ok =
              Handlers.dispatch(%Event{id: Ecto.UUID.generate(), type: "x.y.z.v1", payload: %{}})
