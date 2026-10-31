@@ -81,7 +81,7 @@ export class ApiError extends Error {
   }
 }
 
-type QueryValue = string | number | boolean | null | undefined;
+export type QueryValue = string | number | boolean | null | undefined;
 
 export interface ApiFetchOptions
   extends Omit<RequestInit, "body" | "headers"> {

@@ -39,6 +39,25 @@ func (s *fakeStore) WriteEvent(_ context.Context, ev outbox.Event) error {
 	return nil
 }
 
+func (s *fakeStore) ListIntegrations(ctx context.Context, q IntegrationQuery, limit int, before *Cursor) ([]Integration, error) {
+	return nil, nil
+}
+func (s *fakeStore) GetIntegration(ctx context.Context, id uuid.UUID) (*Integration, error) {
+	return nil, nil
+}
+func (s *fakeStore) ListWebhookInbox(ctx context.Context, q WebhookInboxQuery, limit int, before *Cursor) ([]WebhookInboxEntry, error) {
+	return nil, nil
+}
+func (s *fakeStore) GetWebhookInbox(ctx context.Context, id uuid.UUID) (*WebhookInboxEntry, error) {
+	return nil, nil
+}
+func (s *fakeStore) ListOutboundLog(ctx context.Context, q OutboundLogQuery, limit int, before *Cursor) ([]OutboundLogEntry, error) {
+	return nil, nil
+}
+func (s *fakeStore) GetOutboundLog(ctx context.Context, id uuid.UUID) (*OutboundLogEntry, error) {
+	return nil, nil
+}
+
 // fakeWork records the links the service asks for.
 type fakeWork struct {
 	refs       map[string]uuid.UUID

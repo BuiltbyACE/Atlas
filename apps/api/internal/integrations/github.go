@@ -22,6 +22,9 @@ const (
 
 	EventPullRequest = "pull_request"
 	actionClosed     = "closed"
+
+	// ProviderGitHub is the provider id stored with a delivery.
+	ProviderGitHub = "github"
 )
 
 // VerifySignature checks GitHub's `sha256=<hex>` header against an HMAC-SHA256

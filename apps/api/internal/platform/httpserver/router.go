@@ -188,6 +188,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 		registerIntel(reg, d.Intel)
 	}
 
+	if d.Integrations != nil {
+		registerIntegrations(reg, d.Integrations)
+	}
+
 	reg.Mount(r, gate)
 	return r, reg
 }
@@ -791,11 +795,36 @@ func registerPeople(reg *routing.Registry, h *people.Handler) {
 		"List sign-in sessions and logged activity", h.ListSessions)
 }
 
-// registerIntegrations declares the inbound provider webhook surface (section
-// 11, section 12). The GitHub route is deliberately NOT under /api/v1: it is
-// GitHub's endpoint, not Atlas's API, and it is unauthenticated by principal.
-// The HMAC signature in the body is the gate, so it is a Public route.
+// registerIntegrations declares the integration registry surface (§8.9) and the
+// inbound provider webhook surface (§11, §12). Reads need
+// integrations.registry.read; writes need integrations.registry.manage. The
+// GitHub webhook route is deliberately NOT under /api/v1: it is GitHub's
+// endpoint, not Atlas's API, and it is unauthenticated by principal. The HMAC
+// signature in the body is the gate, so it is a Public route.
 func registerIntegrations(reg *routing.Registry, h *integrations.Handler) {
+	// Integrations registry: what we connect to and how (§8.9).
+	reg.Gated("integrations.registry.read", http.MethodGet, "/api/v1/integrations",
+		"List integration registrations", h.ListIntegrations)
+	reg.Gated("integrations.registry.read", http.MethodGet, "/api/v1/integrations/{id}",
+		"Get an integration registration", h.GetIntegration)
+	reg.Gated("integrations.registry.manage", http.MethodPost, "/api/v1/integrations",
+		"Create an integration registration", h.CreateIntegration)
+	reg.Gated("integrations.registry.manage", http.MethodPut, "/api/v1/integrations/{id}",
+		"Update an integration registration", h.UpdateIntegration)
+
+	// Webhook inbox: raw inbound provider payloads (§11).
+	reg.Gated("integrations.registry.read", http.MethodGet, "/api/v1/integrations/webhook-inbox",
+		"List inbound webhook payloads", h.ListWebhookInbox)
+	reg.Gated("integrations.registry.read", http.MethodGet, "/api/v1/integrations/webhook-inbox/{id}",
+		"Get an inbound webhook payload", h.GetWebhookInbox)
+
+	// Outbound log: outbound call attempts (§8.9).
+	reg.Gated("integrations.registry.read", http.MethodGet, "/api/v1/integrations/outbound-log",
+		"List outbound call attempts", h.ListOutboundLog)
+	reg.Gated("integrations.registry.read", http.MethodGet, "/api/v1/integrations/outbound-log/{id}",
+		"Get an outbound call attempt", h.GetOutboundLog)
+
+	// GitHub webhook: public, HMAC-signed, de-duplicated by delivery id (§11).
 	reg.Public(http.MethodPost, "/webhooks/github",
 		"Receive GitHub webhook deliveries (signed, de-duplicated)", h.ReceiveGitHub)
 }

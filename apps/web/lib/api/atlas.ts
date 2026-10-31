@@ -20,7 +20,7 @@
  * take the version and set the header for you; a stale version is a 412.
  */
 
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, type QueryValue } from "@/lib/api/client";
 
 // ── pagination envelope (§11) ───────────────────────────────────────────────
 
@@ -2971,6 +2971,7 @@ export type UnitListQuery = {
 export type IntegrationListQuery = {
   unit_id?: string;
   kind?: IntegrationKind | string;
+  direction?: IntegrationDirection;
   status?: IntegrationStatus | string;
   active?: boolean;
   q?: string;
@@ -3466,5 +3467,199 @@ export function listMetricSnapshots(
 export function getMetricSnapshot(id: string): Promise<MetricSnapshot> {
   return apiFetch<MetricSnapshot>(`/api/v1/intel/metric-snapshots/${id}`, {
     cache: "no-store",
+  });
+}
+
+// ── Integrations read/write wrappers (§8.9) ──────────────────────────────────
+
+export const INTEGRATION_DIRECTION = ["in", "out", "both"] as const;
+export type IntegrationDirection = (typeof INTEGRATION_DIRECTION)[number];
+
+export const WEBHOOK_PROCESSING_STATUS = [
+  "pending",
+  "processed",
+  "failed",
+] as const;
+export type WebhookProcessingStatus =
+  (typeof WEBHOOK_PROCESSING_STATUS)[number];
+
+export const OUTBOUND_CIRCUIT_STATE = [
+  "closed",
+  "open",
+  "half_open",
+] as const;
+export type OutboundCircuitState = (typeof OUTBOUND_CIRCUIT_STATE)[number];
+
+/** Integration registry entry (§8.9). */
+export interface Integration {
+  id: string;
+  ref: string;
+  name: string;
+  kind: IntegrationKind;
+  direction: IntegrationDirection;
+  owner_person_id?: string;
+  owner_name: string;
+  credential_ref: string;
+  scopes: string[];
+  status: IntegrationStatus;
+  last_success?: string;
+  error_rate: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Webhook inbox entry: raw inbound provider payload (§8.9, §11). */
+export interface WebhookInboxEntry {
+  id: string;
+  provider: string;
+  event_type: string;
+  delivery_id: string;
+  payload: string;
+  headers?: string;
+  received_at: string;
+  processed_at?: string;
+  processing_status: WebhookProcessingStatus;
+  error_message: string;
+}
+
+/** Outbound log entry: outbound call attempt (§8.9). */
+export interface OutboundLogEntry {
+  id: string;
+  provider: string;
+  endpoint: string;
+  method: string;
+  status_code?: number;
+  error_message: string;
+  attempt: number;
+  max_attempts: number;
+  last_attempt_at: string;
+  circuit_state: OutboundCircuitState;
+  created_at: string;
+}
+
+/** Integration create/update input (§8.9). */
+export interface IntegrationInput {
+  name: string;
+  kind: IntegrationKind;
+  direction: IntegrationDirection;
+  owner_person_id?: string;
+  credential_ref: string;
+  scopes: string[];
+  status?: IntegrationStatus;
+}
+
+/** Webhook inbox list query (§8.9). */
+export interface WebhookInboxQuery {
+  provider?: string;
+  event_type?: string;
+  delivery_id?: string;
+  processing_status?: WebhookProcessingStatus;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+  [key: string]: QueryValue;
+}
+
+/** Integration registry list query (§8.9). */
+export interface IntegrationRegistryQuery {
+  kind?: IntegrationKind;
+  direction?: IntegrationDirection;
+  status?: IntegrationStatus;
+  owner_person_id?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+  [key: string]: QueryValue;
+}
+
+/** Outbound log list query (§8.9). */
+export interface OutboundLogQuery {
+  provider?: string;
+  endpoint?: string;
+  circuit_state?: OutboundCircuitState;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+  [key: string]: QueryValue;
+}
+
+/** List webhook inbox entries (`GET /api/v1/integrations/webhook-inbox`). */
+export function listWebhookInbox(
+  query: WebhookInboxQuery = {},
+): Promise<Page<WebhookInboxEntry>> {
+  return apiFetch<Page<WebhookInboxEntry>>(
+    "/api/v1/integrations/webhook-inbox",
+    { query, cache: "no-store" },
+  );
+}
+
+/** Get one webhook inbox entry (`GET /api/v1/integrations/webhook-inbox/{id}`). */
+export function getWebhookInbox(id: string): Promise<WebhookInboxEntry> {
+  return apiFetch<WebhookInboxEntry>(
+    `/api/v1/integrations/webhook-inbox/${id}`,
+    { cache: "no-store" },
+  );
+}
+
+/** List outbound log entries (`GET /api/v1/integrations/outbound-log`). */
+export function listOutboundLog(
+  query: OutboundLogQuery = {},
+): Promise<Page<OutboundLogEntry>> {
+  return apiFetch<Page<OutboundLogEntry>>(
+    "/api/v1/integrations/outbound-log",
+    { query, cache: "no-store" },
+  );
+}
+
+/** Get one outbound log entry (`GET /api/v1/integrations/outbound-log/{id}`). */
+export function getOutboundLog(id: string): Promise<OutboundLogEntry> {
+  return apiFetch<OutboundLogEntry>(
+    `/api/v1/integrations/outbound-log/${id}`,
+    { cache: "no-store" },
+  );
+}
+
+/** List integration registrations (`GET /api/v1/integrations`). */
+export function listIntegrationRegistrations(
+  query: IntegrationListQuery = {},
+): Promise<Page<Integration>> {
+  return apiFetch<Page<Integration>>("/api/v1/integrations", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Get one integration registration (`GET /api/v1/integrations/{id}`). */
+export function getIntegrationRegistration(id: string): Promise<Integration> {
+  return apiFetch<Integration>(`/api/v1/integrations/${id}`, {
+    cache: "no-store",
+  });
+}
+
+/** Create an integration registration (`POST /api/v1/integrations`). */
+export function createIntegrationRegistration(
+  body: IntegrationInput,
+): Promise<Integration> {
+  return apiFetch<Integration>("/api/v1/integrations", {
+    method: "POST",
+    body,
+  });
+}
+
+/** Update an integration registration (`PUT /api/v1/integrations/{id}`). */
+export function updateIntegrationRegistration(
+  id: string,
+  version: number,
+  body: IntegrationInput,
+): Promise<Integration> {
+  return apiFetch<Integration>(`/api/v1/integrations/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
   });
 }

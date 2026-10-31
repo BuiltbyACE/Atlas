@@ -158,6 +158,7 @@ func run() error {
 		logger,
 	)
 	integrationHandler := integrations.NewHandler(integrationService, cfg.GitHubWebhookSecret, logger)
+	integrationService.SetAudit(auditWriter)
 
 	// People & accountability (Phase 2): daily reports and leave. These belong
 	// to the people module (§8.5, §10.1) and emit people.* outbox events for the
