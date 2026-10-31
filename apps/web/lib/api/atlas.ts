@@ -3081,6 +3081,96 @@ export function getFinanceSummary(id: string): Promise<UnitFinanceSummary> {
   });
 }
 
+// ── Units write wrappers (§8.7) ──────────────────────────────────────────────
+
+export interface UnitBody {
+  name: string;
+  code: string;
+  kind: UnitKind | string;
+  owner_person_id?: string;
+  description?: string;
+  status?: UnitStatus | string;
+}
+
+export interface IntegrationBody {
+  unit_id: string;
+  name: string;
+  kind: IntegrationKind | string;
+  endpoint: string;
+  credential_ref: string;
+  schedule?: string;
+  active?: boolean;
+}
+
+export interface IndicatorDefinitionBody {
+  unit_id: string;
+  name: string;
+  kind: IndicatorKind | string;
+  source_field: string;
+  formula?: string;
+  target?: string;
+  warning_threshold?: string;
+  critical_threshold?: string;
+  active?: boolean;
+}
+
+export function createUnit(body: UnitBody): Promise<Unit> {
+  return apiFetch<Unit>("/api/v1/units", { method: "POST", body });
+}
+
+export function updateUnit(
+  id: string,
+  version: number,
+  body: UnitBody,
+): Promise<Unit> {
+  return apiFetch<Unit>(`/api/v1/units/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function createIntegration(
+  body: IntegrationBody,
+): Promise<UnitIntegration> {
+  return apiFetch<UnitIntegration>("/api/v1/units/integrations", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateIntegration(
+  id: string,
+  version: number,
+  body: IntegrationBody,
+): Promise<UnitIntegration> {
+  return apiFetch<UnitIntegration>(`/api/v1/units/integrations/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function createIndicatorDefinition(
+  body: IndicatorDefinitionBody,
+): Promise<UnitIndicatorDefinition> {
+  return apiFetch<UnitIndicatorDefinition>(
+    "/api/v1/units/indicator-definitions",
+    { method: "POST", body },
+  );
+}
+
+export function updateIndicatorDefinition(
+  id: string,
+  version: number,
+  body: IndicatorDefinitionBody,
+): Promise<UnitIndicatorDefinition> {
+  return apiFetch<UnitIndicatorDefinition>(
+    `/api/v1/units/indicator-definitions/${id}`,
+    { method: "PUT", body, headers: ifMatch(version) },
+  );
+}
+
 // ── Intel read wrappers (§8.8) ───────────────────────────────────────────────
 
 export const DECISION_OUTCOMES = ["open", "approved", "rejected", "deferred"] as const;

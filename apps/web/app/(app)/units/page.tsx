@@ -35,6 +35,13 @@ import {
 import { ApiError } from "@/lib/api/client";
 import { requireUser } from "@/lib/auth/session";
 import { formatDay, humanise } from "@/lib/format";
+import type { PersonOption } from "@/lib/directory";
+import { NewUnitButton, UnitActions } from "./unit-form";
+import { NewIntegrationButton, IntegrationActions } from "./integration-form";
+import {
+  NewIndicatorDefinitionButton,
+  IndicatorDefinitionActions,
+} from "./indicator-definition-form";
 
 /**
  * Units (`GET /api/v1/units/*`, gated by `units.*`; blueprint §8.7). The page
@@ -113,7 +120,17 @@ function PageNote({ count, hasMore }: { count: number; hasMore?: boolean }) {
 }
 
 /** The units register: one row per unit with its derived counts. */
-function UnitsTable({ units }: { units: Unit[] }) {
+function UnitsTable({
+  units,
+  people,
+  me,
+  capabilities,
+}: {
+  units: Unit[];
+  people: PersonOption[];
+  me?: string;
+  capabilities: string[];
+}) {
   return (
     <Table>
       <thead>
@@ -125,6 +142,7 @@ function UnitsTable({ units }: { units: Unit[] }) {
           <Th className="text-right">Integrations</Th>
           <Th className="text-right">Indicators</Th>
           <Th>Owner</Th>
+          <Th className="text-right">Actions</Th>
         </tr>
       </thead>
       <tbody>
@@ -154,6 +172,13 @@ function UnitsTable({ units }: { units: Unit[] }) {
               {unit.indicator_count}
             </Td>
             <Td className="text-muted">{unit.owner?.name ?? "—"}</Td>
+            <Td className="text-right">
+              <UnitActions
+                unit={unit}
+                people={people}
+                capabilities={capabilities}
+              />
+            </Td>
           </tr>
         ))}
       </tbody>
@@ -164,8 +189,16 @@ function UnitsTable({ units }: { units: Unit[] }) {
 /** Integrations: how Atlas connects to each unit's system of record. */
 function IntegrationsTable({
   integrations,
+  people,
+  me,
+  capabilities,
+  unitOptions,
 }: {
   integrations: UnitIntegration[];
+  people: PersonOption[];
+  me?: string;
+  capabilities: string[];
+  unitOptions: { id: string; name: string }[];
 }) {
   return (
     <Table>
@@ -178,6 +211,7 @@ function IntegrationsTable({
           <Th>Last sync</Th>
           <Th>Status</Th>
           <Th>Active</Th>
+          <Th className="text-right">Actions</Th>
         </tr>
       </thead>
       <tbody>
@@ -206,6 +240,15 @@ function IntegrationsTable({
                 {integration.active ? "Active" : "Inactive"}
               </Badge>
             </Td>
+            <Td className="text-right">
+              <IntegrationActions
+                integration={integration}
+                units={unitOptions}
+                people={people}
+                me={me}
+                capabilities={capabilities}
+              />
+            </Td>
           </tr>
         ))}
       </tbody>
@@ -216,8 +259,16 @@ function IntegrationsTable({
 /** Indicator definitions: what we measure for each unit. */
 function IndicatorDefinitionsTable({
   definitions,
+  people,
+  me,
+  capabilities,
+  unitOptions,
 }: {
   definitions: UnitIndicatorDefinition[];
+  people: PersonOption[];
+  me?: string;
+  capabilities: string[];
+  unitOptions: { id: string; name: string }[];
 }) {
   return (
     <Table>
@@ -229,6 +280,7 @@ function IndicatorDefinitionsTable({
           <Th>Source field</Th>
           <Th>Target</Th>
           <Th>Active</Th>
+          <Th className="text-right">Actions</Th>
         </tr>
       </thead>
       <tbody>
@@ -247,6 +299,15 @@ function IndicatorDefinitionsTable({
               <Badge tone={definition.active ? "success" : "neutral"}>
                 {definition.active ? "Active" : "Inactive"}
               </Badge>
+            </Td>
+            <Td className="text-right">
+              <IndicatorDefinitionActions
+                definition={definition}
+                units={unitOptions}
+                people={people}
+                me={me}
+                capabilities={capabilities}
+              />
             </Td>
           </tr>
         ))}
@@ -353,6 +414,14 @@ export default async function UnitsPage({
   // The shell already guaranteed a session; this is the same read the API makes.
   await requireUser();
 
+  // Who is looking decides which write controls appear. Go still authorises.
+  const user = await requireUser();
+  const held = new Set(user.roles);
+  const isTeam = held.has("ceo_commercial") || held.has("ceo_internal");
+  const capabilities: string[] = isTeam
+    ? ["units.unit.manage"]
+    : [];
+
   const [unitsPage, integrationsPage, definitionsPage, snapshotsPage, summariesPage] =
     await Promise.all([
       load(() => listUnits({ kind, status, active, limit: 50 })),
@@ -362,11 +431,38 @@ export default async function UnitsPage({
       load(() => listFinanceSummaries({ limit: 50 })),
     ]);
 
+  const unitOptions = (unitsPage.value?.items ?? []).map((unit) => ({
+    id: unit.id,
+    name: unit.name,
+  }));
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Units"
         description="Management view into each business unit — integrations, indicators and finance summaries."
+        actions={
+          <>
+            <NewUnitButton
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+              variant="secondary"
+            />
+            <NewIntegrationButton
+              units={unitOptions}
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+            />
+            <NewIndicatorDefinitionButton
+              units={unitOptions}
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+            />
+          </>
+        }
       />
 
       <StatGrid label="Units overview">
@@ -439,7 +535,12 @@ export default async function UnitsPage({
                 ))}
               </Chips>
             </div>
-            <UnitsTable units={unitsPage.value.items} />
+            <UnitsTable
+              units={unitsPage.value.items}
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+            />
             <PageNote count={unitsPage.value.items.length} hasMore={unitsPage.value.has_more} />
           </>
         )}
@@ -465,7 +566,13 @@ export default async function UnitsPage({
           </div>
         ) : (
           <>
-            <IntegrationsTable integrations={integrationsPage.value.items} />
+            <IntegrationsTable
+              integrations={integrationsPage.value.items}
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+              unitOptions={unitOptions}
+            />
             <PageNote count={integrationsPage.value.items.length} hasMore={integrationsPage.value.has_more} />
           </>
         )}
@@ -491,7 +598,13 @@ export default async function UnitsPage({
           </div>
         ) : (
           <>
-            <IndicatorDefinitionsTable definitions={definitionsPage.value.items} />
+            <IndicatorDefinitionsTable
+              definitions={definitionsPage.value.items}
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+              unitOptions={unitOptions}
+            />
             <PageNote count={definitionsPage.value.items.length} hasMore={definitionsPage.value.has_more} />
           </>
         )}
