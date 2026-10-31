@@ -25,6 +25,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/finance"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
+	"github.com/safaristack/atlas/apps/api/internal/intel"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/people"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
@@ -87,6 +88,9 @@ type Deps struct {
 	// Units is the Phase 5 business-unit oversight surface (§8.7): units,
 	// integrations, indicator definitions and snapshots; mounted when present.
 	Units *units.Handler
+	// Intel is the Phase 6 executive intelligence surface (§8.8): decisions,
+	// risks, briefs and metric snapshots; mounted when present.
+	Intel *intel.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -178,6 +182,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Units != nil {
 		registerUnits(reg, d.Units)
+	}
+
+	if d.Intel != nil {
+		registerIntel(reg, d.Intel)
 	}
 
 	reg.Mount(r, gate)
@@ -838,4 +846,53 @@ func registerUnits(reg *routing.Registry, h *units.Handler) {
 		"List unit finance summaries", h.ListFinanceSummaries)
 	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/finance-summaries/{id}",
 		"Get a unit finance summary", h.GetFinanceSummary)
+}
+
+// registerIntel declares the Phase 6 executive intelligence surface (§8.8):
+// decisions, risks, briefs and metric snapshots. Reads need
+// intel.decision.read / intel.risk.read / intel.brief.read / intel.metric.read;
+// writes need the matching manage permission. Every write carries the version
+// it read in If-Match (§6.6).
+func registerIntel(reg *routing.Registry, h *intel.Handler) {
+	// Decisions.
+	reg.Gated("intel.decision.read", http.MethodGet, "/api/v1/intel/decisions",
+		"List decisions", h.ListDecisions)
+	reg.Gated("intel.decision.read", http.MethodGet, "/api/v1/intel/decisions/{id}",
+		"Get a decision", h.GetDecision)
+	reg.Gated("intel.decision.manage", http.MethodPost, "/api/v1/intel/decisions",
+		"Create a decision", h.CreateDecision)
+	reg.Gated("intel.decision.manage", http.MethodPut, "/api/v1/intel/decisions/{id}",
+		"Update a decision", h.UpdateDecision)
+	reg.Gated("intel.decision.manage", http.MethodPost, "/api/v1/intel/decisions/{id}/decide",
+		"Decide a decision", h.DecideDecision)
+
+	// Risks.
+	reg.Gated("intel.risk.read", http.MethodGet, "/api/v1/intel/risks",
+		"List risks", h.ListRisks)
+	reg.Gated("intel.risk.read", http.MethodGet, "/api/v1/intel/risks/{id}",
+		"Get a risk", h.GetRisk)
+	reg.Gated("intel.risk.manage", http.MethodPost, "/api/v1/intel/risks",
+		"Create a risk", h.CreateRisk)
+	reg.Gated("intel.risk.manage", http.MethodPut, "/api/v1/intel/risks/{id}",
+		"Update a risk", h.UpdateRisk)
+
+	// Briefs: daily executive brief.
+	reg.Gated("intel.brief.read", http.MethodGet, "/api/v1/intel/briefs",
+		"List briefs", h.ListBriefs)
+	reg.Gated("intel.brief.read", http.MethodGet, "/api/v1/intel/briefs/{id}",
+		"Get a brief", h.GetBrief)
+	reg.Gated("intel.brief.manage", http.MethodPost, "/api/v1/intel/briefs",
+		"Create a brief", h.CreateBrief)
+	reg.Gated("intel.brief.manage", http.MethodPut, "/api/v1/intel/briefs/{id}",
+		"Update a brief", h.UpdateBrief)
+	reg.Gated("intel.brief.manage", http.MethodPost, "/api/v1/intel/briefs/{id}/deliver",
+		"Deliver a brief", h.DeliverBrief)
+
+	// Metric snapshots.
+	reg.Gated("intel.metric.read", http.MethodGet, "/api/v1/intel/metric-snapshots",
+		"List metric snapshots", h.ListMetricSnapshots)
+	reg.Gated("intel.metric.read", http.MethodGet, "/api/v1/intel/metric-snapshots/{id}",
+		"Get a metric snapshot", h.GetMetricSnapshot)
+	reg.Gated("intel.metric.manage", http.MethodPost, "/api/v1/intel/metric-snapshots",
+		"Create a metric snapshot", h.CreateMetricSnapshot)
 }

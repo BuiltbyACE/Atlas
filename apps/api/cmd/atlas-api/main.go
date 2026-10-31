@@ -32,6 +32,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/finance"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
+	"github.com/safaristack/atlas/apps/api/internal/intel"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/people"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
@@ -211,6 +212,12 @@ func run() error {
 	unitsService.SetAudit(auditWriter)
 	unitsHandler := units.NewHandler(unitsService, logger)
 
+	// Intel is the Phase 6 executive intelligence surface (§8.8): decisions,
+	// risks, briefs and metric snapshots. Go owns every rule.
+	intelService := intel.NewService(intel.NewPGStore(pool), logger)
+	intelService.SetAudit(auditWriter)
+	intelHandler := intel.NewHandler(intelService, logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -232,6 +239,7 @@ func run() error {
 		Finance:      financeHandler,
 		Systems:      systemsHandler,
 		Units:        unitsHandler,
+		Intel:        intelHandler,
 	})
 
 	srv := &http.Server{

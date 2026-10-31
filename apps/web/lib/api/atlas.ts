@@ -3080,3 +3080,177 @@ export function getFinanceSummary(id: string): Promise<UnitFinanceSummary> {
     cache: "no-store",
   });
 }
+
+// ── Intel read wrappers (§8.8) ───────────────────────────────────────────────
+
+export const DECISION_OUTCOMES = ["open", "approved", "rejected", "deferred"] as const;
+export type DecisionOutcome = (typeof DECISION_OUTCOMES)[number];
+
+export const RISK_KINDS = ["client", "delivery", "financial", "people", "systems"] as const;
+export type RiskKind = (typeof RISK_KINDS)[number];
+
+export const RISK_LIKELIHOODS = ["low", "medium", "high", "critical"] as const;
+export type RiskLikelihood = (typeof RISK_LIKELIHOODS)[number];
+
+export const RISK_IMPACTS = ["low", "medium", "high", "critical"] as const;
+export type RiskImpact = (typeof RISK_IMPACTS)[number];
+
+export const RISK_STATUSES = ["open", "monitoring", "closed", "mitigated"] as const;
+export type RiskStatus = (typeof RISK_STATUSES)[number];
+
+/** A decision — the company's memory of a major decision (§8.8). */
+export interface Decision {
+  id: string;
+  ref: string;
+  question: string;
+  context_links: string[];
+  options: string[];
+  recommendation?: string;
+  requested_by?: string;
+  requested_by_name?: string;
+  deciders: string[];
+  due_on?: string;
+  outcome: DecisionOutcome | string;
+  rationale?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A risk — client, delivery, financial, people, or systems (§8.8). */
+export interface Risk {
+  id: string;
+  ref: string;
+  title: string;
+  kind: RiskKind | string;
+  owner?: { id: string; name: string };
+  likelihood: RiskLikelihood | string;
+  impact: RiskImpact | string;
+  mitigation?: string;
+  status: RiskStatus | string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A daily executive brief (§8.8). */
+export interface Brief {
+  id: string;
+  ref: string;
+  for_date: string;
+  summary?: string;
+  sections?: Record<string, any>;
+  delivered: boolean;
+  delivered_at?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A point-in-time KPI figure (§8.8). */
+export interface MetricSnapshot {
+  id: string;
+  ref: string;
+  metric_name: string;
+  metric_value: string;
+  as_of: string;
+  source?: string;
+  version: number;
+  created_at: string;
+}
+
+export type DecisionListQuery = {
+  outcome?: DecisionOutcome | string;
+  decider?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type RiskListQuery = {
+  kind?: RiskKind | string;
+  status?: RiskStatus | string;
+  owner_person_id?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type BriefListQuery = {
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type MetricSnapshotListQuery = {
+  metric_name?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export function listDecisions(
+  query: DecisionListQuery = {},
+): Promise<Page<Decision>> {
+  return apiFetch<Page<Decision>>("/api/v1/intel/decisions", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getDecision(id: string): Promise<Decision> {
+  return apiFetch<Decision>(`/api/v1/intel/decisions/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listRisks(
+  query: RiskListQuery = {},
+): Promise<Page<Risk>> {
+  return apiFetch<Page<Risk>>("/api/v1/intel/risks", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getRisk(id: string): Promise<Risk> {
+  return apiFetch<Risk>(`/api/v1/intel/risks/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listBriefs(
+  query: BriefListQuery = {},
+): Promise<Page<Brief>> {
+  return apiFetch<Page<Brief>>("/api/v1/intel/briefs", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getBrief(id: string): Promise<Brief> {
+  return apiFetch<Brief>(`/api/v1/intel/briefs/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listMetricSnapshots(
+  query: MetricSnapshotListQuery = {},
+): Promise<Page<MetricSnapshot>> {
+  return apiFetch<Page<MetricSnapshot>>("/api/v1/intel/metric-snapshots", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getMetricSnapshot(id: string): Promise<MetricSnapshot> {
+  return apiFetch<MetricSnapshot>(`/api/v1/intel/metric-snapshots/${id}`, {
+    cache: "no-store",
+  });
+}
