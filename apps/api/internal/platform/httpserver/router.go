@@ -555,12 +555,13 @@ func registerFinance(reg *routing.Registry, h *finance.Handler) {
 }
 
 // registerSystems declares the Phase 5 systems observability surface (§8.6):
-// what we run, the checks watching it, incidents, and what expires. This pass
-// is read-only; the register and incident lifecycle are a later pass, so every
-// route here is a GET.
+// what we run, the checks watching it, incidents, and what expires. The read
+// routes carry the read permissions; every write carries the manage permission
+// for the record it changes, so Go authorises each one on its own.
 //
 // Static segments are declared before /{id} so chi matches them first: /systems
-// /overview, /checks, /incidents and /expiring are collections, not ids.
+// /overview, /checks, /incidents, /domains, /certificates, /credentials and
+// /expiring are collections, not ids.
 func registerSystems(reg *routing.Registry, h *systems.Handler) {
 	// The headline, the register and what expires are all things you need
 	// systems.system.read to see.
@@ -570,23 +571,77 @@ func registerSystems(reg *routing.Registry, h *systems.Handler) {
 		"Domains, certificates and credential rotations about to lapse", h.Expiring)
 	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems",
 		"List registered systems with their derived health", h.ListSystems)
+	reg.Gated("systems.system.manage", http.MethodPost, "/api/v1/systems",
+		"Register a system", h.CreateSystem)
 
 	// Checks and their results.
+	reg.Gated("systems.system.manage", http.MethodPost, "/api/v1/systems/checks",
+		"Add a health check", h.CreateCheck)
 	reg.Gated("systems.check.read", http.MethodGet, "/api/v1/systems/checks",
 		"List health checks with their latest result", h.ListChecks)
+	reg.Gated("systems.system.manage", http.MethodPut, "/api/v1/systems/checks/{id}",
+		"Update a health check", h.UpdateCheck)
+	reg.Gated("systems.system.manage", http.MethodPost, "/api/v1/systems/checks/{id}/pause",
+		"Pause a health check", h.PauseCheck)
+	reg.Gated("systems.system.manage", http.MethodPost, "/api/v1/systems/checks/{id}/resume",
+		"Resume a health check", h.ResumeCheck)
 	reg.Gated("systems.check.read", http.MethodGet, "/api/v1/systems/checks/{id}/results",
 		"Recent results for a check", h.ListCheckResults)
 
 	// Incidents.
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents",
+		"Open an incident", h.OpenIncident)
 	reg.Gated("systems.incident.read", http.MethodGet, "/api/v1/systems/incidents",
 		"List incidents", h.ListIncidents)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/acknowledge",
+		"Acknowledge an incident", h.AcknowledgeIncident)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/mitigate",
+		"Record that an incident's impact is contained", h.MitigateIncident)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/resolve",
+		"Resolve an incident", h.ResolveIncident)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/close",
+		"Close a resolved incident", h.CloseIncident)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/review",
+		"Record the post-incident review", h.ReviewIncident)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/notes",
+		"Add a timeline note to an incident", h.AddIncidentNote)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/actions",
+		"Add a follow-up action to an incident", h.CreateIncidentAction)
+	reg.Gated("systems.incident.manage", http.MethodPut, "/api/v1/systems/incidents/{id}/actions/{actionId}",
+		"Update a follow-up action", h.UpdateIncidentAction)
 	reg.Gated("systems.incident.read", http.MethodGet, "/api/v1/systems/incidents/{id}",
 		"Get an incident with its systems, timeline and follow-up actions", h.GetIncident)
+
+	// Domains and certificates: what we own and when it lapses.
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/domains",
+		"List domain registrations", h.ListDomains)
+	reg.Gated("systems.domain.manage", http.MethodPost, "/api/v1/systems/domains",
+		"Record a domain registration", h.CreateDomain)
+	reg.Gated("systems.domain.manage", http.MethodPut, "/api/v1/systems/domains/{id}",
+		"Update a domain registration", h.UpdateDomain)
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/certificates",
+		"List TLS certificates", h.ListCertificates)
+	reg.Gated("systems.domain.manage", http.MethodPost, "/api/v1/systems/certificates",
+		"Record a TLS certificate", h.CreateCertificate)
+	reg.Gated("systems.domain.manage", http.MethodPut, "/api/v1/systems/certificates/{id}",
+		"Update a TLS certificate", h.UpdateCertificate)
+
+	// Credential records: the pointer, never the secret.
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/credentials",
+		"List credential records (locations, never secrets)", h.ListCredentials)
+	reg.Gated("systems.system.manage", http.MethodPost, "/api/v1/systems/credentials",
+		"Record that a credential exists and where it is stored", h.CreateCredential)
+	reg.Gated("systems.system.manage", http.MethodPut, "/api/v1/systems/credentials/{id}",
+		"Update a credential record", h.UpdateCredential)
 
 	// A system and its credential records. Last, so it does not shadow the
 	// static collection routes above.
 	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/{id}",
 		"Get a system with its credential records (locations, never secrets)", h.GetSystem)
+	reg.Gated("systems.system.manage", http.MethodPut, "/api/v1/systems/{id}",
+		"Update a system", h.UpdateSystem)
+	reg.Gated("systems.system.manage", http.MethodPost, "/api/v1/systems/{id}/retire",
+		"Retire a system", h.RetireSystem)
 }
 
 // registerWork declares the Phase 2 work-orchestration surface (§8.2).

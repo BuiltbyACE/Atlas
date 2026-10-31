@@ -213,6 +213,8 @@ type credentialView struct {
 	Label          string         `json:"label"`
 	CredentialKind string         `json:"credential_kind"`
 	StorePath      string         `json:"store_path"`
+	SystemID       string         `json:"system_id,omitempty"`
+	SystemName     string         `json:"system_name,omitempty"`
 	Owner          *personRefView `json:"owner,omitempty"`
 	RotatedOn      string         `json:"rotated_on,omitempty"`
 	NextRotationOn string         `json:"next_rotation_on,omitempty"`
@@ -345,6 +347,7 @@ func credentialOf(c CredentialRecord) credentialView {
 		Label:          c.Label,
 		CredentialKind: c.CredentialKind,
 		StorePath:      c.StorePath,
+		SystemID:       c.SystemID.String(),
 		Owner:          personRef(c.OwnerPersonID, c.OwnerName),
 		RotatedOn:      dayStr(c.RotatedOn),
 		NextRotationOn: dayStr(c.NextRotationOn),
@@ -444,23 +447,31 @@ func incidentOf(in Incident) incidentView {
 	if in.Timeline != nil {
 		v.Timeline = make([]timelineEntryView, 0, len(in.Timeline))
 		for _, e := range in.Timeline {
-			v.Timeline = append(v.Timeline, timelineEntryView{
-				ID: e.ID.String(), At: rfc(e.At), Actor: personRef(e.ActorPersonID, e.ActorName),
-				EntryType: string(e.EntryType), Note: e.Note,
-			})
+			v.Timeline = append(v.Timeline, timelineEntryOf(e))
 		}
 	}
 	if in.Actions != nil {
 		v.Actions = make([]incidentActionView, 0, len(in.Actions))
 		for _, a := range in.Actions {
-			v.Actions = append(v.Actions, incidentActionView{
-				ID: a.ID.String(), Title: a.Title, Owner: personRef(a.OwnerPersonID, a.OwnerName),
-				DueOn: dayStr(a.DueOn), Status: string(a.Status), TaskID: idStr(a.TaskID),
-				Version: a.Version, CreatedAt: rfc(a.CreatedAt), UpdatedAt: rfc(a.UpdatedAt),
-			})
+			v.Actions = append(v.Actions, incidentActionOf(a))
 		}
 	}
 	return v
+}
+
+func timelineEntryOf(e TimelineEntry) timelineEntryView {
+	return timelineEntryView{
+		ID: e.ID.String(), At: rfc(e.At), Actor: personRef(e.ActorPersonID, e.ActorName),
+		EntryType: string(e.EntryType), Note: e.Note,
+	}
+}
+
+func incidentActionOf(a IncidentAction) incidentActionView {
+	return incidentActionView{
+		ID: a.ID.String(), Title: a.Title, Owner: personRef(a.OwnerPersonID, a.OwnerName),
+		DueOn: dayStr(a.DueOn), Status: string(a.Status), TaskID: idStr(a.TaskID),
+		Version: a.Version, CreatedAt: rfc(a.CreatedAt), UpdatedAt: rfc(a.UpdatedAt),
+	}
 }
 
 // elapsedSeconds is how long a phase took, or nil while it is still running.

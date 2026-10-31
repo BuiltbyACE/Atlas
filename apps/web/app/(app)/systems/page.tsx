@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { SignalRefresh } from "@/components/signal-refresh";
 import {
   Badge,
   Card,
@@ -19,19 +20,33 @@ import {
 } from "@/components/ui";
 import {
   getSystemsOverview,
+  listCertificates,
+  listCredentials,
+  listDomains,
   listChecks,
   listExpiring,
   listIncidents,
   listSystems,
   type AtlasSystem,
+  type SystemsCertificate,
   type SystemsCheck,
+  type SystemCredential,
+  type SystemsDomain,
   type SystemsExpiry,
   type SystemsIncident,
   type SystemsOverview,
 } from "@/lib/api/atlas";
 import { ApiError } from "@/lib/api/client";
 import { requireUser } from "@/lib/auth/session";
+import { personDirectory, personName, rosterOf, type PersonOption } from "@/lib/directory";
 import { formatDateTime, formatDay, formatDuration, humanise, timeAgo } from "@/lib/format";
+import { SYSTEMS_TOPIC } from "@/lib/realtime/topics";
+import { NewDomainButton, DomainActions } from "./domain-form";
+import { NewCertificateButton, CertificateActions } from "./certificate-form";
+import { NewCheckButton, CheckActions } from "./check-form";
+import { NewCredentialButton, CredentialActions } from "./credential-form";
+import { NewIncidentButton, IncidentActions } from "./incident-form";
+import { NewSystemButton, SystemActions } from "./system-form";
 
 /**
  * Systems (`GET /api/v1/systems/*`, gated by `systems.*`; blueprint §8.6). The
@@ -149,6 +164,26 @@ function expiryKindLabel(kind: string): string {
   return humanise(kind);
 }
 
+/** Which systems write capabilities the viewer holds, from their roles.
+ * Go holds the real permission on each route; this only decides what to show.
+ * Hiding is never the guard: a refused write comes back from Go.
+ */
+function systemsCapabilities(roles: string[]): string[] {
+  const held = new Set(roles);
+  const team = held.has("ceo_internal");
+  const caps: string[] = [];
+  if (team) {
+    caps.push(
+      "systems.system.create",
+      "systems.system.manage",
+      "systems.incident.create",
+      "systems.incident.manage",
+      "systems.domain.manage",
+    );
+  }
+  return caps;
+}
+
 /** A settled load: either a value or the `ApiError` Go returned. */
 async function load<T>(fn: () => Promise<T>): Promise<{ value: T | null; error: ApiError | null }> {
   try {
@@ -234,7 +269,19 @@ function AvailabilityRow({
 }
 
 /** The register table: one row per system with its derived health. */
-function SystemsTable({ systems }: { systems: AtlasSystem[] }) {
+function SystemsTable({
+  systems,
+  systemOptions,
+  people,
+  me,
+  capabilities,
+}: {
+  systems: AtlasSystem[];
+  systemOptions: { id: string; name: string }[];
+  people: PersonOption[];
+  me?: string;
+  capabilities: string[];
+}) {
   return (
     <Table>
       <thead>
@@ -246,6 +293,7 @@ function SystemsTable({ systems }: { systems: AtlasSystem[] }) {
           <Th>Health</Th>
           <Th className="text-right">Availability</Th>
           <Th>Owner</Th>
+          <Th className="text-right">Actions</Th>
         </tr>
       </thead>
       <tbody>
@@ -278,6 +326,15 @@ function SystemsTable({ systems }: { systems: AtlasSystem[] }) {
               )}
             </Td>
             <Td className="text-muted">{system.owner?.name ?? "—"}</Td>
+            <Td className="text-right">
+              <SystemActions
+                system={system}
+                people={people}
+                systems={systemOptions}
+                me={me}
+                capabilities={capabilities}
+              />
+            </Td>
           </tr>
         ))}
       </tbody>
@@ -286,7 +343,19 @@ function SystemsTable({ systems }: { systems: AtlasSystem[] }) {
 }
 
 /** One probe with its newest result — the raw material for the health above. */
-function ChecksTable({ checks }: { checks: SystemsCheck[] }) {
+function ChecksTable({
+  checks,
+  people,
+  me,
+  capabilities,
+  systemOptions,
+}: {
+  checks: SystemsCheck[];
+  people: PersonOption[];
+  me?: string;
+  capabilities: string[];
+  systemOptions: { id: string; name: string }[];
+}) {
   return (
     <Table>
       <thead>
@@ -297,6 +366,7 @@ function ChecksTable({ checks }: { checks: SystemsCheck[] }) {
           <Th>Target</Th>
           <Th>Last result</Th>
           <Th className="text-right">Failures in a row</Th>
+          <Th className="text-right">Actions</Th>
         </tr>
       </thead>
       <tbody>
@@ -344,6 +414,15 @@ function ChecksTable({ checks }: { checks: SystemsCheck[] }) {
                 <span className="text-muted">0/{check.failure_threshold}</span>
               )}
             </Td>
+            <Td className="text-right">
+              <CheckActions
+                check={check}
+                systems={systemOptions}
+                people={people}
+                me={me}
+                capabilities={capabilities}
+              />
+            </Td>
           </tr>
         ))}
       </tbody>
@@ -352,7 +431,19 @@ function ChecksTable({ checks }: { checks: SystemsCheck[] }) {
 }
 
 /** The incident log: what broke, how bad, who commanded it, how long it took. */
-function IncidentsTable({ incidents }: { incidents: SystemsIncident[] }) {
+function IncidentsTable({
+  incidents,
+  people,
+  me,
+  capabilities,
+  systemOptions,
+}: {
+  incidents: SystemsIncident[];
+  people: PersonOption[];
+  me?: string;
+  capabilities: string[];
+  systemOptions: { id: string; name: string }[];
+}) {
   return (
     <Table>
       <thead>
@@ -363,6 +454,7 @@ function IncidentsTable({ incidents }: { incidents: SystemsIncident[] }) {
           <Th>Systems</Th>
           <Th>Detected</Th>
           <Th className="text-right">Time to resolve</Th>
+          <Th className="text-right">Actions</Th>
         </tr>
       </thead>
       <tbody>
@@ -398,6 +490,15 @@ function IncidentsTable({ incidents }: { incidents: SystemsIncident[] }) {
               ) : (
                 <span className="font-semibold">{formatDuration(incident.mttr_seconds)}</span>
               )}
+            </Td>
+            <Td className="text-right">
+              <IncidentActions
+                incident={incident}
+                systems={systemOptions}
+                people={people}
+                me={me}
+                capabilities={capabilities}
+              />
             </Td>
           </tr>
         ))}
@@ -478,7 +579,23 @@ export default async function SystemsPage({
   // The shell already guaranteed a session; this is the same read the API makes.
   await requireUser();
 
-  const [overview, systemsPage, checksPage, incidentsPage, expiringResult] = await Promise.all([
+  // Who is looking decides which write controls appear. Go still authorises.
+  const user = await requireUser();
+  const names = await personDirectory();
+  const people = rosterOf(names);
+  const me = user.person_id;
+  const capabilities = systemsCapabilities(user.roles);
+
+  const [
+    overview,
+    systemsPage,
+    checksPage,
+    incidentsPage,
+    expiringResult,
+    domainsPage,
+    certificatesPage,
+    credentialsPage,
+  ] = await Promise.all([
     load(() => getSystemsOverview()),
     load(() => listSystems({ criticality: tier, environment: env, limit: 50 })),
     load(() => listChecks({ status: checkStatus, limit: 50 })),
@@ -490,7 +607,15 @@ export default async function SystemsPage({
       }),
     ),
     load(() => listExpiring()),
+    load(() => listDomains()),
+    load(() => listCertificates()),
+    load(() => listCredentials()),
   ]);
+
+  const systemOptions = (systemsPage.value?.items ?? []).map((system) => ({
+    id: system.id,
+    name: system.name,
+  }));
 
   const summary = overview.value;
 
@@ -516,6 +641,31 @@ export default async function SystemsPage({
       <PageHeader
         title="Systems"
         description="What is running, what is broken, and what is about to lapse."
+        actions={
+          <>
+            <SignalRefresh topic={SYSTEMS_TOPIC} quiet />
+            <NewSystemButton
+              systems={systemOptions}
+              people={people}
+              me={me}
+              capabilities={capabilities}
+              variant="secondary"
+            />
+            <NewCheckButton
+              systems={systemOptions}
+              people={people}
+              me={me}
+              capabilities={capabilities}
+            />
+            <NewIncidentButton
+              systems={systemOptions}
+              people={people}
+              me={me}
+              capabilities={capabilities}
+              variant="secondary"
+            />
+          </>
+        }
       />
 
       {overview.error && <ProblemNotice error={overview.error} title="We could not load the systems overview" />}
@@ -708,7 +858,13 @@ export default async function SystemsPage({
           </div>
         ) : (
           <>
-            <SystemsTable systems={systemsPage.value.items} />
+            <SystemsTable
+              systems={systemsPage.value.items}
+              systemOptions={systemOptions}
+              people={people}
+              me={me}
+              capabilities={capabilities}
+            />
             <PageNote count={systemsPage.value.items.length} hasMore={systemsPage.value.has_more} />
           </>
         )}
@@ -741,7 +897,13 @@ export default async function SystemsPage({
           </div>
         ) : (
           <>
-            <ChecksTable checks={checksPage.value.items} />
+            <ChecksTable
+              checks={checksPage.value.items}
+              people={people}
+              me={me}
+              capabilities={capabilities}
+              systemOptions={systemOptions}
+            />
             <PageNote count={checksPage.value.items.length} hasMore={checksPage.value.has_more} />
           </>
         )}
@@ -775,9 +937,208 @@ export default async function SystemsPage({
           </div>
         ) : (
           <>
-            <IncidentsTable incidents={incidentsPage.value.items} />
+            <IncidentsTable
+              incidents={incidentsPage.value.items}
+              people={people}
+              me={me}
+              capabilities={capabilities}
+              systemOptions={systemOptions}
+            />
             <PageNote count={incidentsPage.value.items.length} hasMore={incidentsPage.value.has_more} />
           </>
+        )}
+      </Card>
+
+      <Card
+        title="Domains"
+        description="Registered domains and when they lapse — Go warns at 30/14/7 days."
+        actions={
+          <NewDomainButton
+            systems={systemOptions}
+            people={people}
+            me={me}
+            capabilities={capabilities}
+          />
+        }
+        padded={false}
+      >
+        {domainsPage.error ? (
+          <PanelError title="We could not load domains" error={domainsPage.error} />
+        ) : !domainsPage.value || domainsPage.value.items.length === 0 ? (
+          <div className="p-[22px]">
+            <EmptyState
+              icon="server"
+              iconTone="info"
+              className="min-h-[200px]"
+              title="No domains yet"
+            >
+              Domains appear here once they are registered. Go watches each one and warns as it
+              nears expiry.
+            </EmptyState>
+          </div>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Domain</Th>
+                <Th>System</Th>
+                <Th>Registrar</Th>
+                <Th>Expires</Th>
+                <Th>Auto-renew</Th>
+                <Th className="text-right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {domainsPage.value.items.map((domain) => (
+                <tr key={domain.id}>
+                  <Td className="font-medium text-night">{domain.name}</Td>
+                  <Td className="text-muted">{domain.system_name ?? "—"}</Td>
+                  <Td className="text-muted">{domain.registrar ?? "—"}</Td>
+                  <Td className="text-muted">
+                    {domain.expires_on ? formatDay(domain.expires_on) : "—"}
+                  </Td>
+                  <Td className="text-muted">{domain.auto_renew ? "Automatic" : "Manual"}</Td>
+                  <Td className="text-right">
+                    <DomainActions
+                      domain={domain}
+                      systems={systemOptions}
+                      people={people}
+                      me={me}
+                      capabilities={capabilities}
+                    />
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
+
+      <Card
+        title="Certificates"
+        description="TLS certificates and when they lapse — Go warns at 30/14/7 days."
+        actions={
+          <NewCertificateButton
+            systems={systemOptions}
+            people={people}
+            me={me}
+            capabilities={capabilities}
+          />
+        }
+        padded={false}
+      >
+        {certificatesPage.error ? (
+          <PanelError title="We could not load certificates" error={certificatesPage.error} />
+        ) : !certificatesPage.value || certificatesPage.value.items.length === 0 ? (
+          <div className="p-[22px]">
+            <EmptyState
+              icon="shield"
+              iconTone="info"
+              className="min-h-[200px]"
+              title="No certificates yet"
+            >
+              Certificates appear here once they are recorded. Go watches each one and warns as it
+              nears expiry.
+            </EmptyState>
+          </div>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Hostname</Th>
+                <Th>System</Th>
+                <Th>Issuer</Th>
+                <Th>Expires</Th>
+                <Th>Auto-renew</Th>
+                <Th className="text-right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {certificatesPage.value.items.map((certificate) => (
+                <tr key={certificate.id}>
+                  <Td className="font-medium text-night">{certificate.hostname}</Td>
+                  <Td className="text-muted">{certificate.system_name ?? "—"}</Td>
+                  <Td className="text-muted">{certificate.issuer ?? "—"}</Td>
+                  <Td className="text-muted">
+                    {formatDay(certificate.expires_on)}
+                  </Td>
+                  <Td className="text-muted">{certificate.auto_renew ? "Automatic" : "Manual"}</Td>
+                  <Td className="text-right">
+                    <CertificateActions
+                      certificate={certificate}
+                      systems={systemOptions}
+                      people={people}
+                      me={me}
+                      capabilities={capabilities}
+                    />
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
+
+      <Card
+        title="Credentials"
+        description="Credential records: where each secret is stored, never the secret itself."
+        actions={
+          <NewCredentialButton
+            systems={systemOptions}
+            people={people}
+            me={me}
+            capabilities={capabilities}
+          />
+        }
+        padded={false}
+      >
+        {credentialsPage.error ? (
+          <PanelError title="We could not load credentials" error={credentialsPage.error} />
+        ) : !credentialsPage.value || credentialsPage.value.items.length === 0 ? (
+          <div className="p-[22px]">
+            <EmptyState
+              icon="card"
+              iconTone="info"
+              className="min-h-[200px]"
+              title="No credentials yet"
+            >
+              Credentials appear here once they are recorded. Only the storage location is kept;
+              the secret itself never enters Atlas.
+            </EmptyState>
+          </div>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Label</Th>
+                <Th>System</Th>
+                <Th>Kind</Th>
+                <Th>Store path</Th>
+                <Th>Active</Th>
+                <Th className="text-right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {credentialsPage.value.items.map((credential) => (
+                <tr key={credential.id}>
+                  <Td className="font-medium text-night">{credential.label}</Td>
+                  <Td className="text-muted">{credential.system_name ?? "—"}</Td>
+                  <Td className="text-muted">{credential.credential_kind ?? "—"}</Td>
+                  <Td className="text-muted truncate max-w-[200px]"><span title={credential.store_path}>{credential.store_path}</span></Td>
+                  <Td className="text-muted">{credential.active ? "Active" : "Inactive"}</Td>
+                  <Td className="text-right">
+                    <CredentialActions
+                      credential={credential}
+                      systems={systemOptions}
+                      people={people}
+                      me={me}
+                      capabilities={capabilities}
+                    />
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
         )}
       </Card>
     </div>

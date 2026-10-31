@@ -2275,6 +2275,8 @@ export interface SystemCredential {
   credential_kind: string;
   /** Secrets-manager path, e.g. `sm://atlas/stripe`. */
   store_path: string;
+  system_id?: string;
+  system_name?: string;
   owner?: { id: string; name: string };
   rotated_on?: string;
   next_rotation_on?: string;
@@ -2494,5 +2496,365 @@ export function listExpiring(
   }>("/api/v1/systems/expiring", {
     query: { within_days: withinDays },
     cache: "no-store",
+  });
+}
+
+// ── the write pass (§8.6) ───────────────────────────────────────────────────
+//
+// Go owns every rule. A form here only describes its fields; a refusal comes
+// back as a problem with a stable `code` and is shown verbatim. Updates carry
+// the version the client last read, so a stale write is a 412 rather than a
+// silent overwrite.
+
+/** Action statuses on a follow-up action from an incident review. */
+export const INCIDENT_ACTION_STATUSES = ["todo", "doing", "done", "dropped"] as const;
+export type IncidentActionStatus = (typeof INCIDENT_ACTION_STATUSES)[number];
+
+/** Where an incident was noticed first. */
+export const INCIDENT_SOURCES = ["atlas", "client_reported", "manual"] as const;
+export type IncidentSource = (typeof INCIDENT_SOURCES)[number];
+
+/** A domain registration (`GET /api/v1/systems/domains`, §8.6). */
+export interface SystemsDomain {
+  id: string;
+  name: string;
+  system_id?: string;
+  system_name?: string;
+  registrar?: string;
+  registered_on?: string;
+  /** Absent when the renewal date is not known yet. */
+  expires_on?: string;
+  auto_renew: boolean;
+  owner?: { id: string; name: string };
+  notes?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A TLS certificate (`GET /api/v1/systems/certificates`, §8.6). */
+export interface SystemsCertificate {
+  id: string;
+  hostname: string;
+  system_id?: string;
+  system_name?: string;
+  issuer?: string;
+  issued_on?: string;
+  expires_on: string;
+  auto_renew: boolean;
+  owner?: { id: string; name: string };
+  notes?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  /** The tightest warning band it falls in: 7, 14, 30, or 0 beyond every band. */
+  warning_band?: number;
+}
+
+export type SystemsDomainListQuery = {
+  system_id?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type SystemsCertificateListQuery = {
+  system_id?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type SystemsCredentialListQuery = {
+  system_id?: string;
+  active?: boolean;
+  limit?: number;
+  cursor?: string;
+};
+
+export function listDomains(
+  query: SystemsDomainListQuery = {},
+): Promise<Page<SystemsDomain>> {
+  return apiFetch<Page<SystemsDomain>>("/api/v1/systems/domains", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function listCertificates(
+  query: SystemsCertificateListQuery = {},
+): Promise<Page<SystemsCertificate>> {
+  return apiFetch<Page<SystemsCertificate>>("/api/v1/systems/certificates", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Every credential record, locations only — there is no secret to return. */
+export function listCredentials(
+  query: SystemsCredentialListQuery = {},
+): Promise<Page<SystemCredential>> {
+  return apiFetch<Page<SystemCredential>>("/api/v1/systems/credentials", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Bodies a form sends. The reference, status and version are Go's. */
+export interface SystemsSystemBody {
+  name: string;
+  system_type: string;
+  environment: string;
+  criticality: string;
+  owner_person_id?: string;
+  organization_id?: string;
+  contract_id?: string;
+  runbook_url?: string;
+  repository_url?: string;
+  description?: string;
+}
+
+export interface SystemsCheckBody {
+  system_id: string;
+  name: string;
+  check_type: string;
+  target: string;
+  expect?: string;
+  interval_seconds?: number;
+  timeout_seconds?: number;
+  regions?: string[];
+  warn_ms?: number;
+  fail_ms?: number;
+  failure_threshold?: number;
+  heartbeat_window_seconds?: number;
+  active?: boolean;
+}
+
+export interface SystemsIncidentBody {
+  title: string;
+  severity: string;
+  system_ids: string[];
+  detected_at?: string;
+  detected_source?: string;
+  commander_person_id?: string;
+  client_impact?: string;
+}
+
+export interface SystemsDomainBody {
+  name: string;
+  system_id?: string;
+  registrar?: string;
+  registered_on?: string;
+  expires_on?: string;
+  auto_renew?: boolean;
+  owner_person_id?: string;
+  notes?: string;
+}
+
+export interface SystemsCertificateBody {
+  hostname: string;
+  system_id?: string;
+  issuer?: string;
+  issued_on?: string;
+  expires_on?: string;
+  auto_renew?: boolean;
+  owner_person_id?: string;
+  notes?: string;
+}
+
+export interface SystemsCredentialBody {
+  system_id: string;
+  label: string;
+  credential_kind: string;
+  /** Secrets-manager path, never the secret itself. */
+  store_path: string;
+  owner_person_id?: string;
+  rotated_on?: string;
+  next_rotation_on?: string;
+  notes?: string;
+  active?: boolean;
+}
+
+export interface SystemsActionBody {
+  title: string;
+  owner_person_id?: string;
+  due_on?: string;
+  status?: string;
+  task_id?: string;
+}
+
+export function createSystem(body: SystemsSystemBody): Promise<AtlasSystem> {
+  return apiFetch<AtlasSystem>("/api/v1/systems", { method: "POST", body });
+}
+
+export function updateSystem(
+  id: string,
+  version: number,
+  body: SystemsSystemBody,
+): Promise<AtlasSystem> {
+  return apiFetch<AtlasSystem>(`/api/v1/systems/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Retire a system. Refused while an incident is still open, and final. */
+export function retireSystem(id: string, version: number): Promise<AtlasSystem> {
+  return apiFetch<AtlasSystem>(`/api/v1/systems/${id}/retire`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function createCheck(body: SystemsCheckBody): Promise<SystemsCheck> {
+  return apiFetch<SystemsCheck>("/api/v1/systems/checks", { method: "POST", body });
+}
+
+export function updateCheck(
+  id: string,
+  version: number,
+  body: SystemsCheckBody,
+): Promise<SystemsCheck> {
+  return apiFetch<SystemsCheck>(`/api/v1/systems/checks/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Pause or resume a probe. Its result history stays intact either way. */
+export function setCheckActive(
+  id: string,
+  version: number,
+  active: boolean,
+): Promise<SystemsCheck> {
+  return apiFetch<SystemsCheck>(
+    `/api/v1/systems/checks/${id}/${active ? "resume" : "pause"}`,
+    { method: "POST", headers: ifMatch(version) },
+  );
+}
+
+export function openIncident(body: SystemsIncidentBody): Promise<SystemsIncident> {
+  return apiFetch<SystemsIncident>("/api/v1/systems/incidents", { method: "POST", body });
+}
+
+/**
+ * One lifecycle step. `body` carries the optional note; Go decides whether the
+ * step is allowed from the incident's own state.
+ */
+export function stepIncident(
+  id: string,
+  step: "acknowledge" | "mitigate" | "resolve" | "close",
+  version: number,
+  note?: string,
+): Promise<SystemsIncident> {
+  return apiFetch<SystemsIncident>(`/api/v1/systems/incidents/${id}/${step}`, {
+    method: "POST",
+    body: { note },
+    headers: ifMatch(version),
+  });
+}
+
+/** Record the post-incident review. Closing is refused until it is on file. */
+export function reviewIncident(
+  id: string,
+  version: number,
+  body: { root_cause: string; summary?: string },
+): Promise<SystemsIncident> {
+  return apiFetch<SystemsIncident>(`/api/v1/systems/incidents/${id}/review`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function addIncidentNote(
+  id: string,
+  note: string,
+): Promise<{ id: string; at: string; entry_type: string; note: string }> {
+  return apiFetch<{ id: string; at: string; entry_type: string; note: string }>(
+    `/api/v1/systems/incidents/${id}/notes`,
+    { method: "POST", body: { note } },
+  );
+}
+
+export function createIncidentAction(
+  id: string,
+  body: SystemsActionBody,
+): Promise<NonNullable<SystemsIncident["actions"]>[number]> {
+  return apiFetch<NonNullable<SystemsIncident["actions"]>[number]>(
+    `/api/v1/systems/incidents/${id}/actions`,
+    { method: "POST", body },
+  );
+}
+
+export function updateIncidentAction(
+  incidentId: string,
+  actionId: string,
+  version: number,
+  body: SystemsActionBody,
+): Promise<NonNullable<SystemsIncident["actions"]>[number]> {
+  return apiFetch<NonNullable<SystemsIncident["actions"]>[number]>(
+    `/api/v1/systems/incidents/${incidentId}/actions/${actionId}`,
+    { method: "PUT", body, headers: ifMatch(version) },
+  );
+}
+
+export function createDomain(body: SystemsDomainBody): Promise<SystemsDomain> {
+  return apiFetch<SystemsDomain>("/api/v1/systems/domains", { method: "POST", body });
+}
+
+export function updateDomain(
+  id: string,
+  version: number,
+  body: SystemsDomainBody,
+): Promise<SystemsDomain> {
+  return apiFetch<SystemsDomain>(`/api/v1/systems/domains/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function createCertificate(
+  body: SystemsCertificateBody,
+): Promise<SystemsCertificate> {
+  return apiFetch<SystemsCertificate>("/api/v1/systems/certificates", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateCertificate(
+  id: string,
+  version: number,
+  body: SystemsCertificateBody,
+): Promise<SystemsCertificate> {
+  return apiFetch<SystemsCertificate>(`/api/v1/systems/certificates/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function createCredential(
+  body: SystemsCredentialBody,
+): Promise<SystemCredential> {
+  return apiFetch<SystemCredential>("/api/v1/systems/credentials", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateCredential(
+  id: string,
+  version: number,
+  body: SystemsCredentialBody,
+): Promise<SystemCredential> {
+  return apiFetch<SystemCredential>(`/api/v1/systems/credentials/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
   });
 }

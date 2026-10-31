@@ -13,6 +13,7 @@ package systems
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -31,15 +32,23 @@ var (
 // Stable problem codes for the write lifecycle. Clients branch on `code`, so
 // every refusal the service can raise has one constant here.
 const (
-	CodeSystemNotEditable     = "SYSTEMS_SYSTEM_NOT_EDITABLE"
-	CodeSystemRetired         = "SYSTEMS_SYSTEM_RETIRED"
-	CodeCheckNotEditable      = "SYSTEMS_CHECK_NOT_EDITABLE"
-	CodeIncidentNotAckable    = "SYSTEMS_INCIDENT_NOT_ACKNOWLEDGEABLE"
-	CodeIncidentNotResolvable = "SYSTEMS_INCIDENT_NOT_RESOLVABLE"
-	CodeIncidentNotClosable   = "SYSTEMS_INCIDENT_NOT_CLOSABLE"
-	CodeReviewRequired        = "SYSTEMS_REVIEW_REQUIRED"
-	CodeReasonRequired        = "SYSTEMS_REASON_REQUIRED"
-	CodeRootCauseRequired     = "SYSTEMS_ROOT_CAUSE_REQUIRED"
+	CodeSystemNotEditable           = "SYSTEMS_SYSTEM_NOT_EDITABLE"
+	CodeSystemRetired               = "SYSTEMS_SYSTEM_RETIRED"
+	CodeSystemHasOpenIncidents      = "SYSTEMS_SYSTEM_HAS_OPEN_INCIDENTS"
+	CodeCheckNotEditable            = "SYSTEMS_CHECK_NOT_EDITABLE"
+	CodeCheckExpectRequired         = "SYSTEMS_CHECK_EXPECT_REQUIRED"
+	CodeCheckHeartbeatWindowMissing = "SYSTEMS_CHECK_HEARTBEAT_WINDOW_REQUIRED"
+	CodeCheckThresholdsInvalid      = "SYSTEMS_CHECK_THRESHOLDS_INVALID"
+	CodeIncidentNotAckable          = "SYSTEMS_INCIDENT_NOT_ACKNOWLEDGEABLE"
+	CodeIncidentNotMitigable        = "SYSTEMS_INCIDENT_NOT_MITIGABLE"
+	CodeIncidentNotResolvable       = "SYSTEMS_INCIDENT_NOT_RESOLVABLE"
+	CodeIncidentNotClosable         = "SYSTEMS_INCIDENT_NOT_CLOSABLE"
+	CodeIncidentNotReviewable       = "SYSTEMS_INCIDENT_NOT_REVIEWABLE"
+	CodeIncidentSystemsRequired     = "SYSTEMS_INCIDENT_SYSTEMS_REQUIRED"
+	CodeDetectedInFuture            = "SYSTEMS_DETECTED_IN_FUTURE"
+	CodeReviewRequired              = "SYSTEMS_REVIEW_REQUIRED"
+	CodeReasonRequired              = "SYSTEMS_REASON_REQUIRED"
+	CodeRootCauseRequired           = "SYSTEMS_ROOT_CAUSE_REQUIRED"
 )
 
 // codedError overlays a stable problem code on top of a sentinel error. The
@@ -474,6 +483,45 @@ type CredentialRecord struct {
 	UpdatedAt      time.Time
 }
 
+// Domain is a domain name and when its registration lapses (§8.6). ExpiresOn is
+// nullable because a domain can be recorded before its renewal date is known;
+// such a domain simply never appears in the expiry warning.
+type Domain struct {
+	ID            uuid.UUID
+	Name          string
+	SystemID      *uuid.UUID
+	SystemName    string
+	Registrar     string
+	RegisteredOn  *time.Time
+	ExpiresOn     *time.Time
+	AutoRenew     bool
+	OwnerPersonID *uuid.UUID
+	OwnerName     string
+	Notes         string
+	Version       int
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+// Certificate is a TLS certificate and when it expires (§8.6). ExpiresOn is
+// required: a certificate record with no expiry cannot warn anyone.
+type Certificate struct {
+	ID            uuid.UUID
+	Hostname      string
+	SystemID      *uuid.UUID
+	SystemName    string
+	Issuer        string
+	IssuedOn      *time.Time
+	ExpiresOn     time.Time
+	AutoRenew     bool
+	OwnerPersonID *uuid.UUID
+	OwnerName     string
+	Notes         string
+	Version       int
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
 // ExpiryKind tells a domain from a certificate from a credential rotation.
 type ExpiryKind string
 
@@ -533,6 +581,24 @@ type IncidentQuery struct {
 	To             *time.Time
 	Search         string
 	OpenOnly       bool
+}
+
+// DomainQuery narrows the domain list.
+type DomainQuery struct {
+	SystemID *uuid.UUID
+	Search   string
+}
+
+// CertificateQuery narrows the certificate list.
+type CertificateQuery struct {
+	SystemID *uuid.UUID
+	Search   string
+}
+
+// CredentialQuery narrows the credential-record list.
+type CredentialQuery struct {
+	SystemID *uuid.UUID
+	Active   *bool
 }
 
 // Cursor is a keyset position, newest first (§6.6). At is the row's sort time:
@@ -625,4 +691,36 @@ func warningBand(daysOut int) int {
 		}
 	}
 	return 0
+}
+
+// validLink reports whether a runbook or repository link is an absolute http(s)
+// URL. An empty link is valid: a system may have neither.
+func validLink(raw string) bool {
+	if raw == "" {
+		return true
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+// validDomainName is a light shape check: a bare hostname with at least one dot,
+// no scheme, no path and no spaces. The registrar is the authority on what is a
+// real domain; this only catches obvious mistakes before they are stored.
+func validDomainName(name string) bool {
+	if name == "" || strings.ContainsAny(name, " \t/") || strings.Contains(name, "://") {
+		return false
+	}
+	labels := strings.Split(name, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, label := range labels {
+		if label == "" {
+			return false
+		}
+	}
+	return true
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/safaristack/atlas/apps/api/internal/authz"
+	"github.com/safaristack/atlas/apps/api/internal/outbox"
 )
 
 // fakeStore is an in-memory Store for handler tests. Every method returns the
@@ -38,10 +39,20 @@ type fakeStore struct {
 	timeline  []TimelineEntry
 	actions   []IncidentAction
 
+	domains      []Domain
+	domain       *Domain
+	certificates []Certificate
+	certificate  *Certificate
+	allCreds     []CredentialRecord
+	credential   *CredentialRecord
+
 	// Captured queries, so a test can assert the handler parsed the filter.
-	gotSystemQuery   SystemQuery
-	gotCheckQuery    CheckQuery
-	gotIncidentQuery IncidentQuery
+	gotSystemQuery      SystemQuery
+	gotCheckQuery       CheckQuery
+	gotIncidentQuery    IncidentQuery
+	gotDomainQuery      DomainQuery
+	gotCertificateQuery CertificateQuery
+	gotCredentialQuery  CredentialQuery
 }
 
 func (f *fakeStore) RegisterTotals(context.Context) (RegisterTotals, error) {
@@ -91,6 +102,25 @@ func (f *fakeStore) IncidentTimeline(context.Context, uuid.UUID) ([]TimelineEntr
 func (f *fakeStore) IncidentActions(context.Context, uuid.UUID) ([]IncidentAction, error) {
 	return f.actions, nil
 }
+func (f *fakeStore) ListDomains(_ context.Context, q DomainQuery, _ int, _ *Cursor) ([]Domain, error) {
+	f.gotDomainQuery = q
+	return f.domains, nil
+}
+func (f *fakeStore) GetDomain(context.Context, uuid.UUID) (*Domain, error) { return f.domain, nil }
+func (f *fakeStore) ListCertificates(_ context.Context, q CertificateQuery, _ int, _ *Cursor) ([]Certificate, error) {
+	f.gotCertificateQuery = q
+	return f.certificates, nil
+}
+func (f *fakeStore) GetCertificate(context.Context, uuid.UUID) (*Certificate, error) {
+	return f.certificate, nil
+}
+func (f *fakeStore) ListAllCredentials(_ context.Context, q CredentialQuery, _ int, _ *Cursor) ([]CredentialRecord, error) {
+	f.gotCredentialQuery = q
+	return f.allCreds, nil
+}
+func (f *fakeStore) GetCredential(context.Context, uuid.UUID) (*CredentialRecord, error) {
+	return f.credential, nil
+}
 
 // ── request plumbing ────────────────────────────────────────────────────────
 
@@ -99,13 +129,212 @@ func systemsRouter(h *Handler) chi.Router {
 	r.Get("/api/v1/systems/overview", h.Overview)
 	r.Get("/api/v1/systems/expiring", h.Expiring)
 	r.Get("/api/v1/systems", h.ListSystems)
+	r.Post("/api/v1/systems", h.CreateSystem)
 	r.Get("/api/v1/systems/checks", h.ListChecks)
+	r.Post("/api/v1/systems/checks", h.CreateCheck)
+	r.Put("/api/v1/systems/checks/{id}", h.UpdateCheck)
+	r.Post("/api/v1/systems/checks/{id}/pause", h.PauseCheck)
+	r.Post("/api/v1/systems/checks/{id}/resume", h.ResumeCheck)
 	r.Get("/api/v1/systems/checks/{id}/results", h.ListCheckResults)
 	r.Get("/api/v1/systems/incidents", h.ListIncidents)
+	r.Post("/api/v1/systems/incidents", h.OpenIncident)
 	r.Get("/api/v1/systems/incidents/{id}", h.GetIncident)
+	r.Post("/api/v1/systems/incidents/{id}/acknowledge", h.AcknowledgeIncident)
+	r.Post("/api/v1/systems/incidents/{id}/mitigate", h.MitigateIncident)
+	r.Post("/api/v1/systems/incidents/{id}/resolve", h.ResolveIncident)
+	r.Post("/api/v1/systems/incidents/{id}/close", h.CloseIncident)
+	r.Post("/api/v1/systems/incidents/{id}/review", h.ReviewIncident)
+	r.Post("/api/v1/systems/incidents/{id}/notes", h.AddIncidentNote)
+	r.Post("/api/v1/systems/incidents/{id}/actions", h.CreateIncidentAction)
+	r.Put("/api/v1/systems/incidents/{id}/actions/{actionId}", h.UpdateIncidentAction)
+	r.Get("/api/v1/systems/domains", h.ListDomains)
+	r.Post("/api/v1/systems/domains", h.CreateDomain)
+	r.Put("/api/v1/systems/domains/{id}", h.UpdateDomain)
+	r.Get("/api/v1/systems/certificates", h.ListCertificates)
+	r.Post("/api/v1/systems/certificates", h.CreateCertificate)
+	r.Put("/api/v1/systems/certificates/{id}", h.UpdateCertificate)
+	r.Get("/api/v1/systems/credentials", h.ListCredentials)
+	r.Post("/api/v1/systems/credentials", h.CreateCredential)
+	r.Put("/api/v1/systems/credentials/{id}", h.UpdateCredential)
 	r.Get("/api/v1/systems/{id}", h.GetSystem)
+	r.Put("/api/v1/systems/{id}", h.UpdateSystem)
+	r.Post("/api/v1/systems/{id}/retire", h.RetireSystem)
 	return r
 }
+
+// writeFake is an in-memory Writer for write-handler tests. Every method records
+// the call and returns the record it was handed, with the version bumped, so a
+// test can assert what the handler passed to the service.
+type writeFake struct {
+	*fakeStore
+
+	// Configurable answers.
+	system      *System
+	check       *Check
+	incident    *Incident
+	action      *IncidentAction
+	domain      *Domain
+	certificate *Certificate
+	credential  *CredentialRecord
+
+	// Recorded calls.
+	refCalls    int
+	events      []string
+	lastVersion int
+}
+
+func (w *writeFake) AllocateRef(context.Context, string, int) (string, error) {
+	w.refCalls++
+	return "SYS-2026-0001", nil
+}
+
+func (w *writeFake) CreateSystem(_ context.Context, s System) (System, error) {
+	created := s
+	created.ChecksTotal = 0
+	w.system = &created
+	return created, nil
+}
+
+func (w *writeFake) UpdateSystem(_ context.Context, s System, expected int) (System, error) {
+	w.lastVersion = expected
+	updated := s
+	updated.Version = expected + 1
+	w.system = &updated
+	return updated, nil
+}
+
+func (w *writeFake) SetSystemStatus(_ context.Context, _ uuid.UUID, expected int, status SystemStatus) (System, error) {
+	w.lastVersion = expected
+	updated := System{ID: uuid.New(), Ref: "SYS-2026-0001", Name: "Atlas API", Status: status, Version: expected + 1}
+	w.system = &updated
+	return updated, nil
+}
+
+func (w *writeFake) CreateCheck(_ context.Context, c Check) (Check, error) {
+	w.check = &c
+	return c, nil
+}
+
+func (w *writeFake) UpdateCheck(_ context.Context, c Check, expected int) (Check, error) {
+	w.lastVersion = expected
+	updated := c
+	updated.Version = expected + 1
+	w.check = &updated
+	return updated, nil
+}
+
+func (w *writeFake) SetCheckActive(_ context.Context, id uuid.UUID, expected int, active bool) (Check, error) {
+	w.lastVersion = expected
+	updated := Check{ID: id, SystemID: uuid.New(), Name: "API health", CheckType: CheckHTTPStatus,
+		Target: "https://api.safaristack.co.ke/health", IntervalSeconds: 300, TimeoutSeconds: 10,
+		FailureThreshold: 2, Active: active, Version: expected + 1}
+	w.check = &updated
+	return updated, nil
+}
+
+func (w *writeFake) CreateIncident(_ context.Context, in Incident, _ []uuid.UUID, _ TimelineEntry, ev outbox.Event) (Incident, error) {
+	w.events = append(w.events, ev.Type)
+	w.incident = &in
+	return in, nil
+}
+
+func (w *writeFake) AcknowledgeIncident(_ context.Context, id uuid.UUID, expected int, at time.Time, _ TimelineEntry, ev outbox.Event) (Incident, error) {
+	w.events = append(w.events, ev.Type)
+	return w.transitioned(id, expected, IncidentAcknowledged, &at, nil), nil
+}
+
+func (w *writeFake) MitigateIncident(_ context.Context, id uuid.UUID, expected int, at time.Time, _ TimelineEntry, ev outbox.Event) (Incident, error) {
+	w.events = append(w.events, ev.Type)
+	return w.transitioned(id, expected, IncidentMitigated, nil, &at), nil
+}
+
+func (w *writeFake) ResolveIncident(_ context.Context, id uuid.UUID, expected int, at time.Time, _ bool, _ TimelineEntry, ev outbox.Event) (Incident, error) {
+	w.events = append(w.events, ev.Type)
+	return w.transitioned(id, expected, IncidentResolved, nil, nil), nil
+}
+
+func (w *writeFake) CloseIncident(_ context.Context, id uuid.UUID, expected int, _ time.Time, _ TimelineEntry, ev outbox.Event) (Incident, error) {
+	w.events = append(w.events, ev.Type)
+	return w.transitioned(id, expected, IncidentClosed, nil, nil), nil
+}
+
+func (w *writeFake) RecordIncidentReview(_ context.Context, id uuid.UUID, expected int, at time.Time,
+	rootCause, summary string, _ TimelineEntry, ev outbox.Event) (Incident, error) {
+	w.events = append(w.events, ev.Type)
+	in := w.transitioned(id, expected, IncidentResolved, nil, nil)
+	in.RootCause = rootCause
+	in.Summary = summary
+	in.ReviewAt = &at
+	in.ReviewRequired = true
+	return in, nil
+}
+
+// transitioned builds the incident a step returns, in the state the step set.
+func (w *writeFake) transitioned(id uuid.UUID, expected int, status IncidentStatus, ack, mit *time.Time) Incident {
+	in := Incident{ID: id, Ref: "INC-2026-0001", Title: "Checkout is down", Severity: Sev2,
+		Status: status, DetectedAt: time.Now().UTC().Add(-time.Hour), DetectedSource: DetectedByAtlas,
+		AcknowledgedAt: ack, MitigatedAt: mit, Version: expected + 1}
+	w.incident = &in
+	return in
+}
+
+func (w *writeFake) AddTimelineEntry(_ context.Context, entry TimelineEntry) (TimelineEntry, error) {
+	return entry, nil
+}
+
+func (w *writeFake) CreateAction(_ context.Context, a IncidentAction, _ *TimelineEntry) (IncidentAction, error) {
+	w.action = &a
+	return a, nil
+}
+
+func (w *writeFake) UpdateAction(_ context.Context, a IncidentAction, expected int) (IncidentAction, error) {
+	w.lastVersion = expected
+	updated := a
+	updated.Version = expected + 1
+	w.action = &updated
+	return updated, nil
+}
+
+func (w *writeFake) CreateDomain(_ context.Context, d Domain) (Domain, error) {
+	w.domain = &d
+	return d, nil
+}
+
+func (w *writeFake) UpdateDomain(_ context.Context, d Domain, expected int) (Domain, error) {
+	w.lastVersion = expected
+	updated := d
+	updated.Version = expected + 1
+	w.domain = &updated
+	return updated, nil
+}
+
+func (w *writeFake) CreateCertificate(_ context.Context, c Certificate) (Certificate, error) {
+	w.certificate = &c
+	return c, nil
+}
+
+func (w *writeFake) UpdateCertificate(_ context.Context, c Certificate, expected int) (Certificate, error) {
+	w.lastVersion = expected
+	updated := c
+	updated.Version = expected + 1
+	w.certificate = &updated
+	return updated, nil
+}
+
+func (w *writeFake) CreateCredential(_ context.Context, c CredentialRecord) (CredentialRecord, error) {
+	w.credential = &c
+	return c, nil
+}
+
+func (w *writeFake) UpdateCredential(_ context.Context, c CredentialRecord, expected int) (CredentialRecord, error) {
+	w.lastVersion = expected
+	updated := c
+	updated.Version = expected + 1
+	w.credential = &updated
+	return updated, nil
+}
+
+func writeStore(store *fakeStore) *writeFake { return &writeFake{fakeStore: store} }
 
 func systemsUser(perms ...string) *authz.Principal {
 	p := &authz.Principal{Kind: authz.KindUser, Subject: "user:test", UserID: uuid.New(), PersonID: uuid.New()}

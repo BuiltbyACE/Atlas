@@ -198,9 +198,10 @@ func run() error {
 	financeHandler := finance.NewHandler(financeService, logger)
 
 	// Systems is the Phase 5 register of everything we run and its health
-	// (§8.6). This pass is the read model: the monitoring probes live in
-	// atlas-worker and write what this surface reads.
+	// (§8.6). Go owns the register and the incident lifecycle; the monitoring
+	// probes live in atlas-worker and write the results this surface reads.
 	systemsService := systems.NewService(systems.NewPGStore(pool), logger)
+	systemsService.SetAudit(auditWriter)
 	systemsHandler := systems.NewHandler(systemsService, logger)
 
 	router := httpserver.NewRouter(httpserver.Deps{

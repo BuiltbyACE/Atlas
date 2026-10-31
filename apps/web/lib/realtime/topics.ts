@@ -30,6 +30,12 @@ export const CONTRACTS_TOPIC = "contracts:board";
  */
 export const FINANCE_TOPIC = "finance:board";
 
+/**
+ * The systems board topic: system and incident changes (§8.6). Joining requires
+ * `systems.system.read`, the permission the systems page reads under.
+ */
+export const SYSTEMS_TOPIC = "systems:board";
+
 /** A single user's notifications/approvals/escalations topic. */
 export function userTopic(userId: string): string {
   return `user:${userId}`;

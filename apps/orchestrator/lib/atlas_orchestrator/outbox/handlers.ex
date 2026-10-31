@@ -26,6 +26,8 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
       (`contracts:board`) plus `dashboard.changed` to the dashboard;
     * `finance.*.v1` — push `<entity>.changed` to the finance board
       (`finance:board`) plus `dashboard.changed` to the dashboard;
+    * `systems.*.v1` — push `incident.changed` to the systems board
+      (`systems:board`) plus `dashboard.changed` to the dashboard;
     * `integrations.git.pull_request.merged.v1` — a merged pull request the
       integration linked to a task (`work` entity): the same project board and
       dashboard nudges as `work.evidence.added.v1`.
@@ -43,6 +45,7 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   alias AtlasOrchestrator.Notifications.Handler, as: NotificationsHandler
   alias AtlasOrchestrator.Outbox.Event
   alias AtlasOrchestrator.People.Handler, as: PeopleHandler
+  alias AtlasOrchestrator.Systems.Handler, as: SystemsHandler
   alias AtlasOrchestrator.Work.Handler, as: WorkHandler
 
   @doc "Handles one event. Unknown types are logged and ignored, not failed."
@@ -100,6 +103,12 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   # (internal/outbox/finance.go).
   def dispatch(%Event{type: "finance." <> _} = event) do
     FinanceHandler.handle_event(event)
+  end
+
+  # Systems observability (§8.6): nudge the systems board and the dashboard. The
+  # handler reads the payload keys Go wrote (internal/outbox/systems.go).
+  def dispatch(%Event{type: "systems." <> _} = event) do
+    SystemsHandler.handle_event(event)
   end
 
   def dispatch(%Event{type: "core.escalation." <> _} = event) do

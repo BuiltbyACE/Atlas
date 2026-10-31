@@ -7,28 +7,41 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/safaristack/atlas/apps/api/internal/audit"
 )
 
 // Service is the systems read model's rules: it validates the filters, resolves
 // absence into ErrNotFound, and assembles the overview from the parts the store
-// measures separately.
+// measures separately. When the store also implements Writer, the same service
+// carries the register and incident lifecycle (§8.6).
 type Service struct {
 	store  Store
+	writer Writer
+	audit  *audit.Writer
 	now    func() time.Time
 	logger *slog.Logger
 }
 
-// NewService builds the systems service over a store.
+// NewService builds the systems service over a store. A store that implements
+// Writer enables the write lifecycle; the read slice still works without one.
 func NewService(store Store, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{
+	s := &Service{
 		store:  store,
 		now:    func() time.Time { return time.Now().UTC() },
 		logger: logger,
 	}
+	if w, ok := store.(Writer); ok {
+		s.writer = w
+	}
+	return s
 }
+
+// SetAudit attaches the audit writer that records who changed what (§6.6).
+func (s *Service) SetAudit(aw *audit.Writer) { s.audit = aw }
 
 // asOf is the instant a read is dated from, truncated to the day so warning
 // bands do not shift with the time of day.
@@ -130,6 +143,19 @@ func (s *Service) Checks(ctx context.Context, q CheckQuery, limit int, before *C
 	return s.store.ListChecks(ctx, q, limit, before)
 }
 
+// Check returns one check, or ErrNotFound. The write handlers need the current
+// version to answer If-Match, so this is the read they stand on.
+func (s *Service) Check(ctx context.Context, id uuid.UUID) (Check, error) {
+	c, err := s.store.GetCheck(ctx, id)
+	if err != nil {
+		return Check{}, err
+	}
+	if c == nil {
+		return Check{}, fmt.Errorf("%w: %s", ErrNotFound, id)
+	}
+	return *c, nil
+}
+
 // CheckResults lists one check's recent results. The check must exist, so a
 // typo is a 404 rather than an empty page that looks like health.
 func (s *Service) CheckResults(ctx context.Context, checkID uuid.UUID, limit int, before *Cursor) ([]CheckResult, error) {
@@ -171,6 +197,12 @@ func (s *Service) Incident(ctx context.Context, id uuid.UUID) (Incident, error) 
 		return Incident{}, err
 	}
 	return *in, nil
+}
+
+// IncidentActions lists one incident's follow-up actions. The write handler
+// reads them to find the action it is about to change and answer If-Match.
+func (s *Service) IncidentActions(ctx context.Context, incidentID uuid.UUID) ([]IncidentAction, error) {
+	return s.store.IncidentActions(ctx, incidentID)
 }
 
 // Expiring lists domains, certificates and credential rotations lapsing within

@@ -35,6 +35,14 @@ type Store interface {
 	ListSystems(ctx context.Context, q SystemQuery, limit int, before *Cursor) ([]System, error)
 	GetSystem(ctx context.Context, id uuid.UUID) (*System, error)
 	ListCredentials(ctx context.Context, systemID uuid.UUID) ([]CredentialRecord, error)
+	GetCredential(ctx context.Context, id uuid.UUID) (*CredentialRecord, error)
+	ListAllCredentials(ctx context.Context, q CredentialQuery, limit int, before *Cursor) ([]CredentialRecord, error)
+
+	// Domains and certificates.
+	ListDomains(ctx context.Context, q DomainQuery, limit int, before *Cursor) ([]Domain, error)
+	GetDomain(ctx context.Context, id uuid.UUID) (*Domain, error)
+	ListCertificates(ctx context.Context, q CertificateQuery, limit int, before *Cursor) ([]Certificate, error)
+	GetCertificate(ctx context.Context, id uuid.UUID) (*Certificate, error)
 
 	// Checks.
 	ListChecks(ctx context.Context, q CheckQuery, limit int, before *Cursor) ([]Check, error)
