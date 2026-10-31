@@ -28,6 +28,11 @@ import {
 import { ApiError } from "@/lib/api/client";
 import { requireUser } from "@/lib/auth/session";
 import { formatDay, humanise } from "@/lib/format";
+import type { PersonOption } from "@/lib/directory";
+import { NewDecisionButton, DecisionActions } from "./decision-form";
+import { NewRiskButton, RiskActions } from "./risk-form";
+import { NewBriefButton, BriefActions } from "./brief-form";
+import { NewMetricSnapshotButton } from "./metric-snapshot-form";
 
 /**
  * Intel (`GET /api/v1/intel/*`, gated by `intel.*`; blueprint §8.8). The page
@@ -112,7 +117,17 @@ function PageNote({ count, hasMore }: { count: number; hasMore?: boolean }) {
 }
 
 /** Decisions table: the company's memory of major decisions. */
-function DecisionsTable({ decisions }: { decisions: Decision[] }) {
+function DecisionsTable({
+  decisions,
+  people,
+  me,
+  capabilities,
+}: {
+  decisions: Decision[];
+  people: PersonOption[];
+  me?: string;
+  capabilities: string[];
+}) {
   return (
     <Table>
       <thead>
@@ -121,6 +136,7 @@ function DecisionsTable({ decisions }: { decisions: Decision[] }) {
           <Th>Outcome</Th>
           <Th>Deciders</Th>
           <Th>Due</Th>
+          <Th className="text-right">Actions</Th>
         </tr>
       </thead>
       <tbody>
@@ -134,6 +150,13 @@ function DecisionsTable({ decisions }: { decisions: Decision[] }) {
             </Td>
             <Td className="text-muted">{decision.deciders.length}</Td>
             <Td className="text-muted">{decision.due_on ?? "—"}</Td>
+            <Td className="text-right">
+              <DecisionActions
+                decision={decision}
+                people={people}
+                capabilities={capabilities}
+              />
+            </Td>
           </tr>
         ))}
       </tbody>
@@ -142,7 +165,17 @@ function DecisionsTable({ decisions }: { decisions: Decision[] }) {
 }
 
 /** Risks table: client, delivery, financial, people, systems risks. */
-function RisksTable({ risks }: { risks: Risk[] }) {
+function RisksTable({
+  risks,
+  people,
+  me,
+  capabilities,
+}: {
+  risks: Risk[];
+  people: PersonOption[];
+  me?: string;
+  capabilities: string[];
+}) {
   return (
     <Table>
       <thead>
@@ -152,6 +185,7 @@ function RisksTable({ risks }: { risks: Risk[] }) {
           <Th>Likelihood</Th>
           <Th>Impact</Th>
           <Th>Status</Th>
+          <Th className="text-right">Actions</Th>
         </tr>
       </thead>
       <tbody>
@@ -172,6 +206,9 @@ function RisksTable({ risks }: { risks: Risk[] }) {
                 {humanise(risk.status)}
               </Badge>
             </Td>
+            <Td className="text-right">
+              <RiskActions risk={risk} people={people} capabilities={capabilities} />
+            </Td>
           </tr>
         ))}
       </tbody>
@@ -180,7 +217,17 @@ function RisksTable({ risks }: { risks: Risk[] }) {
 }
 
 /** Briefs table: daily executive briefs. */
-function BriefsTable({ briefs }: { briefs: Brief[] }) {
+function BriefsTable({
+  briefs,
+  people,
+  me,
+  capabilities,
+}: {
+  briefs: Brief[];
+  people: PersonOption[];
+  me?: string;
+  capabilities: string[];
+}) {
   return (
     <Table>
       <thead>
@@ -188,6 +235,7 @@ function BriefsTable({ briefs }: { briefs: Brief[] }) {
           <Th>Date</Th>
           <Th>Summary</Th>
           <Th>Delivered</Th>
+          <Th className="text-right">Actions</Th>
         </tr>
       </thead>
       <tbody>
@@ -199,6 +247,9 @@ function BriefsTable({ briefs }: { briefs: Brief[] }) {
               <Badge tone={brief.delivered ? "success" : "neutral"}>
                 {brief.delivered ? "Delivered" : "Pending"}
               </Badge>
+            </Td>
+            <Td className="text-right">
+              <BriefActions brief={brief} people={people} capabilities={capabilities} />
             </Td>
           </tr>
         ))}
@@ -257,18 +308,58 @@ export default async function IntelPage({
   // The shell already guaranteed a session; this is the same read the API makes.
   await requireUser();
 
-  const [decisionsPage, risksPage, briefsPage, snapshotsPage] = await Promise.all([
-    load(() => listDecisions({ outcome, limit: 50 })),
-    load(() => listRisks({ kind, limit: 50 })),
-    load(() => listBriefs({ limit: 50 })),
-    load(() => listMetricSnapshots({ limit: 50 })),
-  ]);
+  // Who is looking decides which write controls appear. Go still authorises.
+  const user = await requireUser();
+  const held = new Set(user.roles);
+  const isTeam = held.has("ceo_commercial") || held.has("ceo_internal");
+  const capabilities: string[] = isTeam
+    ? [
+        "intel.decision.manage",
+        "intel.risk.manage",
+        "intel.brief.manage",
+        "intel.metric.manage",
+      ]
+    : [];
+
+  const [decisionsPage, risksPage, briefsPage, snapshotsPage] =
+    await Promise.all([
+      load(() => listDecisions({ outcome, limit: 50 })),
+      load(() => listRisks({ kind, limit: 50 })),
+      load(() => listBriefs({ limit: 50 })),
+      load(() => listMetricSnapshots({ limit: 50 })),
+    ]);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Intel"
         description="Executive intelligence: decisions, risks, briefs and metrics."
+        actions={
+          <>
+            <NewDecisionButton
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+              variant="secondary"
+            />
+            <NewRiskButton
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+              variant="secondary"
+            />
+            <NewBriefButton
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+            />
+            <NewMetricSnapshotButton
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+            />
+          </>
+        }
       />
 
       <StatGrid label="Intel overview">
@@ -346,7 +437,12 @@ export default async function IntelPage({
           </div>
         ) : (
           <>
-            <DecisionsTable decisions={decisionsPage.value.items} />
+            <DecisionsTable
+              decisions={decisionsPage.value.items}
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+            />
             <PageNote count={decisionsPage.value.items.length} hasMore={decisionsPage.value.has_more} />
           </>
         )}
@@ -384,7 +480,12 @@ export default async function IntelPage({
           </div>
         ) : (
           <>
-            <RisksTable risks={risksPage.value.items} />
+            <RisksTable
+              risks={risksPage.value.items}
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+            />
             <PageNote count={risksPage.value.items.length} hasMore={risksPage.value.has_more} />
           </>
         )}
@@ -409,7 +510,12 @@ export default async function IntelPage({
           </div>
         ) : (
           <>
-            <BriefsTable briefs={briefsPage.value.items} />
+            <BriefsTable
+              briefs={briefsPage.value.items}
+              people={[]}
+              me={user.person_id}
+              capabilities={capabilities}
+            />
             <PageNote count={briefsPage.value.items.length} hasMore={briefsPage.value.has_more} />
           </>
         )}

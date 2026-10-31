@@ -3285,6 +3285,130 @@ export type MetricSnapshotListQuery = {
   cursor?: string;
 };
 
+// ── Intel write wrappers (§8.8) ──────────────────────────────────────────────
+
+export interface DecisionBody {
+  question: string;
+  context_links?: string[];
+  options?: string[];
+  recommendation?: string;
+  requested_by?: string;
+  requested_by_name?: string;
+  deciders?: string[];
+  due_on?: string;
+  outcome?: string;
+  rationale?: string;
+}
+
+export interface DecisionDecideBody {
+  outcome: string;
+  rationale?: string;
+}
+
+export interface RiskBody {
+  title: string;
+  kind: string;
+  owner_person_id?: string;
+  likelihood: string;
+  impact: string;
+  mitigation?: string;
+  status?: string;
+}
+
+export interface BriefBody {
+  for_date?: string;
+  summary: string;
+  sections?: Record<string, any>;
+}
+
+export interface MetricSnapshotBody {
+  metric_name: string;
+  metric_value: string;
+  as_of?: string;
+  source?: string;
+}
+
+export interface DecisionDecidedBody {
+  outcome: string;
+  rationale?: string;
+}
+
+export function createDecision(body: DecisionBody): Promise<Decision> {
+  return apiFetch<Decision>("/api/v1/intel/decisions", { method: "POST", body });
+}
+
+export function updateDecision(
+  id: string,
+  version: number,
+  body: DecisionBody,
+): Promise<Decision> {
+  return apiFetch<Decision>(`/api/v1/intel/decisions/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function decideDecision(
+  id: string,
+  version: number,
+  body: DecisionDecideBody,
+): Promise<Decision> {
+  return apiFetch<Decision>(`/api/v1/intel/decisions/${id}/decide`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function createRisk(body: RiskBody): Promise<Risk> {
+  return apiFetch<Risk>("/api/v1/intel/risks", { method: "POST", body });
+}
+
+export function updateRisk(
+  id: string,
+  version: number,
+  body: RiskBody,
+): Promise<Risk> {
+  return apiFetch<Risk>(`/api/v1/intel/risks/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function createBrief(body: BriefBody): Promise<Brief> {
+  return apiFetch<Brief>("/api/v1/intel/briefs", { method: "POST", body });
+}
+
+export function updateBrief(
+  id: string,
+  version: number,
+  body: BriefBody,
+): Promise<Brief> {
+  return apiFetch<Brief>(`/api/v1/intel/briefs/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function deliverBrief(id: string, version: number): Promise<Brief> {
+  return apiFetch<Brief>(
+    `/api/v1/intel/briefs/${id}/deliver`,
+    { method: "POST", headers: ifMatch(version) },
+  );
+}
+
+export function createMetricSnapshot(
+  body: MetricSnapshotBody,
+): Promise<MetricSnapshot> {
+  return apiFetch<MetricSnapshot>("/api/v1/intel/metric-snapshots", {
+    method: "POST",
+    body,
+  });
+}
+
 export function listDecisions(
   query: DecisionListQuery = {},
 ): Promise<Page<Decision>> {
