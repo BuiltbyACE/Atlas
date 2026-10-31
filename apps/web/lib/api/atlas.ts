@@ -2858,3 +2858,225 @@ export function updateCredential(
     headers: ifMatch(version),
   });
 }
+
+// ── Units read wrappers (§8.7) ───────────────────────────────────────────────
+
+export const UNIT_KINDS = ["school", "department", "project", "region"] as const;
+export type UnitKind = (typeof UNIT_KINDS)[number];
+
+export const UNIT_STATUSES = ["active", "retired"] as const;
+export type UnitStatus = (typeof UNIT_STATUSES)[number];
+
+export const INTEGRATION_KINDS = ["api", "webhook", "file", "sftp"] as const;
+export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
+
+export const INTEGRATION_STATUSES = ["ok", "failed", "never"] as const;
+export type IntegrationStatus = (typeof INTEGRATION_STATUSES)[number];
+
+export const INDICATOR_KINDS = ["count", "ratio", "amount", "boolean"] as const;
+export type IndicatorKind = (typeof INDICATOR_KINDS)[number];
+
+/** A business unit (§8.7). */
+export interface Unit {
+  id: string;
+  ref: string;
+  name: string;
+  code: string;
+  kind: UnitKind | string;
+  owner?: { id: string; name: string };
+  description?: string;
+  status: UnitStatus | string;
+  integration_count: number;
+  active_integrations: number;
+  indicator_count: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** How Atlas connects to a unit's system of record (§8.7). */
+export interface UnitIntegration {
+  id: string;
+  unit_id: string;
+  unit_name: string;
+  name: string;
+  kind: IntegrationKind | string;
+  endpoint: string;
+  credential_ref: string;
+  schedule?: string;
+  last_sync_at?: string;
+  last_sync_status: IntegrationStatus | string;
+  active: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** What we measure for each unit (§8.7). */
+export interface UnitIndicatorDefinition {
+  id: string;
+  unit_id: string;
+  unit_name: string;
+  name: string;
+  kind: IndicatorKind | string;
+  source_field: string;
+  formula?: string;
+  target?: string;
+  warning_threshold?: string;
+  critical_threshold?: string;
+  active: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One indicator's value for one unit on one date (§8.7). */
+export interface UnitSnapshot {
+  id: string;
+  unit_id: string;
+  unit_name: string;
+  on_date: string;
+  indicator_id: string;
+  indicator_name: string;
+  value: string;
+  met_target: boolean;
+  notes?: string;
+  created_at: string;
+}
+
+/** Period roll-up of income, expenses, receivables (§8.7). */
+export interface UnitFinanceSummary {
+  id: string;
+  unit_id: string;
+  unit_name: string;
+  period_start: string;
+  period_end: string;
+  income_minor: number;
+  expenses_minor: number;
+  receivables_minor: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type UnitListQuery = {
+  kind?: UnitKind | string;
+  status?: UnitStatus | string;
+  owner_person_id?: string;
+  active?: boolean;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type IntegrationListQuery = {
+  unit_id?: string;
+  kind?: IntegrationKind | string;
+  status?: IntegrationStatus | string;
+  active?: boolean;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type IndicatorDefinitionListQuery = {
+  unit_id?: string;
+  kind?: IndicatorKind | string;
+  active?: boolean;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type SnapshotListQuery = {
+  unit_id?: string;
+  indicator_id?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type FinanceSummaryListQuery = {
+  unit_id?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export function listUnits(
+  query: UnitListQuery = {},
+): Promise<Page<Unit>> {
+  return apiFetch<Page<Unit>>("/api/v1/units", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getUnit(id: string): Promise<Unit> {
+  return apiFetch<Unit>(`/api/v1/units/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listIntegrations(
+  query: IntegrationListQuery = {},
+): Promise<Page<UnitIntegration>> {
+  return apiFetch<Page<UnitIntegration>>("/api/v1/units/integrations", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getIntegration(id: string): Promise<UnitIntegration> {
+  return apiFetch<UnitIntegration>(`/api/v1/units/integrations/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listIndicatorDefinitions(
+  query: IndicatorDefinitionListQuery = {},
+): Promise<Page<UnitIndicatorDefinition>> {
+  return apiFetch<Page<UnitIndicatorDefinition>>("/api/v1/units/indicator-definitions", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getIndicatorDefinition(id: string): Promise<UnitIndicatorDefinition> {
+  return apiFetch<UnitIndicatorDefinition>(`/api/v1/units/indicator-definitions/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listSnapshots(
+  query: SnapshotListQuery = {},
+): Promise<Page<UnitSnapshot>> {
+  return apiFetch<Page<UnitSnapshot>>("/api/v1/units/snapshots", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getSnapshot(id: string): Promise<UnitSnapshot> {
+  return apiFetch<UnitSnapshot>(`/api/v1/units/snapshots/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listFinanceSummaries(
+  query: FinanceSummaryListQuery = {},
+): Promise<Page<UnitFinanceSummary>> {
+  return apiFetch<Page<UnitFinanceSummary>>("/api/v1/units/finance-summaries", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getFinanceSummary(id: string): Promise<UnitFinanceSummary> {
+  return apiFetch<UnitFinanceSummary>(`/api/v1/units/finance-summaries/${id}`, {
+    cache: "no-store",
+  });
+}

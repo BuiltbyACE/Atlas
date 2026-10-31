@@ -33,6 +33,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/routing"
 	"github.com/safaristack/atlas/apps/api/internal/settings"
 	"github.com/safaristack/atlas/apps/api/internal/systems"
+	"github.com/safaristack/atlas/apps/api/internal/units"
 	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
@@ -83,6 +84,9 @@ type Deps struct {
 	// Systems is the Phase 5 systems observability surface (the register, the
 	// checks watching it, incidents, and what expires); mounted when present.
 	Systems *systems.Handler
+	// Units is the Phase 5 business-unit oversight surface (§8.7): units,
+	// integrations, indicator definitions and snapshots; mounted when present.
+	Units *units.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -170,6 +174,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Systems != nil {
 		registerSystems(reg, d.Systems)
+	}
+
+	if d.Units != nil {
+		registerUnits(reg, d.Units)
 	}
 
 	reg.Mount(r, gate)
@@ -782,4 +790,52 @@ func registerPeople(reg *routing.Registry, h *people.Handler) {
 func registerIntegrations(reg *routing.Registry, h *integrations.Handler) {
 	reg.Public(http.MethodPost, "/webhooks/github",
 		"Receive GitHub webhook deliveries (signed, de-duplicated)", h.ReceiveGitHub)
+}
+
+// registerUnits declares the Phase 5 business-unit oversight surface (§8.7):
+// units, integrations, indicator definitions and snapshots. Reads need
+// units.unit.read / units.indicator.read; writes need units.unit.manage.
+// Every write carries the version it read in If-Match (§6.6).
+func registerUnits(reg *routing.Registry, h *units.Handler) {
+	// Business units.
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units",
+		"List business units", h.ListUnits)
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/{id}",
+		"Get a business unit", h.GetUnit)
+	reg.Gated("units.unit.manage", http.MethodPost, "/api/v1/units",
+		"Create a business unit", h.CreateUnit)
+	reg.Gated("units.unit.manage", http.MethodPut, "/api/v1/units/{id}",
+		"Update a business unit", h.UpdateUnit)
+
+	// Integrations: how Atlas connects to a unit's system of record.
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/integrations",
+		"List unit integrations", h.ListIntegrations)
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/integrations/{id}",
+		"Get a unit integration", h.GetIntegration)
+	reg.Gated("units.unit.manage", http.MethodPost, "/api/v1/units/integrations",
+		"Create a unit integration", h.CreateIntegration)
+	reg.Gated("units.unit.manage", http.MethodPut, "/api/v1/units/integrations/{id}",
+		"Update a unit integration", h.UpdateIntegration)
+
+	// Indicator definitions: what we measure for each unit.
+	reg.Gated("units.indicator.read", http.MethodGet, "/api/v1/units/indicator-definitions",
+		"List unit indicator definitions", h.ListIndicatorDefinitions)
+	reg.Gated("units.indicator.read", http.MethodGet, "/api/v1/units/indicator-definitions/{id}",
+		"Get a unit indicator definition", h.GetIndicatorDefinition)
+	reg.Gated("units.unit.manage", http.MethodPost, "/api/v1/units/indicator-definitions",
+		"Create a unit indicator definition", h.CreateIndicatorDefinition)
+	reg.Gated("units.unit.manage", http.MethodPut, "/api/v1/units/indicator-definitions/{id}",
+		"Update a unit indicator definition", h.UpdateIndicatorDefinition)
+
+	// Snapshots: a dated indicator set for a unit.
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/snapshots",
+		"List unit snapshots", h.ListSnapshots)
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/snapshots/{id}",
+		"Get a unit snapshot", h.GetSnapshot)
+
+	// Finance summaries: period roll-up of income, expenses, receivables.
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/finance-summaries",
+		"List unit finance summaries", h.ListFinanceSummaries)
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/finance-summaries/{id}",
+		"Get a unit finance summary", h.GetFinanceSummary)
 }

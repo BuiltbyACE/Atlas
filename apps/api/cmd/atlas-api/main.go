@@ -42,6 +42,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/telemetry"
 	"github.com/safaristack/atlas/apps/api/internal/settings"
 	"github.com/safaristack/atlas/apps/api/internal/systems"
+	"github.com/safaristack/atlas/apps/api/internal/units"
 	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
@@ -204,6 +205,12 @@ func run() error {
 	systemsService.SetAudit(auditWriter)
 	systemsHandler := systems.NewHandler(systemsService, logger)
 
+	// Units is the Phase 5 business-unit oversight surface (§8.7): units,
+	// integrations, indicator definitions and snapshots. Go owns every rule.
+	unitsService := units.NewService(units.NewPGStore(pool), logger)
+	unitsService.SetAudit(auditWriter)
+	unitsHandler := units.NewHandler(unitsService, logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -224,6 +231,7 @@ func run() error {
 		Contracts:    contractsHandler,
 		Finance:      financeHandler,
 		Systems:      systemsHandler,
+		Units:        unitsHandler,
 	})
 
 	srv := &http.Server{
