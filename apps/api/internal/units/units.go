@@ -43,6 +43,10 @@ const (
 	CodeSyncFailed                = "UNITS_SYNC_FAILED"
 	CodeDuplicateCode             = "UNITS_DUPLICATE_CODE"
 	CodeDuplicateName             = "UNITS_DUPLICATE_NAME"
+	CodeInvalidUnitKind           = "UNITS_INVALID_UNIT_KIND"
+	CodeInvalidIntegrationKind    = "UNITS_INVALID_INTEGRATION_KIND"
+	CodeInvalidIndicatorKind      = "UNITS_INVALID_INDICATOR_KIND"
+	CodeInvalidEndpoint           = "UNITS_INVALID_ENDPOINT"
 )
 
 // codedError overlays a stable problem code on top of a sentinel error. The

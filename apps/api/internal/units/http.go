@@ -568,46 +568,305 @@ func (h *Handler) GetFinanceSummary(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, financeSummaryOf(f))
 }
 
-// ── write stubs ─────────────────────────────────────────────────────────────
-//
-// Write handlers are stubbed here so the routes compile. The write pass
-// fills them in with the unit lifecycle rules (§8.7): sync failures raise
-// units.sync.failed.v1, indicator breaches raise units.indicator.breached.v1.
+// ── write handlers ──────────────────────────────────────────────────────────
 
 // CreateUnit handles POST /api/v1/units.
 func (h *Handler) CreateUnit(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Unit creation is implemented in the Units write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req unitReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.unitInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	created, err := h.service.CreateUnit(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(created.Version))
+	httpx.WriteJSON(w, http.StatusCreated, unitOf(created))
 }
 
 // UpdateUnit handles PUT /api/v1/units/{id}.
 func (h *Handler) UpdateUnit(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Unit updates are implemented in the Units write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "unit")
+	if !ok {
+		return
+	}
+	current, err := h.service.Unit(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	var req unitReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.unitInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	updated, err := h.service.UpdateUnit(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(updated.Version))
+	httpx.WriteJSON(w, http.StatusOK, unitOf(updated))
 }
 
 // CreateIntegration handles POST /api/v1/units/integrations.
 func (h *Handler) CreateIntegration(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Integration creation is implemented in the Units write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req integrationReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.integrationInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	created, err := h.service.CreateIntegration(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(created.Version))
+	httpx.WriteJSON(w, http.StatusCreated, integrationOf(created))
 }
 
 // UpdateIntegration handles PUT /api/v1/units/integrations/{id}.
 func (h *Handler) UpdateIntegration(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Integration updates are implemented in the Units write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "integration")
+	if !ok {
+		return
+	}
+	current, err := h.service.Integration(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	var req integrationReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.integrationInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	updated, err := h.service.UpdateIntegration(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(updated.Version))
+	httpx.WriteJSON(w, http.StatusOK, integrationOf(updated))
 }
 
 // CreateIndicatorDefinition handles POST /api/v1/units/indicator-definitions.
 func (h *Handler) CreateIndicatorDefinition(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Indicator definition creation is implemented in the Units write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req indicatorDefinitionReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.indicatorDefinitionInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	created, err := h.service.CreateIndicatorDefinition(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(created.Version))
+	httpx.WriteJSON(w, http.StatusCreated, indicatorDefinitionOf(created))
 }
 
 // UpdateIndicatorDefinition handles PUT /api/v1/units/indicator-definitions/{id}.
 func (h *Handler) UpdateIndicatorDefinition(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Indicator definition updates are implemented in the Units write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "indicator definition")
+	if !ok {
+		return
+	}
+	current, err := h.service.IndicatorDefinition(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	var req indicatorDefinitionReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.indicatorDefinitionInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	updated, err := h.service.UpdateIndicatorDefinition(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(updated.Version))
+	httpx.WriteJSON(w, http.StatusOK, indicatorDefinitionOf(updated))
+}
+
+// ── request types and parsing ───────────────────────────────────────────────
+
+type unitReq struct {
+	Name          *string `json:"name"`
+	Code          string  `json:"code"`
+	Kind          string  `json:"kind"`
+	OwnerPersonID *string `json:"owner_person_id"`
+	Description   string  `json:"description"`
+	Status        string  `json:"status"`
+}
+
+func (r unitReq) unitInput() (UnitInput, error) {
+	in := UnitInput{
+		Name:        trim(strOr(r.Name, "")),
+		Code:        trim(r.Code),
+		Kind:        trim(r.Kind),
+		Description: r.Description,
+		Status:      trim(strOr(&r.Status, string(UnitActive))),
+	}
+	if r.OwnerPersonID != nil {
+		id, err := uuid.Parse(trim(*r.OwnerPersonID))
+		if err != nil {
+			return in, errInvalidField("owner_person_id")
+		}
+		in.OwnerPersonID = &id
+	}
+	return in, nil
+}
+
+type integrationReq struct {
+	UnitID        *string `json:"unit_id"`
+	Name          string  `json:"name"`
+	Kind          string  `json:"kind"`
+	Endpoint      string  `json:"endpoint"`
+	CredentialRef string  `json:"credential_ref"`
+	Schedule      string  `json:"schedule"`
+	Active        *bool   `json:"active"`
+}
+
+func (r integrationReq) integrationInput() (IntegrationInput, error) {
+	in := IntegrationInput{
+		Name:          trim(r.Name),
+		Kind:          trim(r.Kind),
+		Endpoint:      trim(r.Endpoint),
+		CredentialRef: trim(r.CredentialRef),
+		Schedule:      trim(r.Schedule),
+		Active:        true,
+	}
+	if r.UnitID != nil {
+		id, err := uuid.Parse(trim(*r.UnitID))
+		if err != nil {
+			return in, errInvalidField("unit_id")
+		}
+		in.UnitID = id
+	}
+	if r.Active != nil {
+		in.Active = *r.Active
+	}
+	return in, nil
+}
+
+type indicatorDefinitionReq struct {
+	UnitID            *string `json:"unit_id"`
+	Name              string  `json:"name"`
+	Kind              string  `json:"kind"`
+	SourceField       string  `json:"source_field"`
+	Formula           string  `json:"formula"`
+	Target            string  `json:"target"`
+	WarningThreshold  string  `json:"warning_threshold"`
+	CriticalThreshold string  `json:"critical_threshold"`
+	Active            *bool   `json:"active"`
+}
+
+func (r indicatorDefinitionReq) indicatorDefinitionInput() (IndicatorDefinitionInput, error) {
+	in := IndicatorDefinitionInput{
+		Name:              trim(r.Name),
+		Kind:              trim(r.Kind),
+		SourceField:       trim(r.SourceField),
+		Formula:           trim(r.Formula),
+		Target:            trim(r.Target),
+		WarningThreshold:  trim(r.WarningThreshold),
+		CriticalThreshold: trim(r.CriticalThreshold),
+		Active:            true,
+	}
+	if r.UnitID != nil {
+		id, err := uuid.Parse(trim(*r.UnitID))
+		if err != nil {
+			return in, errInvalidField("unit_id")
+		}
+		in.UnitID = id
+	}
+	if r.Active != nil {
+		in.Active = *r.Active
+	}
+	return in, nil
 }
 
 // ListSnapshots and GetSnapshot are read-only; snapshots are written by the
 // sync worker, not by API clients.
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+func strOr(s *string, fallback string) string {
+	if s == nil {
+		return fallback
+	}
+	return trim(*s)
+}
 
 func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (*authz.Principal, bool) {
 	principal, ok := authz.PrincipalFrom(r.Context())
