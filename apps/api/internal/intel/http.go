@@ -1,6 +1,7 @@
 package intel
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -444,57 +445,433 @@ func (h *Handler) GetMetricSnapshot(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, metricSnapshotOf(m))
 }
 
-// ── write stubs ─────────────────────────────────────────────────────────────
-//
-// Write handlers are stubbed here so the routes compile. The write pass
-// fills them in with the decision/risk/brief lifecycle rules (§8.8).
+// ── write handlers ──────────────────────────────────────────────────────────
 
 // CreateDecision handles POST /api/v1/intel/decisions.
 func (h *Handler) CreateDecision(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Decision creation is implemented in the Intel write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req decisionReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.decisionInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	created, err := h.service.CreateDecision(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(created.Version))
+	httpx.WriteJSON(w, http.StatusCreated, decisionOf(created))
 }
 
 // UpdateDecision handles PUT /api/v1/intel/decisions/{id}.
 func (h *Handler) UpdateDecision(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Decision updates are implemented in the Intel write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "decision")
+	if !ok {
+		return
+	}
+	current, err := h.service.Decision(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	var req decisionReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.decisionInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	updated, err := h.service.UpdateDecision(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(updated.Version))
+	httpx.WriteJSON(w, http.StatusOK, decisionOf(updated))
 }
 
 // DecideDecision handles POST /api/v1/intel/decisions/{id}/decide.
 func (h *Handler) DecideDecision(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Decision decision is implemented in the Intel write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "decision")
+	if !ok {
+		return
+	}
+	current, err := h.service.Decision(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	var req decideReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	outcome := DecisionOutcome(trim(req.Outcome))
+	if !validDecisionOutcome(outcome) {
+		h.writeError(w, r, withCode(errInvalidField("outcome"), CodeInvalidDecisionOutcome))
+		return
+	}
+	updated, err := h.service.DecideDecision(r.Context(), principal.PersonID, id, current.Version, outcome, trim(req.Rationale))
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(updated.Version))
+	httpx.WriteJSON(w, http.StatusOK, decisionOf(updated))
 }
 
 // CreateRisk handles POST /api/v1/intel/risks.
 func (h *Handler) CreateRisk(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Risk creation is implemented in the Intel write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req riskReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.riskInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	created, err := h.service.CreateRisk(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(created.Version))
+	httpx.WriteJSON(w, http.StatusCreated, riskOf(created))
 }
 
 // UpdateRisk handles PUT /api/v1/intel/risks/{id}.
 func (h *Handler) UpdateRisk(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Risk updates are implemented in the Intel write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "risk")
+	if !ok {
+		return
+	}
+	current, err := h.service.Risk(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	var req riskReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.riskInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	updated, err := h.service.UpdateRisk(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(updated.Version))
+	httpx.WriteJSON(w, http.StatusOK, riskOf(updated))
 }
 
 // CreateBrief handles POST /api/v1/intel/briefs.
 func (h *Handler) CreateBrief(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Brief creation is implemented in the Intel write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req briefReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.briefInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	created, err := h.service.CreateBrief(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(created.Version))
+	httpx.WriteJSON(w, http.StatusCreated, briefOf(created))
 }
 
 // UpdateBrief handles PUT /api/v1/intel/briefs/{id}.
 func (h *Handler) UpdateBrief(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Brief updates are implemented in the Intel write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "brief")
+	if !ok {
+		return
+	}
+	current, err := h.service.Brief(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	var req briefReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.briefInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	updated, err := h.service.UpdateBrief(r.Context(), principal.PersonID, id, current.Version, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(updated.Version))
+	httpx.WriteJSON(w, http.StatusOK, briefOf(updated))
 }
 
 // DeliverBrief handles POST /api/v1/intel/briefs/{id}/deliver.
 func (h *Handler) DeliverBrief(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Brief delivery is implemented in the Intel write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "brief")
+	if !ok {
+		return
+	}
+	current, err := h.service.Brief(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := httpx.RequireIfMatch(r, int64(current.Version)); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	updated, err := h.service.DeliverBrief(r.Context(), principal.PersonID, id, current.Version)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(updated.Version))
+	httpx.WriteJSON(w, http.StatusOK, briefOf(updated))
 }
 
 // CreateMetricSnapshot handles POST /api/v1/intel/metric-snapshots.
 func (h *Handler) CreateMetricSnapshot(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteProblem(w, r, httpx.New(http.StatusNotImplemented, "NOT_IMPLEMENTED", "Metric snapshot creation is implemented in the Intel write pass."))
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req metricSnapshotReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	in, err := req.metricSnapshotInput()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	created, err := h.service.CreateMetricSnapshot(r.Context(), principal.PersonID, in)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(created.Version))
+	httpx.WriteJSON(w, http.StatusCreated, metricSnapshotOf(created))
+}
+
+// ── request types and parsing ───────────────────────────────────────────────
+
+type decisionReq struct {
+	Question        *string  `json:"question"`
+	ContextLinks    []string `json:"context_links"`
+	Options         []string `json:"options"`
+	Recommendation  string   `json:"recommendation"`
+	RequestedBy     *string  `json:"requested_by"`
+	RequestedByName string   `json:"requested_by_name"`
+	Deciders        []string `json:"deciders"`
+	DueOn           *string  `json:"due_on"`
+	Outcome         string   `json:"outcome"`
+	Rationale       string   `json:"rationale"`
+}
+
+func (r decisionReq) decisionInput() (DecisionInput, error) {
+	in := DecisionInput{
+		Question:        trim(strOr(r.Question, "")),
+		ContextLinks:    r.ContextLinks,
+		Options:         r.Options,
+		Recommendation:  r.Recommendation,
+		RequestedByName: r.RequestedByName,
+		Deciders:        []uuid.UUID{},
+		DueOn:           nil,
+		Outcome:         string(DecisionOpen),
+		Rationale:       r.Rationale,
+	}
+	if r.RequestedBy != nil {
+		id, err := uuid.Parse(trim(*r.RequestedBy))
+		if err != nil {
+			return in, errInvalidField("requested_by")
+		}
+		in.RequestedBy = &id
+	}
+	for _, raw := range r.Deciders {
+		id, err := uuid.Parse(trim(raw))
+		if err != nil {
+			return in, errInvalidField("deciders")
+		}
+		in.Deciders = append(in.Deciders, id)
+	}
+	if r.DueOn != nil {
+		t, err := time.Parse("2006-01-02", trim(*r.DueOn))
+		if err != nil {
+			return in, errInvalidField("due_on")
+		}
+		in.DueOn = &t
+	}
+	return in, nil
+}
+
+type decideReq struct {
+	Outcome   string `json:"outcome"`
+	Rationale string `json:"rationale"`
+}
+
+type riskReq struct {
+	Title         *string `json:"title"`
+	Kind          string  `json:"kind"`
+	OwnerPersonID *string `json:"owner_person_id"`
+	Likelihood    string  `json:"likelihood"`
+	Impact        string  `json:"impact"`
+	Mitigation    string  `json:"mitigation"`
+	Status        string  `json:"status"`
+}
+
+func (r riskReq) riskInput() (RiskInput, error) {
+	in := RiskInput{
+		Title:         trim(strOr(r.Title, "")),
+		Kind:          trim(r.Kind),
+		OwnerPersonID: nil,
+		Likelihood:    trim(r.Likelihood),
+		Impact:        trim(r.Impact),
+		Mitigation:    r.Mitigation,
+		Status:        string(RiskOpen),
+	}
+	if r.OwnerPersonID != nil {
+		id, err := uuid.Parse(trim(*r.OwnerPersonID))
+		if err != nil {
+			return in, errInvalidField("owner_person_id")
+		}
+		in.OwnerPersonID = &id
+	}
+	return in, nil
+}
+
+type briefReq struct {
+	ForDate  *string `json:"for_date"`
+	Summary  string  `json:"summary"`
+	Sections string  `json:"sections"`
+}
+
+func (r briefReq) briefInput() (BriefInput, error) {
+	in := BriefInput{
+		ForDate:  time.Now().UTC(),
+		Summary:  r.Summary,
+		Sections: map[string]any{},
+	}
+	if r.ForDate != nil {
+		t, err := time.Parse("2006-01-02", trim(*r.ForDate))
+		if err != nil {
+			return in, errInvalidField("for_date")
+		}
+		in.ForDate = t
+	}
+	if r.Sections != "" {
+		if err := json.Unmarshal([]byte(r.Sections), &in.Sections); err != nil {
+			return in, errInvalidField("sections")
+		}
+	}
+	return in, nil
+}
+
+type metricSnapshotReq struct {
+	MetricName  string  `json:"metric_name"`
+	MetricValue string  `json:"metric_value"`
+	AsOf        *string `json:"as_of"`
+	Source      string  `json:"source"`
+}
+
+func (r metricSnapshotReq) metricSnapshotInput() (MetricSnapshotInput, error) {
+	in := MetricSnapshotInput{
+		MetricName:  trim(r.MetricName),
+		MetricValue: trim(r.MetricValue),
+		AsOf:        time.Now().UTC(),
+		Source:      r.Source,
+	}
+	if r.AsOf != nil {
+		t, err := time.Parse("2006-01-02", trim(*r.AsOf))
+		if err != nil {
+			return in, errInvalidField("as_of")
+		}
+		in.AsOf = t
+	}
+	return in, nil
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+func strOr(s *string, fallback string) string {
+	if s == nil {
+		return fallback
+	}
+	return trim(*s)
+}
 
 func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (*authz.Principal, bool) {
 	principal, ok := authz.PrincipalFrom(r.Context())
