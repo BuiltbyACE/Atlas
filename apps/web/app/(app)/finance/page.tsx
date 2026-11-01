@@ -83,7 +83,7 @@ import { NewRecurringCostButton, RecurringCostActions } from "./recurring-cost-f
  * never as zero.
  *
  * Go owns every rule and every authorisation. The controls are shown from the
- * viewer's roles (`financeCapabilities`), which is a convenience and never the
+ * viewer's permissions (`financeCapabilities`), which is a convenience and never the
  * guard: a refused write comes back from Go and is shown as it was given.
  *
  * The last panel is the module's own footprint (`GET /api/v1/audit?module=finance`,
@@ -327,7 +327,7 @@ export default async function FinancePage({
 
   const names = await personDirectory();
   const people = rosterOf(names);
-  const capabilities = financeCapabilities(user.roles);
+  const capabilities = financeCapabilities(user.permissions);
   const me = user.person_id;
 
   // Invoices a payment can still be spread over; a restricted outstanding is

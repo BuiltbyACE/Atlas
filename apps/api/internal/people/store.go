@@ -48,6 +48,13 @@ type Store interface {
 	ListApprovedLeaveOn(ctx context.Context, date time.Time) ([]LeaveRequest, error)
 	OffboardPerson(ctx context.Context, personID uuid.UUID, endDate time.Time, ev *outbox.Event) (OffboardResult, error)
 
+	// Departments (§8.5).
+	ListDepartments(ctx context.Context) ([]Department, error)
+	GetDepartment(ctx context.Context, id uuid.UUID) (*Department, error)
+	CreateDepartment(ctx context.Context, name string) (Department, error)
+	UpdateDepartment(ctx context.Context, id uuid.UUID, name string) (Department, error)
+	ArchiveDepartment(ctx context.Context, id uuid.UUID) error
+
 	// Session activity (§8.5): who is signed in, and for how long.
 	ListActiveSessions(ctx context.Context, since time.Time) ([]Session, error)
 	ListSessions(ctx context.Context, q ListSessionsQuery, limit int, before *Cursor) ([]Session, error)
@@ -753,6 +760,81 @@ func (s *PGStore) ListPersons(ctx context.Context) ([]Person, error) {
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// ── departments ───────────────────────────────────────────────────────────────
+
+const deptCols = `id, name, lead_person_id, created_at, archived_at`
+
+func scanDepartment(row rowScanner) (Department, error) {
+	var d Department
+	var leadID *uuid.UUID
+	var archivedAt *time.Time
+	if err := row.Scan(&d.ID, &d.Name, &leadID, &d.CreatedAt, &archivedAt); err != nil {
+		return d, err
+	}
+	d.LeadID = leadID
+	d.ArchivedAt = archivedAt
+	return d, nil
+}
+
+// ListDepartments returns all non-archived departments, name-ordered.
+func (s *PGStore) ListDepartments(ctx context.Context) ([]Department, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT `+deptCols+` FROM people.departments WHERE archived_at IS NULL ORDER BY name, id`)
+	if err != nil {
+		return nil, fmt.Errorf("people: list departments: %w", err)
+	}
+	defer rows.Close()
+	out := make([]Department, 0, 16)
+	for rows.Next() {
+		d, err := scanDepartment(rows)
+		if err != nil {
+			return nil, fmt.Errorf("people: scan department: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// GetDepartment returns one non-archived department by ID.
+func (s *PGStore) GetDepartment(ctx context.Context, id uuid.UUID) (*Department, error) {
+	d, err := scanDepartment(s.db.QueryRow(ctx,
+		`SELECT `+deptCols+` FROM people.departments WHERE id = $1 AND archived_at IS NULL`, id))
+	if err != nil {
+		return nil, fmt.Errorf("people: get department: %w", err)
+	}
+	return &d, nil
+}
+
+// CreateDepartment inserts a new department.
+func (s *PGStore) CreateDepartment(ctx context.Context, name string) (Department, error) {
+	d, err := scanDepartment(s.db.QueryRow(ctx,
+		`INSERT INTO people.departments (name) VALUES ($1) RETURNING `+deptCols, name))
+	if err != nil {
+		return d, fmt.Errorf("people: create department: %w", err)
+	}
+	return d, nil
+}
+
+// UpdateDepartment updates a department's name.
+func (s *PGStore) UpdateDepartment(ctx context.Context, id uuid.UUID, name string) (Department, error) {
+	d, err := scanDepartment(s.db.QueryRow(ctx,
+		`UPDATE people.departments SET name = $2 WHERE id = $1 AND archived_at IS NULL RETURNING `+deptCols, id, name))
+	if err != nil {
+		return d, fmt.Errorf("people: update department: %w", err)
+	}
+	return d, nil
+}
+
+// ArchiveDepartment soft-deletes a department by setting archived_at.
+func (s *PGStore) ArchiveDepartment(ctx context.Context, id uuid.UUID) error {
+	_, err := s.db.Exec(ctx,
+		`UPDATE people.departments SET archived_at = now() WHERE id = $1 AND archived_at IS NULL`, id)
+	if err != nil {
+		return fmt.Errorf("people: archive department: %w", err)
+	}
+	return nil
 }
 
 // ListApprovedLeaveOn returns the approved leave covering a day. Overlapping

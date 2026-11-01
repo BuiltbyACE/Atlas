@@ -129,6 +129,31 @@ type offboardView struct {
 	RolesRevoked    int    `json:"roles_revoked"`
 }
 
+// departmentView is one business department.
+type departmentView struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	LeadPersonID string    `json:"lead_person_id,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ArchivedAt  *time.Time `json:"archived_at,omitempty"`
+}
+
+// departmentReq is the create/update request body for a department.
+type departmentReq struct {
+	Name string `json:"name"`
+}
+
+// departmentViewOf converts a Department to its view.
+func departmentViewOf(d Department) departmentView {
+	return departmentView{
+		ID:          d.ID.String(),
+		Name:        d.Name,
+		LeadPersonID: idStr(d.LeadID),
+		CreatedAt:   d.CreatedAt,
+		ArchivedAt:  d.ArchivedAt,
+	}
+}
+
 // sessionView is one sign-in in the activity view (§8.5). last_active_at is the
 // last heartbeat a session was seen; ended_at is set only when the session was
 // explicitly ended (signed out, revoked or expired-by-offboarding).
@@ -482,6 +507,95 @@ func (h *Handler) OffboardPerson(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, offboardViewOf(res))
 }
 
+// ── departments ──────────────────────────────────────────────────────────────
+
+// ListDepartments handles GET /api/v1/people/departments.
+func (h *Handler) ListDepartments(w http.ResponseWriter, r *http.Request) {
+	depts, err := h.service.ListDepartments(r.Context())
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	views := make([]departmentView, 0, len(depts))
+	for _, d := range depts {
+		views = append(views, departmentViewOf(d))
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
+}
+
+// GetDepartment handles GET /api/v1/people/departments/{id}.
+func (h *Handler) GetDepartment(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.idParam(w, r, "id", "department")
+	if !ok {
+		return
+	}
+	d, err := h.service.GetDepartment(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, departmentViewOf(*d))
+}
+
+// CreateDepartment handles POST /api/v1/people/departments.
+func (h *Handler) CreateDepartment(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req departmentReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	d, err := h.service.CreateDepartment(r.Context(), principal.PersonID, strings.TrimSpace(req.Name))
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, departmentViewOf(d))
+}
+
+// UpdateDepartment handles PUT /api/v1/people/departments/{id}.
+func (h *Handler) UpdateDepartment(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "department")
+	if !ok {
+		return
+	}
+	var req departmentReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	d, err := h.service.UpdateDepartment(r.Context(), principal.PersonID, id, strings.TrimSpace(req.Name))
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, departmentViewOf(d))
+}
+
+// ArchiveDepartment handles DELETE /api/v1/people/departments/{id}.
+func (h *Handler) ArchiveDepartment(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "department")
+	if !ok {
+		return
+	}
+	if err := h.service.ArchiveDepartment(r.Context(), principal.PersonID, id); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "archived"})
+}
+
 // ── session activity ────────────────────────────────────────────────────────
 
 // GetPresence handles GET /api/v1/people/presence: who is signed in and active
@@ -761,4 +875,12 @@ func decodeCursor(encoded string) (*Cursor, error) {
 		return nil, err
 	}
 	return &Cursor{At: time.Unix(0, nanos).UTC(), ID: id}, nil
+}
+
+// idStr returns the string form of a UUID pointer, or "" if nil.
+func idStr(id *uuid.UUID) string {
+	if id == nil {
+		return ""
+	}
+	return id.String()
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/safaristack/atlas/apps/api/internal/audit"
+	"github.com/safaristack/atlas/apps/api/internal/outbox"
 )
 
 // Service is the intel read model's rules: it validates the filters, resolves
@@ -150,7 +151,30 @@ func (s *Service) CreateDecision(ctx context.Context, actor uuid.UUID, in Decisi
 	if err := validateDecisionInput(d); err != nil {
 		return Decision{}, err
 	}
-	created, err := s.writer.CreateDecision(ctx, d)
+	ref, err := s.writer.AllocateRef(ctx, "decision", time.Now().UTC().Year())
+	if err != nil {
+		return Decision{}, fmt.Errorf("intel: allocate ref: %w", err)
+	}
+	d.Ref = ref
+	d.Version = 1
+	d.CreatedAt = time.Now().UTC()
+	d.UpdatedAt = d.CreatedAt
+
+	ev, err := outbox.NewDecisionCreated(actorRef(actor), outbox.DecisionPayload{
+		DecisionID:   d.ID,
+		Ref:          d.Ref,
+		Question:     d.Question,
+		Outcome:      string(d.Outcome),
+		RequestedBy:  d.RequestedBy,
+		Deciders:     d.Deciders,
+		DueOn:        d.DueOn,
+		Version:      d.Version,
+		OccurredAt:   d.CreatedAt,
+	})
+	if err != nil {
+		return Decision{}, fmt.Errorf("intel: build event: %w", err)
+	}
+	created, err := s.writer.CreateDecision(ctx, d, ev)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -186,7 +210,21 @@ func (s *Service) UpdateDecision(ctx context.Context, actor uuid.UUID, id uuid.U
 	if err := validateDecisionInput(d); err != nil {
 		return Decision{}, err
 	}
-	updated, err := s.writer.UpdateDecision(ctx, d, expectedVersion)
+	ev, err := outbox.NewDecisionUpdated(actorRef(actor), outbox.DecisionPayload{
+		DecisionID:   d.ID,
+		Ref:          d.Ref,
+		Question:     d.Question,
+		Outcome:      string(d.Outcome),
+		RequestedBy:  d.RequestedBy,
+		Deciders:     d.Deciders,
+		DueOn:        d.DueOn,
+		Version:      d.Version,
+		OccurredAt:   d.UpdatedAt,
+	})
+	if err != nil {
+		return Decision{}, fmt.Errorf("intel: build event: %w", err)
+	}
+	updated, err := s.writer.UpdateDecision(ctx, d, expectedVersion, ev)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -214,7 +252,21 @@ func (s *Service) DecideDecision(ctx context.Context, actor uuid.UUID, id uuid.U
 		Rationale: trim(rationale),
 		Version:   expectedVersion,
 	}
-	updated, err := s.writer.DecideDecision(ctx, d, expectedVersion)
+	ev, err := outbox.NewDecisionDecided(actorRef(actor), outbox.DecisionPayload{
+		DecisionID:   d.ID,
+		Ref:          d.Ref,
+		Question:     d.Question,
+		Outcome:      string(d.Outcome),
+		RequestedBy:  d.RequestedBy,
+		Deciders:     d.Deciders,
+		DueOn:        d.DueOn,
+		Version:      d.Version,
+		OccurredAt:   time.Now().UTC(),
+	})
+	if err != nil {
+		return Decision{}, fmt.Errorf("intel: build event: %w", err)
+	}
+	updated, err := s.writer.DecideDecision(ctx, d, expectedVersion, ev)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -237,7 +289,31 @@ func (s *Service) CreateRisk(ctx context.Context, actor uuid.UUID, in RiskInput)
 	if err := validateRiskInput(r); err != nil {
 		return Risk{}, err
 	}
-	created, err := s.writer.CreateRisk(ctx, r)
+	ref, err := s.writer.AllocateRef(ctx, "risk", time.Now().UTC().Year())
+	if err != nil {
+		return Risk{}, fmt.Errorf("intel: allocate ref: %w", err)
+	}
+	r.Ref = ref
+	r.Version = 1
+	r.CreatedAt = time.Now().UTC()
+	r.UpdatedAt = r.CreatedAt
+
+	ev, err := outbox.NewRiskCreated(actorRef(actor), outbox.RiskPayload{
+		RiskID:        r.ID,
+		Ref:           r.Ref,
+		Title:         r.Title,
+		Kind:          string(r.Kind),
+		Likelihood:    string(r.Likelihood),
+		Impact:        string(r.Impact),
+		Status:        string(r.Status),
+		OwnerPersonID: r.OwnerPersonID,
+		Version:       r.Version,
+		OccurredAt:    r.CreatedAt,
+	})
+	if err != nil {
+		return Risk{}, fmt.Errorf("intel: build event: %w", err)
+	}
+	created, err := s.writer.CreateRisk(ctx, r, ev)
 	if err != nil {
 		return Risk{}, err
 	}
@@ -270,7 +346,22 @@ func (s *Service) UpdateRisk(ctx context.Context, actor uuid.UUID, id uuid.UUID,
 	if err := validateRiskInput(r); err != nil {
 		return Risk{}, err
 	}
-	updated, err := s.writer.UpdateRisk(ctx, r, expectedVersion)
+	ev, err := outbox.NewRiskUpdated(actorRef(actor), outbox.RiskPayload{
+		RiskID:        r.ID,
+		Ref:           r.Ref,
+		Title:         r.Title,
+		Kind:          string(r.Kind),
+		Likelihood:    string(r.Likelihood),
+		Impact:        string(r.Impact),
+		Status:        string(r.Status),
+		OwnerPersonID: r.OwnerPersonID,
+		Version:       r.Version,
+		OccurredAt:    r.UpdatedAt,
+	})
+	if err != nil {
+		return Risk{}, fmt.Errorf("intel: build event: %w", err)
+	}
+	updated, err := s.writer.UpdateRisk(ctx, r, expectedVersion, ev)
 	if err != nil {
 		return Risk{}, err
 	}
@@ -290,7 +381,28 @@ func (s *Service) CreateBrief(ctx context.Context, actor uuid.UUID, in BriefInpu
 	if err := validateBriefInput(b); err != nil {
 		return Brief{}, err
 	}
-	created, err := s.writer.CreateBrief(ctx, b)
+	ref, err := s.writer.AllocateRef(ctx, "brief", time.Now().UTC().Year())
+	if err != nil {
+		return Brief{}, fmt.Errorf("intel: allocate ref: %w", err)
+	}
+	b.Ref = ref
+	b.Version = 1
+	b.CreatedAt = time.Now().UTC()
+	b.UpdatedAt = b.CreatedAt
+
+	ev, err := outbox.NewBriefCreated(actorRef(actor), outbox.BriefPayload{
+		BriefID:   b.ID,
+		Ref:       b.Ref,
+		ForDate:   b.ForDate,
+		Summary:   b.Summary,
+		Delivered: b.Delivered,
+		Version:   b.Version,
+		OccurredAt: b.CreatedAt,
+	})
+	if err != nil {
+		return Brief{}, fmt.Errorf("intel: build event: %w", err)
+	}
+	created, err := s.writer.CreateBrief(ctx, b, ev)
 	if err != nil {
 		return Brief{}, err
 	}
@@ -317,7 +429,19 @@ func (s *Service) UpdateBrief(ctx context.Context, actor uuid.UUID, id uuid.UUID
 	if err := validateBriefInput(b); err != nil {
 		return Brief{}, err
 	}
-	updated, err := s.writer.UpdateBrief(ctx, b, expectedVersion)
+	ev, err := outbox.NewBriefUpdated(actorRef(actor), outbox.BriefPayload{
+		BriefID:   b.ID,
+		Ref:       b.Ref,
+		ForDate:   b.ForDate,
+		Summary:   b.Summary,
+		Delivered: b.Delivered,
+		Version:   b.Version,
+		OccurredAt: b.UpdatedAt,
+	})
+	if err != nil {
+		return Brief{}, fmt.Errorf("intel: build event: %w", err)
+	}
+	updated, err := s.writer.UpdateBrief(ctx, b, expectedVersion, ev)
 	if err != nil {
 		return Brief{}, err
 	}
@@ -347,7 +471,19 @@ func (s *Service) DeliverBrief(ctx context.Context, actor uuid.UUID, id uuid.UUI
 	}
 	now := s.now()
 	b.DeliveredAt = &now
-	updated, err := s.writer.DeliverBrief(ctx, b, expectedVersion)
+	ev, err := outbox.NewBriefDelivered(actorRef(actor), outbox.BriefPayload{
+		BriefID:   b.ID,
+		Ref:       b.Ref,
+		ForDate:   b.ForDate,
+		Summary:   b.Summary,
+		Delivered: b.Delivered,
+		Version:   b.Version,
+		OccurredAt: now,
+	})
+	if err != nil {
+		return Brief{}, fmt.Errorf("intel: build event: %w", err)
+	}
+	updated, err := s.writer.DeliverBrief(ctx, b, expectedVersion, ev)
 	if err != nil {
 		return Brief{}, err
 	}
@@ -367,7 +503,28 @@ func (s *Service) CreateMetricSnapshot(ctx context.Context, actor uuid.UUID, in 
 	if err := validateMetricSnapshotInput(m); err != nil {
 		return MetricSnapshot{}, err
 	}
-	created, err := s.writer.CreateMetricSnapshot(ctx, m)
+	ref, err := s.writer.AllocateRef(ctx, "metric", time.Now().UTC().Year())
+	if err != nil {
+		return MetricSnapshot{}, fmt.Errorf("intel: allocate ref: %w", err)
+	}
+	m.Ref = ref
+	m.Version = 1
+	m.CreatedAt = time.Now().UTC()
+
+	ev, err := outbox.NewMetricSnapshotCreated(actorRef(actor), outbox.MetricSnapshotPayload{
+		SnapshotID: m.ID,
+		Ref:        m.Ref,
+		MetricName: m.MetricName,
+		MetricValue: m.MetricValue,
+		AsOf:       m.AsOf,
+		Source:     m.Source,
+		Version:    m.Version,
+		OccurredAt: m.CreatedAt,
+	})
+	if err != nil {
+		return MetricSnapshot{}, fmt.Errorf("intel: build event: %w", err)
+	}
+	created, err := s.writer.CreateMetricSnapshot(ctx, m, ev)
 	if err != nil {
 		return MetricSnapshot{}, err
 	}
@@ -506,4 +663,11 @@ func (s *Service) writeAudit(ctx context.Context, actor uuid.UUID, action, entit
 		s.logger.ErrorContext(ctx, "intel: audit write failed",
 			slog.String("action", action), slog.String("error", err.Error()))
 	}
+}
+
+func actorRef(actor uuid.UUID) *uuid.UUID {
+	if actor == uuid.Nil {
+		return nil
+	}
+	return &actor
 }

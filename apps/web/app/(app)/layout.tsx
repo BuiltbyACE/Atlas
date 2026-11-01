@@ -48,7 +48,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           data-atlas-region="sidebar"
           className="sticky top-0 hidden h-screen lg:block"
         >
-          <Sidebar userName={user.name} userEmail={user.email} escalations={escalations} />
+          <Sidebar userName={user.name} userEmail={user.email} userRoles={user.roles} escalations={escalations} />
         </div>
 
         <div data-atlas-region="content" className="flex min-w-0 flex-col">
@@ -56,6 +56,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             userId={user.id}
             userName={user.name}
             userEmail={user.email}
+            userRoles={user.roles}
             escalations={escalations}
           />
           <main className="mx-auto w-full max-w-[1360px] px-4 pb-14 pt-5 sm:px-8 sm:pt-7">

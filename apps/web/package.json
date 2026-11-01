@@ -9,7 +9,9 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "generate:api": "node -e \"console.log('[atlas/web] generate:api is not wired up yet. Generate the typed client from ../../contracts/openapi/public.yaml with openapi-typescript (see README.md).')\""
+    "generate:api": "node -e \"console.log('[atlas/web] generate:api is not wired up yet. Generate the typed client from ../../contracts/openapi/public.yaml with openapi-typescript (see README.md).')\"",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "next": "^15.5.27",
@@ -20,6 +22,7 @@
     "zod": "^4.6.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.51.1",
     "@types/node": "^24.19.2",
     "@types/phoenix": "^1.6.7",
     "@types/qrcode": "^1.5.6",

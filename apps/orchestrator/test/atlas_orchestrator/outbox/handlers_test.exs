@@ -249,6 +249,63 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
   end
 
+  test "a units event is routed to the units handler" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "units:board")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "units.unit.created.v1",
+      seq: 11,
+      payload: %{
+        "unit_id" => Ecto.UUID.generate(),
+        "ref" => "UNI-2026-0001",
+        "name" => "Test Unit",
+        "kind" => "school",
+        "status" => "active"
+      },
+      occurred_at: ~U[2026-10-31 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "units:board",
+      event: "unit.changed",
+      payload: payload
+    }
+    assert payload["type"] == "unit.changed"
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
+  test "an intel event is routed to the intel handler" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "intel:board")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "intel.decision.created.v1",
+      seq: 12,
+      payload: %{
+        "decision_id" => Ecto.UUID.generate(),
+        "ref" => "DEC-2026-0001",
+        "question" => "Should we migrate?",
+        "outcome" => "open"
+      },
+      occurred_at: ~U[2026-10-31 11:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "intel:board",
+      event: "decision.changed",
+      payload: payload
+    }
+    assert payload["type"] == "decision.changed"
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
   test "an unknown event type is ignored, not failed" do
     assert :ok =
              Handlers.dispatch(%Event{id: Ecto.UUID.generate(), type: "x.y.z.v1", payload: %{}})

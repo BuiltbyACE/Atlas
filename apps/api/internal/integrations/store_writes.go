@@ -17,6 +17,9 @@ type Writer interface {
 	// Integrations.
 	CreateIntegration(ctx context.Context, i Integration) (Integration, error)
 	UpdateIntegration(ctx context.Context, i Integration, expectedVersion int) (Integration, error)
+
+	// Outbound log: records an outbound call attempt (§8.9).
+	WriteOutboundLog(ctx context.Context, o OutboundLogEntry) (OutboundLogEntry, error)
 }
 
 var _ Writer = (*PGStore)(nil)
@@ -124,4 +127,19 @@ func (s *PGStore) UpdateIntegration(ctx context.Context, i Integration, expected
 		return Integration{}, writeErr("update integration", err)
 	}
 	return i, nil
+}
+
+// WriteOutboundLog records an outbound call attempt (§8.9).
+func (s *PGStore) WriteOutboundLog(ctx context.Context, o OutboundLogEntry) (OutboundLogEntry, error) {
+	err := s.db.QueryRow(ctx, `
+		INSERT INTO integrations.outbound_log (provider, endpoint, method, status_code, error_message, attempt, max_attempts, last_attempt_at, circuit_state)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		RETURNING id, created_at`,
+		o.Provider, o.Endpoint, o.Method, o.StatusCode, o.ErrorMessage,
+		o.Attempt, o.MaxAttempts, o.LastAttemptAt, o.CircuitState).
+		Scan(&o.ID, &o.CreatedAt)
+	if err != nil {
+		return OutboundLogEntry{}, writeErr("write outbound log", err)
+	}
+	return o, nil
 }

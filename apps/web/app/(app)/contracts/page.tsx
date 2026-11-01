@@ -97,6 +97,10 @@ export default async function ContractsPage({
           error ? undefined : (
             <>
               <SignalRefresh topic={CONTRACTS_TOPIC} quiet />
+              <ButtonLink href="/contracts/new" variant="primary">
+                <Icon name="plus" className="h-4 w-4" />
+                New contract
+              </ButtonLink>
               <ButtonLink href="/crm" variant="secondary">
                 <Icon name="people" />
                 CRM

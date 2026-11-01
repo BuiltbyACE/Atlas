@@ -157,6 +157,18 @@ export default async function CrmPage({
         actions={
           <>
             <SignalRefresh topic={SALES_TOPIC} quiet />
+            <ButtonLink href="/crm/leads/new" variant="primary">
+              <Icon name="plus" className="h-4 w-4" />
+              New lead
+            </ButtonLink>
+            <ButtonLink href="/crm/organizations/new" variant="secondary">
+              <Icon name="plus" className="h-4 w-4" />
+              New organization
+            </ButtonLink>
+            <ButtonLink href="/crm/contacts/new" variant="secondary">
+              <Icon name="plus" className="h-4 w-4" />
+              New contact
+            </ButtonLink>
             <ButtonLink href="/contracts" variant="secondary">
               <Icon name="document" />
               Contracts

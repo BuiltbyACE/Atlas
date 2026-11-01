@@ -20,6 +20,47 @@ export interface NavLink {
   keywords?: string;
   /** Show the open-escalations count beside it. */
   badge?: "escalations";
+  /** Role keys allowed to see this link. Absent = visible to all authenticated users. */
+  roles?: string[];
+}
+
+/** Role groups used for navigation gating. */
+export const ROLE_GROUPS = {
+  ceo_internal: ["ceo_internal"],
+  ceo_commercial: ["ceo_commercial"],
+  finance_officer: ["finance_officer"],
+  sales_rep: ["sales_rep"],
+  project_lead: ["project_lead"],
+  engineer: ["engineer"],
+  staff: ["staff"],
+  unit_manager: ["unit_manager"],
+  auditor: ["auditor"],
+  system_admin: ["system_admin"],
+} as const;
+
+/** Returns true when the user holds at least one of the required roles.
+ * When `required` is empty or undefined, the link is visible to everyone. */
+export function hasAnyRole(userRoles: string[], required?: string[]): boolean {
+  if (!required || required.length === 0) return true;
+  return required.some((r) => userRoles.includes(r));
+}
+
+/** Filters nav links to those the user is allowed to see. */
+export function filterLinksByRoles(links: NavLink[], userRoles: string[]): NavLink[] {
+  return links.filter((link) => hasAnyRole(userRoles, link.roles));
+}
+
+/** Returns only the sections whose links are visible to the user. */
+export function filterSectionsByRoles(
+  sections: NavSection[],
+  userRoles: string[],
+): NavSection[] {
+  return sections
+    .map((section) => ({
+      ...section,
+      links: filterLinksByRoles(section.links, userRoles),
+    }))
+    .filter((section) => section.links.length > 0);
 }
 
 export interface NavSection {
@@ -34,40 +75,51 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     title: "Work",
     links: [
-      { label: "Projects", href: "/work", icon: "folder", section: "Work" },
-      { label: "Task board", href: "/work/tasks", icon: "board", section: "Work", keywords: "kanban tasks" },
-      { label: "Workload", href: "/work/workload", icon: "bars", section: "Work", keywords: "capacity deadlines" },
-      { label: "Escalations", href: "/work/escalations", icon: "alert", section: "Work", badge: "escalations", keywords: "overdue" },
+      { label: "Approvals", href: "/approvals", icon: "shieldCheck", section: "Work", keywords: "approve decline escalate", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
+      { label: "Projects", href: "/work", icon: "folder", section: "Work", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
+      { label: "Task board", href: "/work/tasks", icon: "board", section: "Work", keywords: "kanban tasks", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
+      { label: "Workload", href: "/work/workload", icon: "bars", section: "Work", keywords: "capacity deadlines", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
+      { label: "Escalations", href: "/work/escalations", icon: "alert", section: "Work", badge: "escalations", keywords: "overdue", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
     ],
   },
   {
     title: "People",
     links: [
-      { label: "Availability & leave", href: "/people", icon: "calendar", section: "People", keywords: "roster holiday absence" },
-      { label: "Activity", href: "/people/activity", icon: "pulse", section: "People", keywords: "sessions online sign-in" },
-      { label: "Daily reports", href: "/daily-reports", icon: "clipboard", section: "People", keywords: "report standup" },
+      { label: "Availability & leave", href: "/people", icon: "calendar", section: "People", keywords: "roster holiday absence", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
+      { label: "Activity", href: "/people/activity", icon: "pulse", section: "People", keywords: "sessions online sign-in", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
+      { label: "Daily reports", href: "/daily-reports", icon: "clipboard", section: "People", keywords: "report standup", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
+      { label: "Departments", href: "/people/departments", icon: "building", section: "People", keywords: "departments units teams", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
+      { label: "Onboard new person", href: "/people/onboard", icon: "plus", section: "People", keywords: "invite new hire register", roles: ["ceo_internal", "ceo_commercial", "system_admin", "finance_officer"] },
     ],
   },
   {
     title: "Revenue",
     links: [
-      { label: "CRM", href: "/crm", icon: "people", section: "Revenue", keywords: "leads pipeline sales opportunities contacts clients" },
-      { label: "Contracts", href: "/contracts", icon: "document", section: "Revenue", keywords: "agreements signing milestones renewals obligations" },
-      { label: "Finance", href: "/finance", icon: "card", section: "Revenue", keywords: "cash receivables expenses invoices budgets payments profitability recurring" },
+      { label: "Commercial dashboard", href: "/dashboard/commercial", icon: "pie", section: "Revenue", keywords: "pipeline receivables cash leads", roles: ["ceo_internal", "ceo_commercial"] },
+      { label: "Daily Brief", href: "/dashboard/daily", icon: "clipboard", section: "Revenue", keywords: "yesterday today attention decisions", roles: ["ceo_internal", "ceo_commercial"] },
+      { label: "CRM", href: "/crm", icon: "people", section: "Revenue", keywords: "leads pipeline sales opportunities contacts clients", roles: ["ceo_commercial", "ceo_internal", "sales_rep"] },
+      { label: "Contracts", href: "/contracts", icon: "document", section: "Revenue", keywords: "agreements signing milestones renewals obligations", roles: ["ceo_commercial", "ceo_internal"] },
+      { label: "Finance", href: "/finance", icon: "card", section: "Revenue", keywords: "cash receivables expenses invoices budgets payments profitability recurring", roles: ["ceo_internal", "ceo_commercial", "finance_officer"] },
     ],
   },
   {
     title: "Platform",
     links: [
-      { label: "Systems", href: "/systems", icon: "server", section: "Platform", keywords: "monitoring uptime incidents checks domains certificates credentials health" },
+      { label: "Systems", href: "/systems", icon: "server", section: "Platform", keywords: "monitoring uptime incidents checks domains certificates credentials health", roles: ["ceo_internal", "system_admin"] },
     ],
   },
 ];
 
 /** Modules on the roadmap, shown dimmed with a "Soon" tag. */
-export const COMING_NEXT: Array<{ label: string; icon: IconName }> = [
-  { label: "Units", icon: "building" },
-  { label: "Intel", icon: "pie" },
+export interface ComingNextItem {
+  label: string;
+  icon: IconName;
+  roles?: string[];
+}
+
+export const COMING_NEXT: ComingNextItem[] = [
+  { label: "Units", icon: "building", roles: ["ceo_internal", "ceo_commercial", "unit_manager"] },
+  { label: "Intel", icon: "pie", roles: ["ceo_internal", "ceo_commercial"] },
 ];
 
 export const SETTINGS_LINK: NavLink = {
@@ -75,6 +127,7 @@ export const SETTINGS_LINK: NavLink = {
   href: "/settings",
   icon: "sliders",
   keywords: "sessions devices account",
+  roles: ["ceo_internal", "ceo_commercial", "system_admin", "finance_officer"],
 };
 
 export const ALL_LINKS: NavLink[] = [

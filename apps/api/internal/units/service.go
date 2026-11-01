@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/safaristack/atlas/apps/api/internal/audit"
+	"github.com/safaristack/atlas/apps/api/internal/outbox"
 )
 
 // Service is the units read model's rules: it validates the filters, resolves
@@ -183,7 +184,30 @@ func (s *Service) CreateUnit(ctx context.Context, actor uuid.UUID, in UnitInput)
 	if err := validateUnitInput(u); err != nil {
 		return BusinessUnit{}, err
 	}
-	created, err := s.writer.CreateUnit(ctx, u)
+	ref, err := s.writer.AllocateRef(ctx, "unit", time.Now().UTC().Year())
+	if err != nil {
+		return BusinessUnit{}, fmt.Errorf("units: allocate ref: %w", err)
+	}
+	u.Ref = ref
+	u.Version = 1
+	u.CreatedAt = time.Now().UTC()
+	u.UpdatedAt = u.CreatedAt
+
+	ev, err := outbox.NewUnitCreated(actorRef(actor), outbox.UnitPayload{
+		UnitID:        u.ID,
+		Ref:           u.Ref,
+		Name:          u.Name,
+		Code:          u.Code,
+		Kind:          string(u.Kind),
+		Status:        string(u.Status),
+		OwnerPersonID: u.OwnerPersonID,
+		Version:       u.Version,
+		OccurredAt:    u.CreatedAt,
+	})
+	if err != nil {
+		return BusinessUnit{}, fmt.Errorf("units: build event: %w", err)
+	}
+	created, err := s.writer.CreateUnit(ctx, u, ev)
 	if err != nil {
 		return BusinessUnit{}, err
 	}
@@ -215,7 +239,21 @@ func (s *Service) UpdateUnit(ctx context.Context, actor uuid.UUID, id uuid.UUID,
 	if err := validateUnitInput(u); err != nil {
 		return BusinessUnit{}, err
 	}
-	updated, err := s.writer.UpdateUnit(ctx, u, expectedVersion)
+	ev, err := outbox.NewUnitUpdated(actorRef(actor), outbox.UnitPayload{
+		UnitID:        u.ID,
+		Ref:           u.Ref,
+		Name:          u.Name,
+		Code:          u.Code,
+		Kind:          string(u.Kind),
+		Status:        string(u.Status),
+		OwnerPersonID: u.OwnerPersonID,
+		Version:       u.Version,
+		OccurredAt:    u.UpdatedAt,
+	})
+	if err != nil {
+		return BusinessUnit{}, fmt.Errorf("units: build event: %w", err)
+	}
+	updated, err := s.writer.UpdateUnit(ctx, u, expectedVersion, ev)
 	if err != nil {
 		return BusinessUnit{}, err
 	}
@@ -236,11 +274,28 @@ func (s *Service) CreateIntegration(ctx context.Context, actor uuid.UUID, in Int
 		CredentialRef: trim(in.CredentialRef),
 		Schedule:      trim(in.Schedule),
 		Active:        true,
+		Version:       1,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
 	}
 	if err := validateIntegrationInput(i); err != nil {
 		return UnitIntegration{}, err
 	}
-	created, err := s.writer.CreateIntegration(ctx, i)
+	ev, err := outbox.NewIntegrationCreated(actorRef(actor), outbox.IntegrationPayload{
+		IntegrationID: i.ID,
+		UnitID:        i.UnitID,
+		Name:          i.Name,
+		Kind:          string(i.Kind),
+		Endpoint:      i.Endpoint,
+		CredentialRef: i.CredentialRef,
+		Active:        i.Active,
+		Version:       i.Version,
+		OccurredAt:    i.CreatedAt,
+	})
+	if err != nil {
+		return UnitIntegration{}, fmt.Errorf("units: build event: %w", err)
+	}
+	created, err := s.writer.CreateIntegration(ctx, i, ev)
 	if err != nil {
 		return UnitIntegration{}, err
 	}
@@ -271,7 +326,21 @@ func (s *Service) UpdateIntegration(ctx context.Context, actor uuid.UUID, id uui
 	if err := validateIntegrationInput(i); err != nil {
 		return UnitIntegration{}, err
 	}
-	updated, err := s.writer.UpdateIntegration(ctx, i, expectedVersion)
+	ev, err := outbox.NewIntegrationUpdated(actorRef(actor), outbox.IntegrationPayload{
+		IntegrationID: i.ID,
+		UnitID:        i.UnitID,
+		Name:          i.Name,
+		Kind:          string(i.Kind),
+		Endpoint:      i.Endpoint,
+		CredentialRef: i.CredentialRef,
+		Active:        i.Active,
+		Version:       i.Version,
+		OccurredAt:    i.UpdatedAt,
+	})
+	if err != nil {
+		return UnitIntegration{}, fmt.Errorf("units: build event: %w", err)
+	}
+	updated, err := s.writer.UpdateIntegration(ctx, i, expectedVersion, ev)
 	if err != nil {
 		return UnitIntegration{}, err
 	}
@@ -295,11 +364,28 @@ func (s *Service) CreateIndicatorDefinition(ctx context.Context, actor uuid.UUID
 		WarningThreshold:  trim(in.WarningThreshold),
 		CriticalThreshold: trim(in.CriticalThreshold),
 		Active:            true,
+		Version:           1,
+		CreatedAt:         time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
 	}
 	if err := validateIndicatorDefinitionInput(d); err != nil {
 		return UnitIndicatorDefinition{}, err
 	}
-	created, err := s.writer.CreateIndicatorDefinition(ctx, d)
+	ev, err := outbox.NewIndicatorCreated(actorRef(actor), outbox.IndicatorPayload{
+		IndicatorID:  d.ID,
+		UnitID:       d.UnitID,
+		Name:         d.Name,
+		Kind:         string(d.Kind),
+		SourceField:  d.SourceField,
+		Target:       d.Target,
+		Active:       d.Active,
+		Version:      d.Version,
+		OccurredAt:   d.CreatedAt,
+	})
+	if err != nil {
+		return UnitIndicatorDefinition{}, fmt.Errorf("units: build event: %w", err)
+	}
+	created, err := s.writer.CreateIndicatorDefinition(ctx, d, ev)
 	if err != nil {
 		return UnitIndicatorDefinition{}, err
 	}
@@ -333,7 +419,21 @@ func (s *Service) UpdateIndicatorDefinition(ctx context.Context, actor uuid.UUID
 	if err := validateIndicatorDefinitionInput(d); err != nil {
 		return UnitIndicatorDefinition{}, err
 	}
-	updated, err := s.writer.UpdateIndicatorDefinition(ctx, d, expectedVersion)
+	ev, err := outbox.NewIndicatorUpdated(actorRef(actor), outbox.IndicatorPayload{
+		IndicatorID:  d.ID,
+		UnitID:       d.UnitID,
+		Name:         d.Name,
+		Kind:         string(d.Kind),
+		SourceField:  d.SourceField,
+		Target:       d.Target,
+		Active:       d.Active,
+		Version:      d.Version,
+		OccurredAt:   d.UpdatedAt,
+	})
+	if err != nil {
+		return UnitIndicatorDefinition{}, fmt.Errorf("units: build event: %w", err)
+	}
+	updated, err := s.writer.UpdateIndicatorDefinition(ctx, d, expectedVersion, ev)
 	if err != nil {
 		return UnitIndicatorDefinition{}, err
 	}
@@ -459,4 +559,11 @@ func validateFinanceSummaryQuery(q FinanceSummaryQuery) error {
 		return fmt.Errorf("%w: from must be before to", ErrInvalid)
 	}
 	return nil
+}
+
+func actorRef(actor uuid.UUID) *uuid.UUID {
+	if actor == uuid.Nil {
+		return nil
+	}
+	return &actor
 }

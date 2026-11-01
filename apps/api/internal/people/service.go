@@ -13,6 +13,7 @@ import (
 // Entity types used in the audit trail and event aggregate names.
 const (
 	EntityDailyReport  = "people.daily_report"
+	EntityDepartment   = "people.department"
 	EntityLeaveRequest = "people.leave_request"
 	EntityPerson       = "people.person"
 )
@@ -105,4 +106,43 @@ func (s *Service) writeAuditAs(ctx context.Context, actorType, actorID, action, 
 		s.logger.ErrorContext(ctx, "people: audit write failed",
 			slog.String("action", action), slog.String("error", err.Error()))
 	}
+}
+
+// ListDepartments returns all non-archived departments, name-ordered.
+func (s *Service) ListDepartments(ctx context.Context) ([]Department, error) {
+	return s.store.ListDepartments(ctx)
+}
+
+// GetDepartment returns one non-archived department by ID.
+func (s *Service) GetDepartment(ctx context.Context, id uuid.UUID) (*Department, error) {
+	return s.store.GetDepartment(ctx, id)
+}
+
+// CreateDepartment inserts a new department.
+func (s *Service) CreateDepartment(ctx context.Context, actor uuid.UUID, name string) (Department, error) {
+	d, err := s.store.CreateDepartment(ctx, name)
+	if err != nil {
+		return d, err
+	}
+	s.writeAudit(ctx, actor, "people.department.created", EntityDepartment, d.ID, nil, map[string]any{"name": d.Name})
+	return d, nil
+}
+
+// UpdateDepartment updates a department's name.
+func (s *Service) UpdateDepartment(ctx context.Context, actor uuid.UUID, id uuid.UUID, name string) (Department, error) {
+	d, err := s.store.UpdateDepartment(ctx, id, name)
+	if err != nil {
+		return d, err
+	}
+	s.writeAudit(ctx, actor, "people.department.updated", EntityDepartment, d.ID, nil, map[string]any{"name": d.Name})
+	return d, nil
+}
+
+// ArchiveDepartment soft-deletes a department by setting archived_at.
+func (s *Service) ArchiveDepartment(ctx context.Context, actor uuid.UUID, id uuid.UUID) error {
+	if err := s.store.ArchiveDepartment(ctx, id); err != nil {
+		return err
+	}
+	s.writeAudit(ctx, actor, "people.department.archived", EntityDepartment, id, nil, nil)
+	return nil
 }

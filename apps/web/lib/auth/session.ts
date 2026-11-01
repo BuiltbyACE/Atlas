@@ -23,6 +23,8 @@ export interface CurrentUser {
   subject: string;
   person_id?: string;
   roles: string[];
+  /** Effective permission set, computed by Go from role→permission mappings. */
+  permissions: string[];
 }
 
 /**

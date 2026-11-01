@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/safaristack/atlas/apps/api/internal/outbox"
 )
 
 // Writer is the units write model (§8.7). Go owns every rule: a retired unit
@@ -14,16 +16,16 @@ type Writer interface {
 	AllocateRef(ctx context.Context, pType string, pYear int) (string, error)
 
 	// Business units.
-	CreateUnit(ctx context.Context, u BusinessUnit) (BusinessUnit, error)
-	UpdateUnit(ctx context.Context, u BusinessUnit, expectedVersion int) (BusinessUnit, error)
+	CreateUnit(ctx context.Context, u BusinessUnit, ev outbox.Event) (BusinessUnit, error)
+	UpdateUnit(ctx context.Context, u BusinessUnit, expectedVersion int, ev outbox.Event) (BusinessUnit, error)
 
 	// Integrations.
-	CreateIntegration(ctx context.Context, i UnitIntegration) (UnitIntegration, error)
-	UpdateIntegration(ctx context.Context, i UnitIntegration, expectedVersion int) (UnitIntegration, error)
+	CreateIntegration(ctx context.Context, i UnitIntegration, ev outbox.Event) (UnitIntegration, error)
+	UpdateIntegration(ctx context.Context, i UnitIntegration, expectedVersion int, ev outbox.Event) (UnitIntegration, error)
 
 	// Indicator definitions.
-	CreateIndicatorDefinition(ctx context.Context, d UnitIndicatorDefinition) (UnitIndicatorDefinition, error)
-	UpdateIndicatorDefinition(ctx context.Context, d UnitIndicatorDefinition, expectedVersion int) (UnitIndicatorDefinition, error)
+	CreateIndicatorDefinition(ctx context.Context, d UnitIndicatorDefinition, ev outbox.Event) (UnitIndicatorDefinition, error)
+	UpdateIndicatorDefinition(ctx context.Context, d UnitIndicatorDefinition, expectedVersion int, ev outbox.Event) (UnitIndicatorDefinition, error)
 
 	// Snapshots and finance summaries are written by background processes,
 	// not by API clients.
@@ -61,7 +63,7 @@ func nullTextPtr(s string) *string {
 
 // ── business units ──────────────────────────────────────────────────────────
 
-func (s *PGStore) CreateUnit(ctx context.Context, u BusinessUnit) (BusinessUnit, error) {
+func (s *PGStore) CreateUnit(ctx context.Context, u BusinessUnit, ev outbox.Event) (BusinessUnit, error) {
 	if !validUnitCode(u.Code) {
 		return BusinessUnit{}, withCode(errInvalidField("code"), CodeDuplicateCode)
 	}
@@ -71,13 +73,15 @@ func (s *PGStore) CreateUnit(ctx context.Context, u BusinessUnit) (BusinessUnit,
 	if !validUnitStatus(u.Status) {
 		u.Status = UnitActive
 	}
-	ref, err := s.AllocateRef(ctx, "unit", time.Now().UTC().Year())
-	if err != nil {
-		return BusinessUnit{}, writeErr("allocate ref", err)
+	if u.Ref == "" {
+		ref, err := s.AllocateRef(ctx, "unit", time.Now().UTC().Year())
+		if err != nil {
+			return BusinessUnit{}, writeErr("allocate ref", err)
+		}
+		u.Ref = ref
 	}
-	u.Ref = ref
 	u.Version = 1
-	err = s.db.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		INSERT INTO units.business_units (ref, name, code, kind, owner_person_id, description, status, version)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		RETURNING id, created_at, updated_at`,
@@ -87,10 +91,13 @@ func (s *PGStore) CreateUnit(ctx context.Context, u BusinessUnit) (BusinessUnit,
 	if err != nil {
 		return BusinessUnit{}, writeErr("create unit", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return BusinessUnit{}, writeErr("write outbox event", err)
+	}
 	return u, nil
 }
 
-func (s *PGStore) UpdateUnit(ctx context.Context, u BusinessUnit, expectedVersion int) (BusinessUnit, error) {
+func (s *PGStore) UpdateUnit(ctx context.Context, u BusinessUnit, expectedVersion int, ev outbox.Event) (BusinessUnit, error) {
 	current, err := s.GetUnit(ctx, u.ID)
 	if err != nil {
 		return BusinessUnit{}, err
@@ -118,12 +125,15 @@ func (s *PGStore) UpdateUnit(ctx context.Context, u BusinessUnit, expectedVersio
 	if err != nil {
 		return BusinessUnit{}, writeErr("update unit", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return BusinessUnit{}, writeErr("write outbox event", err)
+	}
 	return u, nil
 }
 
 // ── integrations ────────────────────────────────────────────────────────────
 
-func (s *PGStore) CreateIntegration(ctx context.Context, i UnitIntegration) (UnitIntegration, error) {
+func (s *PGStore) CreateIntegration(ctx context.Context, i UnitIntegration, ev outbox.Event) (UnitIntegration, error) {
 	if !validIntegrationKind(i.Kind) {
 		return UnitIntegration{}, withCode(errInvalidField("kind"), CodeInvalidIntegrationKind)
 	}
@@ -141,10 +151,13 @@ func (s *PGStore) CreateIntegration(ctx context.Context, i UnitIntegration) (Uni
 	if err != nil {
 		return UnitIntegration{}, writeErr("create integration", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return UnitIntegration{}, writeErr("write outbox event", err)
+	}
 	return i, nil
 }
 
-func (s *PGStore) UpdateIntegration(ctx context.Context, i UnitIntegration, expectedVersion int) (UnitIntegration, error) {
+func (s *PGStore) UpdateIntegration(ctx context.Context, i UnitIntegration, expectedVersion int, ev outbox.Event) (UnitIntegration, error) {
 	current, err := s.GetIntegration(ctx, i.ID)
 	if err != nil {
 		return UnitIntegration{}, err
@@ -168,12 +181,15 @@ func (s *PGStore) UpdateIntegration(ctx context.Context, i UnitIntegration, expe
 	if err != nil {
 		return UnitIntegration{}, writeErr("update integration", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return UnitIntegration{}, writeErr("write outbox event", err)
+	}
 	return i, nil
 }
 
 // ── indicator definitions ───────────────────────────────────────────────────
 
-func (s *PGStore) CreateIndicatorDefinition(ctx context.Context, d UnitIndicatorDefinition) (UnitIndicatorDefinition, error) {
+func (s *PGStore) CreateIndicatorDefinition(ctx context.Context, d UnitIndicatorDefinition, ev outbox.Event) (UnitIndicatorDefinition, error) {
 	if !validIndicatorKind(d.Kind) {
 		return UnitIndicatorDefinition{}, withCode(errInvalidField("kind"), CodeInvalidIndicatorKind)
 	}
@@ -188,10 +204,13 @@ func (s *PGStore) CreateIndicatorDefinition(ctx context.Context, d UnitIndicator
 	if err != nil {
 		return UnitIndicatorDefinition{}, writeErr("create indicator definition", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return UnitIndicatorDefinition{}, writeErr("write outbox event", err)
+	}
 	return d, nil
 }
 
-func (s *PGStore) UpdateIndicatorDefinition(ctx context.Context, d UnitIndicatorDefinition, expectedVersion int) (UnitIndicatorDefinition, error) {
+func (s *PGStore) UpdateIndicatorDefinition(ctx context.Context, d UnitIndicatorDefinition, expectedVersion int, ev outbox.Event) (UnitIndicatorDefinition, error) {
 	current, err := s.GetIndicatorDefinition(ctx, d.ID)
 	if err != nil {
 		return UnitIndicatorDefinition{}, err
@@ -215,6 +234,9 @@ func (s *PGStore) UpdateIndicatorDefinition(ctx context.Context, d UnitIndicator
 		Scan(&d.UpdatedAt)
 	if err != nil {
 		return UnitIndicatorDefinition{}, writeErr("update indicator definition", err)
+	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return UnitIndicatorDefinition{}, writeErr("write outbox event", err)
 	}
 	return d, nil
 }

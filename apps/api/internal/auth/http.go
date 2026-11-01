@@ -56,12 +56,13 @@ type loginResponse struct {
 }
 
 type userResponse struct {
-	ID       string   `json:"id"`
-	Email    string   `json:"email"`
-	Name     string   `json:"name"`
-	Subject  string   `json:"subject"`
-	PersonID string   `json:"person_id,omitempty"`
-	Roles    []string `json:"roles"`
+	ID         string   `json:"id"`
+	Email      string   `json:"email"`
+	Name       string   `json:"name"`
+	Subject    string   `json:"subject"`
+	PersonID   string   `json:"person_id,omitempty"`
+	Roles      []string `json:"roles"`
+	Permissions []string `json:"permissions"`
 }
 
 type mfaVerifyRequest struct {
@@ -430,13 +431,18 @@ func (h *Handler) clearSessionCookie(w http.ResponseWriter) {
 }
 
 func userView(p *authz.Principal) *userResponse {
+	perms := make([]string, 0, len(p.Permissions))
+	for perm := range p.Permissions {
+		perms = append(perms, perm)
+	}
 	return &userResponse{
-		ID:       p.UserID.String(),
-		Email:    p.Email,
-		Name:     p.Name,
-		Subject:  p.Subject,
-		PersonID: uuidStringOrEmpty(p.PersonID),
-		Roles:    p.Roles,
+		ID:         p.UserID.String(),
+		Email:      p.Email,
+		Name:       p.Name,
+		Subject:    p.Subject,
+		PersonID:   uuidStringOrEmpty(p.PersonID),
+		Roles:      p.Roles,
+		Permissions: perms,
 	}
 }
 

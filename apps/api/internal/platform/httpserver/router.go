@@ -319,6 +319,8 @@ func registerAudit(reg *routing.Registry, h *audit.Handler) {
 func registerDashboard(reg *routing.Registry, h *dashboard.Handler) {
 	reg.Gated("intel.dashboard.read", http.MethodGet, "/api/v1/dashboard/executive",
 		"Executive dashboard tiles", h.Summary)
+	reg.Gated("intel.dashboard.read", http.MethodGet, "/api/v1/dashboard/executive/daily",
+		"Daily executive brief", h.DailyBrief)
 }
 
 // registerWork declares the Phase 2 work-orchestration surface. Reads need
@@ -786,6 +788,18 @@ func registerPeople(reg *routing.Registry, h *people.Handler) {
 		"See who is available on a date", h.GetAvailability)
 	reg.Gated("people.person.manage", http.MethodPost, "/api/v1/people/{id}/offboard",
 		"Offboard a person and revoke their access", h.OffboardPerson)
+
+	// Departments (§8.5): business units that people belong to.
+	reg.Gated("people.person.read", http.MethodGet, "/api/v1/people/departments",
+		"List departments", h.ListDepartments)
+	reg.Gated("people.person.read", http.MethodGet, "/api/v1/people/departments/{id}",
+		"Get a department", h.GetDepartment)
+	reg.Gated("people.person.manage", http.MethodPost, "/api/v1/people/departments",
+		"Create a department", h.CreateDepartment)
+	reg.Gated("people.person.manage", http.MethodPut, "/api/v1/people/departments/{id}",
+		"Update a department", h.UpdateDepartment)
+	reg.Gated("people.person.manage", http.MethodDelete, "/api/v1/people/departments/{id}",
+		"Archive a department", h.ArchiveDepartment)
 
 	// Session activity: who is signed in now, and how long they have been. This
 	// is derived read-only from the auth session rows (§8.5).

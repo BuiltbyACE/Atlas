@@ -212,6 +212,26 @@ export default async function DashboardPage() {
               </span>
             }
           />
+          <Stat
+            label="Units"
+            value={summary.units.units}
+            hint={`${summary.units.integrations} integrations · ${summary.units.indicators} indicators`}
+            icon="building"
+            iconTone="info"
+            foot={
+              <ArrowLink href="/units">Open units</ArrowLink>
+            }
+          />
+          <Stat
+            label="Intel"
+            value={summary.intel.decisions + summary.intel.risks}
+            hint={`${summary.intel.decisions} decisions · ${summary.intel.risks} risks · ${summary.intel.briefs} briefs`}
+            icon="pie"
+            iconTone="violet"
+            foot={
+              <ArrowLink href="/intel">Open intel</ArrowLink>
+            }
+          />
         </StatGrid>
       ) : (
         <StatGrid label="Key numbers">

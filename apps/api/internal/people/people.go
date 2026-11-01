@@ -206,6 +206,15 @@ type Person struct {
 	Version        int
 }
 
+// Department is a business department (§8.5): a named grouping of people.
+type Department struct {
+	ID          uuid.UUID
+	Name        string
+	LeadID      *uuid.UUID
+	CreatedAt   time.Time
+	ArchivedAt  *time.Time
+}
+
 // AvailabilityEntry is one person on a given day, with the approved leave (if
 // any) that covers that day.
 type AvailabilityEntry struct {

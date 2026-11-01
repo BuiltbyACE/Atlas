@@ -46,6 +46,30 @@ export function heartbeat(): Promise<void> {
   return apiFetch<void>("/api/v1/auth/heartbeat", { method: "POST" });
 }
 
+// ── auth write wrappers (§6.1) ──────────────────────────────────────────────
+
+/** Body for inviting a person (`POST /api/v1/auth/invites`). */
+export interface CreateInviteBody {
+  email: string;
+  full_name: string;
+  employment_type?: string;
+  role_grants?: string[];
+  ttl_hours?: number;
+}
+
+/** Invite a person to join Atlas (`POST /api/v1/auth/invites`, gated by
+ * `core.user.manage`). Returns the invite token and expiry. */
+export function createInvite(body: CreateInviteBody): Promise<{
+  token: string;
+  expires_at: string;
+  email: string;
+}> {
+  return apiFetch<{ token: string; expires_at: string; email: string }>(
+    "/api/v1/auth/invites",
+    { method: "POST", body },
+  );
+}
+
 // ── work: enums ─────────────────────────────────────────────────────────────
 
 export type ProjectStatus =
@@ -1072,6 +1096,277 @@ export function listInteractions(
   });
 }
 
+// ── CRM write wrappers (§8.1) ───────────────────────────────────────────────
+
+/** Body for creating a lead (`POST /api/v1/crm/leads`, `crm.lead.create`). */
+export interface CreateLeadBody {
+  source_key: string;
+  source_detail?: string;
+  organization_id?: string;
+  contact_id?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  need_summary?: string;
+  estimated_value_minor?: number;
+  currency?: string;
+  priority?: CrmPriority;
+  owner_person_id?: string;
+  status?: LeadStatus;
+  next_action?: string;
+  next_action_due_at?: string;
+  qualification_notes?: string;
+  lost_reason?: string;
+}
+
+export function createLead(body: CreateLeadBody): Promise<Lead> {
+  return apiFetch<Lead>("/api/v1/crm/leads", { method: "POST", body });
+}
+
+export function updateLead(
+  id: string,
+  version: number,
+  body: CreateLeadBody,
+): Promise<Lead> {
+  return apiFetch<Lead>(`/api/v1/crm/leads/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function assignLead(
+  id: string,
+  version: number,
+  body: { owner_person_id: string; next_action: string; next_action_due_at: string },
+): Promise<Lead> {
+  return apiFetch<Lead>(`/api/v1/crm/leads/${id}/assign`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function setLeadStatus(
+  id: string,
+  version: number,
+  body: { status: LeadStatus; lost_reason?: string },
+): Promise<Lead> {
+  return apiFetch<Lead>(`/api/v1/crm/leads/${id}/status`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function convertLead(
+  id: string,
+  version: number,
+  body: {
+    title: string;
+    organization_id?: string;
+    value_minor?: number;
+    currency?: string;
+    stage_key?: string;
+    probability?: number;
+    expected_close_at?: string;
+    owner_person_id?: string;
+  },
+): Promise<{ opportunity: Opportunity; lead: Lead }> {
+  return apiFetch<{ opportunity: Opportunity; lead: Lead }>(
+    `/api/v1/crm/leads/${id}/convert`,
+    { method: "POST", body, headers: ifMatch(version) },
+  );
+}
+
+/** Body for moving an opportunity stage (`POST /api/v1/crm/opportunities/{id}/stage`). */
+export interface MoveOpportunityStageBody {
+  stage_key: string;
+}
+
+export function moveOpportunityStage(
+  id: string,
+  version: number,
+  body: MoveOpportunityStageBody,
+): Promise<Opportunity> {
+  return apiFetch<Opportunity>(`/api/v1/crm/opportunities/${id}/stage`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Win an opportunity (`POST /api/v1/crm/opportunities/{id}/win`). */
+export function winOpportunity(id: string, version: number): Promise<Opportunity> {
+  return apiFetch<Opportunity>(`/api/v1/crm/opportunities/${id}/win`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+/** Lose an opportunity (`POST /api/v1/crm/opportunities/{id}/lose`). */
+export function loseOpportunity(
+  id: string,
+  version: number,
+  body: { lost_reason: string },
+): Promise<Opportunity> {
+  return apiFetch<Opportunity>(`/api/v1/crm/opportunities/${id}/lose`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Body for recording an interaction (`POST /api/v1/crm/interactions`). */
+export interface CreateInteractionBody {
+  interaction_type: string;
+  direction: string;
+  contact_id?: string;
+  lead_id?: string;
+  opportunity_id?: string;
+  occurred_at?: string;
+  duration_minutes?: number;
+  outcome: string;
+  summary?: string;
+  next_action?: string;
+  next_action_due_at?: string;
+  recording_file_id?: string;
+}
+
+export function createInteraction(
+  body: CreateInteractionBody,
+): Promise<CrmInteraction> {
+  return apiFetch<CrmInteraction>("/api/v1/crm/interactions", {
+    method: "POST",
+    body,
+  });
+}
+
+/** Body for scheduling a follow-up (`POST /api/v1/crm/followups`). */
+export interface CreateFollowupBody {
+  lead_id?: string;
+  opportunity_id?: string;
+  owner_person_id?: string;
+  due_at: string;
+  channel: string;
+  reason: string;
+}
+
+export function createFollowup(
+  body: CreateFollowupBody,
+): Promise<Followup> {
+  return apiFetch<Followup>("/api/v1/crm/followups", { method: "POST", body });
+}
+
+export function completeFollowup(
+  id: string,
+  version: number,
+  outcome: string,
+): Promise<Followup> {
+  return apiFetch<Followup>(`/api/v1/crm/followups/${id}/complete`, {
+    method: "POST",
+    body: { outcome },
+    headers: ifMatch(version),
+  });
+}
+
+export function cancelFollowup(
+  id: string,
+  version: number,
+  outcome: string,
+): Promise<Followup> {
+  return apiFetch<Followup>(`/api/v1/crm/followups/${id}/cancel`, {
+    method: "POST",
+    body: { outcome },
+    headers: ifMatch(version),
+  });
+}
+
+/** Body for creating an organization (`POST /api/v1/crm/organizations`). */
+export interface CreateOrganizationBody {
+  name: string;
+  industry?: string;
+  size?: string;
+  location?: string;
+  kra_pin?: string;
+  status?: string;
+  owner_person_id?: string;
+}
+
+export function createOrganization(
+  body: CreateOrganizationBody,
+): Promise<CrmOrganization> {
+  return apiFetch<CrmOrganization>("/api/v1/crm/organizations", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateOrganization(
+  id: string,
+  version: number,
+  body: CreateOrganizationBody,
+): Promise<CrmOrganization> {
+  return apiFetch<CrmOrganization>(`/api/v1/crm/organizations/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Body for creating a contact (`POST /api/v1/crm/contacts`). */
+export interface CreateContactBody {
+  organization_id?: string;
+  name: string;
+  role?: string;
+  phones?: string[];
+  emails?: string[];
+  whatsapp_number?: string;
+  consent_marketing?: boolean;
+  consent_whatsapp?: boolean;
+  consent_call_recording?: boolean;
+  consent_source?: string;
+}
+
+export function createContact(
+  body: CreateContactBody,
+): Promise<CrmContact> {
+  return apiFetch<CrmContact>("/api/v1/crm/contacts", { method: "POST", body });
+}
+
+export function updateContact(
+  id: string,
+  version: number,
+  body: CreateContactBody,
+): Promise<CrmContact> {
+  return apiFetch<CrmContact>(`/api/v1/crm/contacts/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Body for creating a proposal (`POST /api/v1/crm/opportunities/{id}/proposals`). */
+export interface CreateProposalBody {
+  scope_summary?: string;
+  line_items?: unknown;
+  price_minor: number;
+  currency: string;
+  discount_minor?: number;
+  valid_until?: string;
+  document_file_id?: string;
+}
+
+export function createProposal(
+  opportunityId: string,
+  body: CreateProposalBody,
+): Promise<{ opportunity: Opportunity; lead: Lead }> {
+  return apiFetch<{ opportunity: Opportunity; lead: Lead }>(
+    `/api/v1/crm/opportunities/${opportunityId}/proposals`,
+    { method: "POST", body },
+  );
+}
+
 // ── contracts (§8.3) ────────────────────────────────────────────────────────
 
 /** Contract lifecycle state (§8.3), in the order the UI offers as filters. */
@@ -1150,6 +1445,29 @@ export interface ContractObligation {
   version: number;
 }
 
+/** A deliverable promised under a contract (§8.3). */
+export interface ContractDeliverable {
+  id: string;
+  contract_id: string;
+  description: string;
+  acceptance_criteria?: string;
+  milestone_id?: string;
+  version: number;
+}
+
+/** A change request to a signed contract (§8.3). */
+export interface ContractChangeRequest {
+  id: string;
+  ref: string;
+  contract_id: string;
+  title?: string;
+  description: string;
+  status: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export type ContractListQuery = {
   status?: string;
   organization_id?: string;
@@ -1173,6 +1491,130 @@ export function listContractObligations(id: string): Promise<ContractObligation[
     `/api/v1/contracts/${id}/obligations`,
     { cache: "no-store" },
   ).then((body) => body.items);
+}
+
+// ── contracts write wrappers (§8.3) ─────────────────────────────────────────
+
+export interface CreateContractBody {
+  organization_id: string;
+  opportunity_id?: string;
+  contract_type: ContractType | string;
+  value_minor?: number;
+  currency?: string;
+  start_at?: string;
+  end_at?: string;
+  payment_terms?: string;
+  renewal_terms?: string;
+}
+
+export function createContract(body: CreateContractBody): Promise<Contract> {
+  return apiFetch<Contract>("/api/v1/contracts", { method: "POST", body });
+}
+
+export function updateContract(
+  id: string,
+  version: number,
+  body: CreateContractBody,
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function setContractStatus(
+  id: string,
+  version: number,
+  body: { status: ContractStatus },
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/status`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function signContract(
+  id: string,
+  version: number,
+  body: { name: string; role: string; method: string },
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/sign`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export interface CreateContractMilestoneBody {
+  title: string;
+  due_at?: string;
+  amount_minor?: number;
+  currency?: string;
+  project_milestone_id?: string;
+}
+
+export function createContractMilestone(
+  contractId: string,
+  body: CreateContractMilestoneBody,
+): Promise<ContractMilestone> {
+  return apiFetch<ContractMilestone>(
+    `/api/v1/contracts/${contractId}/milestones`,
+    { method: "POST", body },
+  );
+}
+
+export interface CreateDeliverableBody {
+  description: string;
+  acceptance_criteria?: string;
+  milestone_id?: string;
+}
+
+export function createDeliverable(
+  contractId: string,
+  body: CreateDeliverableBody,
+): Promise<ContractDeliverable> {
+  return apiFetch<ContractDeliverable>(
+    `/api/v1/contracts/${contractId}/deliverables`,
+    { method: "POST", body },
+  );
+}
+
+export interface CreateObligationBody {
+  party: string;
+  description: string;
+  due_at?: string;
+  recurrence?: string;
+  owner_person_id?: string;
+}
+
+export function createObligation(
+  contractId: string,
+  body: CreateObligationBody,
+): Promise<ContractObligation> {
+  return apiFetch<ContractObligation>(
+    `/api/v1/contracts/${contractId}/obligations`,
+    { method: "POST", body },
+  );
+}
+
+export interface CreateChangeRequestBody {
+  requested_by: string;
+  description: string;
+  effort_impact: string;
+  price_impact_minor?: number;
+  currency?: string;
+  deadline_impact_days?: number;
+}
+
+export function createChangeRequest(
+  body: CreateChangeRequestBody,
+): Promise<ContractChangeRequest> {
+  return apiFetch<ContractChangeRequest>(
+    "/api/v1/contracts/change-requests",
+    { method: "POST", body },
+  );
 }
 
 // ── finance (§8.4) ──────────────────────────────────────────────────────────
@@ -1906,6 +2348,173 @@ export function updateRecurringCost(
   });
 }
 
+// ── approvals (§6.3) ────────────────────────────────────────────────────────
+
+export const APPROVAL_STATUSES = [
+  "requested",
+  "pending",
+  "approved",
+  "declined",
+  "escalated",
+  "cancelled",
+  "expired",
+] as const;
+export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
+
+export interface Approval {
+  id: string;
+  ref: string;
+  entity_type: string;
+  entity_id: string;
+  requested_by: string;
+  requested_by_name?: string;
+  amount_minor: number;
+  currency: string;
+  approver_role?: string;
+  approver_id?: string;
+  approvals_required: number;
+  status: ApprovalStatus;
+  policy_ref?: string;
+  due_at?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApprovalPolicy {
+  id: string;
+  decision_type: string;
+  min_amount_minor?: number;
+  max_amount_minor?: number;
+  currency?: string;
+  approver_rule: string;
+  effective_from: string;
+  effective_to?: string;
+}
+
+export interface ApprovalListQuery {
+  status?: string;
+  entity_type?: string;
+  entity_id?: string;
+  limit?: number;
+  cursor?: string;
+  [key: string]: QueryValue;
+}
+
+export interface CreateApprovalBody {
+  entity_type: string;
+  entity_id: string;
+  amount_minor: number;
+  currency: string;
+  approver_role: string;
+  approver_id?: string;
+  approvals_required?: number;
+  policy_ref?: string;
+  due_at?: string;
+}
+
+export interface DecideApprovalBody {
+  approve: boolean;
+  reason?: string;
+}
+
+export interface EscalateApprovalBody {
+  to_role: string;
+  to_person_id?: string;
+  reason?: string;
+}
+
+/** List approvals pending for the viewer's role. */
+export function listPendingApprovals(
+  query: ApprovalListQuery = {},
+): Promise<Page<Approval>> {
+  return apiFetch<Page<Approval>>("/api/v1/approvals/pending", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** List approvals requested by the viewer. */
+export function listMyRequestedApprovals(
+  query: ApprovalListQuery = {},
+): Promise<Page<Approval>> {
+  return apiFetch<Page<Approval>>("/api/v1/approvals/mine", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Get one approval. */
+export function getApproval(id: string): Promise<Approval> {
+  return apiFetch<Approval>(`/api/v1/approvals/${id}`, {
+    cache: "no-store",
+  });
+}
+
+/** Request a new approval. */
+export function requestApproval(body: CreateApprovalBody): Promise<Approval> {
+  return apiFetch<Approval>("/api/v1/approvals", { method: "POST", body });
+}
+
+/** Approve an approval. */
+export function approveApproval(
+  id: string,
+  version: number,
+  body: { approve: true; reason?: string },
+): Promise<Approval> {
+  return apiFetch<Approval>(`/api/v1/approvals/${id}/approve`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Decline an approval. */
+export function declineApproval(
+  id: string,
+  version: number,
+  body: { approve: false; reason?: string },
+): Promise<Approval> {
+  return apiFetch<Approval>(`/api/v1/approvals/${id}/decline`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Escalate an approval. */
+export function escalateApproval(
+  id: string,
+  version: number,
+  body: EscalateApprovalBody,
+): Promise<Approval> {
+  return apiFetch<Approval>(`/api/v1/approvals/${id}/escalate`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Cancel an approval. */
+export function cancelApproval(
+  id: string,
+  version: number,
+  body: { reason?: string },
+): Promise<Approval> {
+  return apiFetch<Approval>(`/api/v1/approvals/${id}/cancel`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** List approval policies. */
+export function listApprovalPolicies(): Promise<ApprovalPolicy[]> {
+  return apiFetch<{ items: ApprovalPolicy[] }>("/api/v1/approval-policies", {
+    cache: "no-store",
+  }).then((body) => body.items);
+}
+
 // ── settings (§6.7) ─────────────────────────────────────────────────────────
 
 /** One typed configuration value (`core.settings`, §6.7). */
@@ -2124,6 +2733,19 @@ export interface WorkSummary {
   open_escalations: number;
 }
 
+export interface UnitsSummary {
+  units: number;
+  integrations: number;
+  indicators: number;
+}
+
+export interface IntelSummary {
+  decisions: number;
+  risks: number;
+  briefs: number;
+  snapshots: number;
+}
+
 export interface AuditHighlight {
   id: string;
   occurred_at: string;
@@ -2139,11 +2761,64 @@ export interface ExecutiveSummary {
   people: PeopleSummary;
   approvals: ApprovalsSummary;
   work: WorkSummary;
+  units: UnitsSummary;
+  intel: IntelSummary;
   recent_audit: AuditHighlight[];
 }
 
 export function getExecutiveSummary(): Promise<ExecutiveSummary> {
   return apiFetch<ExecutiveSummary>("/api/v1/dashboard/executive", {
+    cache: "no-store",
+  });
+}
+
+// ── daily brief (§8.8) ──────────────────────────────────────────────────────
+
+export interface DailyBrief {
+  generated_at: string;
+  for_date: string;
+  yesterday: DailyBriefYesterday;
+  needs_attention: DailyBriefNeedsAttention;
+  today: DailyBriefToday;
+  decisions: DailyBriefDecision[];
+}
+
+export interface DailyBriefYesterday {
+  deals_won: number;
+  deals_lost: number;
+  payments_received_minor: number;
+  tasks_completed: number;
+  incidents_opened: number;
+  incidents_resolved: number;
+}
+
+export interface DailyBriefNeedsAttention {
+  overdue_tasks: number;
+  overdue_invoices: number;
+  overdue_invoices_minor: number;
+  missed_daily_reports: number;
+  expiring_certificates: number;
+  expiring_domains: number;
+  open_risks: number;
+}
+
+export interface DailyBriefToday {
+  follow_ups_due: number;
+  milestones_due: number;
+  people_absent: number;
+}
+
+export interface DailyBriefDecision {
+  id: string;
+  ref: string;
+  question: string;
+  outcome: string;
+  due_on?: string;
+}
+
+export function getDailyBrief(date?: string): Promise<DailyBrief> {
+  const query = date ? `?date=${date}` : "";
+  return apiFetch<DailyBrief>(`/api/v1/dashboard/executive/daily${query}`, {
     cache: "no-store",
   });
 }
@@ -3170,6 +3845,70 @@ export function updateIndicatorDefinition(
     `/api/v1/units/indicator-definitions/${id}`,
     { method: "PUT", body, headers: ifMatch(version) },
   );
+}
+
+// ── Departments (§8.5) ──────────────────────────────────────────────────────
+
+export interface Department {
+  id: string;
+  name: string;
+  leader_person_id?: string;
+  created_at: string;
+  archived_at?: string;
+}
+
+export interface DepartmentListQuery {
+  limit?: number;
+  cursor?: string;
+  [key: string]: QueryValue;
+}
+
+export interface CreateDepartmentBody {
+  name: string;
+}
+
+export interface UpdateDepartmentBody {
+  name: string;
+}
+
+export function listDepartments(
+  query: DepartmentListQuery = {},
+): Promise<Page<Department>> {
+  return apiFetch<Page<Department>>("/api/v1/people/departments", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getDepartment(id: string): Promise<Department> {
+  return apiFetch<Department>(`/api/v1/people/departments/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function createDepartment(body: CreateDepartmentBody): Promise<Department> {
+  return apiFetch<Department>("/api/v1/people/departments", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateDepartment(
+  id: string,
+  version: number,
+  body: UpdateDepartmentBody,
+): Promise<Department> {
+  return apiFetch<Department>(`/api/v1/people/departments/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function archiveDepartment(id: string): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(`/api/v1/people/departments/${id}`, {
+    method: "DELETE",
+  });
 }
 
 // ── Intel read wrappers (§8.8) ───────────────────────────────────────────────

@@ -11,7 +11,7 @@ import { SignalRefresh } from "@/components/signal-refresh";
 import { cx } from "@/components/ui";
 import { userTopic } from "@/lib/realtime/topics";
 
-import { ALL_LINKS, breadcrumbFor } from "./navigation";
+import { ALL_LINKS, breadcrumbFor, filterLinksByRoles } from "./navigation";
 import { NotificationsBell } from "./notifications-bell";
 import { Sidebar } from "./sidebar";
 
@@ -32,11 +32,14 @@ export function TopBar({
   userId,
   userName,
   userEmail,
+  userRoles,
   escalations,
 }: {
   userId: string;
   userName: string;
   userEmail: string;
+  /** Roles of the current user, used to gate navigation links. */
+  userRoles: string[];
   escalations?: string;
 }) {
   const pathname = usePathname();
@@ -115,12 +118,13 @@ export function TopBar({
           <Sidebar
             userName={userName}
             userEmail={userEmail}
+            userRoles={userRoles}
             escalations={escalations}
             onNavigate={() => setMenuOpen(false)}
           />
         </MobileNav>
       )}
-      {jumpOpen && <QuickJump onClose={() => setJumpOpen(false)} />}
+      {jumpOpen && <QuickJump onClose={() => setJumpOpen(false)} userRoles={userRoles} />}
     </header>
   );
 }
@@ -223,14 +227,14 @@ interface JumpItem {
 }
 
 /** Ctrl/⌘ K: jump to any workspace page or start a common action. */
-function QuickJump({ onClose }: { onClose: () => void }) {
+function QuickJump({ onClose, userRoles }: { onClose: () => void; userRoles: string[] }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
 
   const items = useMemo<JumpItem[]>(() => {
-    const pages = ALL_LINKS.map((link) => ({
+    const pages = filterLinksByRoles(ALL_LINKS, userRoles).map((link) => ({
       label: link.label,
       href: link.href,
       icon: link.icon,

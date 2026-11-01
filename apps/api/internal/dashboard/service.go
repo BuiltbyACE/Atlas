@@ -44,6 +44,14 @@ func (s *Service) Summary(ctx context.Context) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
+	units, err := s.store.Units(ctx)
+	if err != nil {
+		return Summary{}, err
+	}
+	intel, err := s.store.Intel(ctx)
+	if err != nil {
+		return Summary{}, err
+	}
 	recent, err := s.auditStore.List(ctx, audit.Query{}, defaultAuditHighlights, nil)
 	if err != nil {
 		return Summary{}, err
@@ -57,8 +65,20 @@ func (s *Service) Summary(ctx context.Context) (Summary, error) {
 		People:      peopleSummary(people),
 		Approvals:   approvals,
 		Work:        work,
+		Units:       units,
+		Intel:       intel,
 		RecentAudit: highlights(recent),
 	}, nil
+}
+
+// DailyBrief returns the executive daily brief for the given date (§8.8).
+func (s *Service) DailyBrief(ctx context.Context, date time.Time) (DailyBrief, error) {
+	d, err := s.store.DailyBrief(ctx, date)
+	if err != nil {
+		return DailyBrief{}, err
+	}
+	d.GeneratedAt = s.now().UTC()
+	return d, nil
 }
 
 // peopleSummary fills the known statuses with zero so the tile has a stable

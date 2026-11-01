@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/safaristack/atlas/apps/api/internal/outbox"
 )
 
 // Writer is the intel write model (§8.8). Go owns every rule: once a decision
@@ -14,21 +16,21 @@ type Writer interface {
 	AllocateRef(ctx context.Context, pType string, pYear int) (string, error)
 
 	// Decisions.
-	CreateDecision(ctx context.Context, d Decision) (Decision, error)
-	UpdateDecision(ctx context.Context, d Decision, expectedVersion int) (Decision, error)
-	DecideDecision(ctx context.Context, d Decision, expectedVersion int) (Decision, error)
+	CreateDecision(ctx context.Context, d Decision, ev outbox.Event) (Decision, error)
+	UpdateDecision(ctx context.Context, d Decision, expectedVersion int, ev outbox.Event) (Decision, error)
+	DecideDecision(ctx context.Context, d Decision, expectedVersion int, ev outbox.Event) (Decision, error)
 
 	// Risks.
-	CreateRisk(ctx context.Context, r Risk) (Risk, error)
-	UpdateRisk(ctx context.Context, r Risk, expectedVersion int) (Risk, error)
+	CreateRisk(ctx context.Context, r Risk, ev outbox.Event) (Risk, error)
+	UpdateRisk(ctx context.Context, r Risk, expectedVersion int, ev outbox.Event) (Risk, error)
 
 	// Briefs.
-	CreateBrief(ctx context.Context, b Brief) (Brief, error)
-	UpdateBrief(ctx context.Context, b Brief, expectedVersion int) (Brief, error)
-	DeliverBrief(ctx context.Context, b Brief, expectedVersion int) (Brief, error)
+	CreateBrief(ctx context.Context, b Brief, ev outbox.Event) (Brief, error)
+	UpdateBrief(ctx context.Context, b Brief, expectedVersion int, ev outbox.Event) (Brief, error)
+	DeliverBrief(ctx context.Context, b Brief, expectedVersion int, ev outbox.Event) (Brief, error)
 
 	// Metric snapshots.
-	CreateMetricSnapshot(ctx context.Context, m MetricSnapshot) (MetricSnapshot, error)
+	CreateMetricSnapshot(ctx context.Context, m MetricSnapshot, ev outbox.Event) (MetricSnapshot, error)
 }
 
 var _ Writer = (*PGStore)(nil)
@@ -63,7 +65,7 @@ func nullTextPtr(s string) *string {
 
 // ── decisions ───────────────────────────────────────────────────────────────
 
-func (s *PGStore) CreateDecision(ctx context.Context, d Decision) (Decision, error) {
+func (s *PGStore) CreateDecision(ctx context.Context, d Decision, ev outbox.Event) (Decision, error) {
 	if !validDecisionOutcome(d.Outcome) {
 		d.Outcome = DecisionOpen
 	}
@@ -83,10 +85,13 @@ func (s *PGStore) CreateDecision(ctx context.Context, d Decision) (Decision, err
 	if err != nil {
 		return Decision{}, writeErr("create decision", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return Decision{}, writeErr("write outbox event", err)
+	}
 	return d, nil
 }
 
-func (s *PGStore) UpdateDecision(ctx context.Context, d Decision, expectedVersion int) (Decision, error) {
+func (s *PGStore) UpdateDecision(ctx context.Context, d Decision, expectedVersion int, ev outbox.Event) (Decision, error) {
 	current, err := s.GetDecision(ctx, d.ID)
 	if err != nil {
 		return Decision{}, err
@@ -114,10 +119,13 @@ func (s *PGStore) UpdateDecision(ctx context.Context, d Decision, expectedVersio
 	if err != nil {
 		return Decision{}, writeErr("update decision", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return Decision{}, writeErr("write outbox event", err)
+	}
 	return d, nil
 }
 
-func (s *PGStore) DecideDecision(ctx context.Context, d Decision, expectedVersion int) (Decision, error) {
+func (s *PGStore) DecideDecision(ctx context.Context, d Decision, expectedVersion int, ev outbox.Event) (Decision, error) {
 	current, err := s.GetDecision(ctx, d.ID)
 	if err != nil {
 		return Decision{}, err
@@ -143,12 +151,15 @@ func (s *PGStore) DecideDecision(ctx context.Context, d Decision, expectedVersio
 	if err != nil {
 		return Decision{}, writeErr("decide decision", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return Decision{}, writeErr("write outbox event", err)
+	}
 	return d, nil
 }
 
 // ── risks ───────────────────────────────────────────────────────────────────
 
-func (s *PGStore) CreateRisk(ctx context.Context, r Risk) (Risk, error) {
+func (s *PGStore) CreateRisk(ctx context.Context, r Risk, ev outbox.Event) (Risk, error) {
 	if !validRiskKind(r.Kind) {
 		return Risk{}, withCode(errInvalidField("kind"), CodeInvalidRiskKind)
 	}
@@ -174,10 +185,13 @@ func (s *PGStore) CreateRisk(ctx context.Context, r Risk) (Risk, error) {
 	if err != nil {
 		return Risk{}, writeErr("create risk", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return Risk{}, writeErr("write outbox event", err)
+	}
 	return r, nil
 }
 
-func (s *PGStore) UpdateRisk(ctx context.Context, r Risk, expectedVersion int) (Risk, error) {
+func (s *PGStore) UpdateRisk(ctx context.Context, r Risk, expectedVersion int, ev outbox.Event) (Risk, error) {
 	current, err := s.GetRisk(ctx, r.ID)
 	if err != nil {
 		return Risk{}, err
@@ -205,12 +219,15 @@ func (s *PGStore) UpdateRisk(ctx context.Context, r Risk, expectedVersion int) (
 	if err != nil {
 		return Risk{}, writeErr("update risk", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return Risk{}, writeErr("write outbox event", err)
+	}
 	return r, nil
 }
 
 // ── briefs ──────────────────────────────────────────────────────────────────
 
-func (s *PGStore) CreateBrief(ctx context.Context, b Brief) (Brief, error) {
+func (s *PGStore) CreateBrief(ctx context.Context, b Brief, ev outbox.Event) (Brief, error) {
 	ref, err := s.AllocateRef(ctx, "brief", time.Now().UTC().Year())
 	if err != nil {
 		return Brief{}, writeErr("allocate ref", err)
@@ -230,10 +247,13 @@ func (s *PGStore) CreateBrief(ctx context.Context, b Brief) (Brief, error) {
 	if err != nil {
 		return Brief{}, writeErr("create brief", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return Brief{}, writeErr("write outbox event", err)
+	}
 	return b, nil
 }
 
-func (s *PGStore) UpdateBrief(ctx context.Context, b Brief, expectedVersion int) (Brief, error) {
+func (s *PGStore) UpdateBrief(ctx context.Context, b Brief, expectedVersion int, ev outbox.Event) (Brief, error) {
 	current, err := s.GetBrief(ctx, b.ID)
 	if err != nil {
 		return Brief{}, err
@@ -260,10 +280,13 @@ func (s *PGStore) UpdateBrief(ctx context.Context, b Brief, expectedVersion int)
 	if err != nil {
 		return Brief{}, writeErr("update brief", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return Brief{}, writeErr("write outbox event", err)
+	}
 	return b, nil
 }
 
-func (s *PGStore) DeliverBrief(ctx context.Context, b Brief, expectedVersion int) (Brief, error) {
+func (s *PGStore) DeliverBrief(ctx context.Context, b Brief, expectedVersion int, ev outbox.Event) (Brief, error) {
 	current, err := s.GetBrief(ctx, b.ID)
 	if err != nil {
 		return Brief{}, err
@@ -290,13 +313,16 @@ func (s *PGStore) DeliverBrief(ctx context.Context, b Brief, expectedVersion int
 	if err != nil {
 		return Brief{}, writeErr("deliver brief", err)
 	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return Brief{}, writeErr("write outbox event", err)
+	}
 	b.DeliveredAt = &now
 	return b, nil
 }
 
 // ── metric snapshots ────────────────────────────────────────────────────────
 
-func (s *PGStore) CreateMetricSnapshot(ctx context.Context, m MetricSnapshot) (MetricSnapshot, error) {
+func (s *PGStore) CreateMetricSnapshot(ctx context.Context, m MetricSnapshot, ev outbox.Event) (MetricSnapshot, error) {
 	ref, err := s.AllocateRef(ctx, "metric", time.Now().UTC().Year())
 	if err != nil {
 		return MetricSnapshot{}, writeErr("allocate ref", err)
@@ -311,6 +337,9 @@ func (s *PGStore) CreateMetricSnapshot(ctx context.Context, m MetricSnapshot) (M
 		Scan(&m.ID, &m.CreatedAt)
 	if err != nil {
 		return MetricSnapshot{}, writeErr("create metric snapshot", err)
+	}
+	if _, err := outbox.Write(ctx, s.db, ev); err != nil {
+		return MetricSnapshot{}, writeErr("write outbox event", err)
 	}
 	return m, nil
 }

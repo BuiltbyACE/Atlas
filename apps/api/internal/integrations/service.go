@@ -199,6 +199,11 @@ func (s *Service) UpdateIntegration(ctx context.Context, actor uuid.UUID, id uui
 	return updated, nil
 }
 
+// WriteOutboundLog records an outbound call attempt (§8.9).
+func (s *Service) WriteOutboundLog(ctx context.Context, o OutboundLogEntry) (OutboundLogEntry, error) {
+	return s.writer.WriteOutboundLog(ctx, o)
+}
+
 // HandleGitHub processes one GitHub delivery. The signature is verified by the
 // HTTP layer; this method is idempotent by delivery id.
 func (s *Service) HandleGitHub(ctx context.Context, deliveryID, eventType string, body []byte) (Outcome, error) {

@@ -42,10 +42,12 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   alias AtlasOrchestrator.Crm.Handler, as: CrmHandler
   alias AtlasOrchestrator.Dashboard.Handler, as: DashboardHandler
   alias AtlasOrchestrator.Finance.Handler, as: FinanceHandler
+  alias AtlasOrchestrator.Intel.Handler, as: IntelHandler
   alias AtlasOrchestrator.Notifications.Handler, as: NotificationsHandler
   alias AtlasOrchestrator.Outbox.Event
   alias AtlasOrchestrator.People.Handler, as: PeopleHandler
   alias AtlasOrchestrator.Systems.Handler, as: SystemsHandler
+  alias AtlasOrchestrator.Units.Handler, as: UnitsHandler
   alias AtlasOrchestrator.Work.Handler, as: WorkHandler
 
   @doc "Handles one event. Unknown types are logged and ignored, not failed."
@@ -109,6 +111,18 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   # handler reads the payload keys Go wrote (internal/outbox/systems.go).
   def dispatch(%Event{type: "systems." <> _} = event) do
     SystemsHandler.handle_event(event)
+  end
+
+  # Units oversight (§8.7): nudge the units board and the dashboard. The handler
+  # reads the payload keys Go wrote (internal/outbox/units.go).
+  def dispatch(%Event{type: "units." <> _} = event) do
+    UnitsHandler.handle_event(event)
+  end
+
+  # Executive intelligence (§8.8): nudge the intel board and the dashboard. The
+  # handler reads the payload keys Go wrote (internal/outbox/intel.go).
+  def dispatch(%Event{type: "intel." <> _} = event) do
+    IntelHandler.handle_event(event)
   end
 
   def dispatch(%Event{type: "core.escalation." <> _} = event) do
