@@ -90,6 +90,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Daily reports", href: "/daily-reports", icon: "clipboard", section: "People", keywords: "report standup", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
       { label: "Departments", href: "/people/departments", icon: "building", section: "People", keywords: "departments units teams", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
       { label: "Onboard new person", href: "/people/onboard", icon: "plus", section: "People", keywords: "invite new hire register", roles: ["ceo_internal", "ceo_commercial", "system_admin", "finance_officer"] },
+      { label: "Reviews", href: "/people/reviews", icon: "clipboard", section: "People", keywords: "performance review rating feedback", roles: ["ceo_internal"] },
     ],
   },
   {

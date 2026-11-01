@@ -297,3 +297,121 @@ func dateOnly(t time.Time) time.Time {
 }
 
 func dateString(t time.Time) string { return t.Format("2006-01-02") }
+
+// ── performance reviews (§8.5, decision D8) ───────────────────────────────
+
+// ReviewStatus mirrors the people.reviews.status check constraint.
+type ReviewStatus string
+
+const (
+	ReviewDraft     ReviewStatus = "draft"
+	ReviewSubmitted ReviewStatus = "submitted"
+	ReviewApproved  ReviewStatus = "approved"
+	ReviewRejected  ReviewStatus = "rejected"
+)
+
+// Valid reports whether s is a known review status.
+func (s ReviewStatus) Valid() bool {
+	switch s {
+	case ReviewDraft, ReviewSubmitted, ReviewApproved, ReviewRejected:
+		return true
+	}
+	return false
+}
+
+// Review is a performance review record (§8.5).
+type Review struct {
+	ID          uuid.UUID
+	PersonID    uuid.UUID    // reviewee
+	ReviewerID  uuid.UUID    // reviewer
+	PeriodStart time.Time    // review period start
+	PeriodEnd   time.Time    // review period end
+	Rating      int          // 1-5
+	Comments    string       // free-form comments
+	Status      ReviewStatus // draft|submitted|approved|rejected
+	Version     int
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// ReviewInput is the payload for creating/updating a review.
+type ReviewInput struct {
+	PersonID    *uuid.UUID `json:"person_id"`
+	ReviewerID  *uuid.UUID `json:"reviewer_id"`
+	PeriodStart *time.Time `json:"period_start"`
+	PeriodEnd   *time.Time `json:"period_end"`
+	Rating      *int       `json:"rating"`
+	Comments    *string    `json:"comments"`
+	Status      *string    `json:"status"`
+}
+
+// ReviewView is the serialised review returned to the client.
+type ReviewView struct {
+	ID          string     `json:"id"`
+	PersonID    string     `json:"person_id"`
+	ReviewerID  string     `json:"reviewer_id"`
+	PeriodStart string     `json:"period_start"`
+	PeriodEnd   string     `json:"period_end"`
+	Rating      int        `json:"rating"`
+	Comments    string     `json:"comments"`
+	Status      string     `json:"status"`
+	Version     int        `json:"version"`
+	CreatedAt   string     `json:"created_at"`
+	UpdatedAt   string     `json:"updated_at"`
+}
+
+// viewReview serialises a Review for the client.
+func viewReview(r Review) ReviewView {
+	return ReviewView{
+		ID:          r.ID.String(),
+		PersonID:    r.PersonID.String(),
+		ReviewerID:  r.ReviewerID.String(),
+		PeriodStart: dateString(r.PeriodStart),
+		PeriodEnd:   dateString(r.PeriodEnd),
+		Rating:      r.Rating,
+		Comments:    r.Comments,
+		Status:      string(r.Status),
+		Version:     r.Version,
+		CreatedAt:   r.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:   r.UpdatedAt.Format(time.RFC3339),
+	}
+}
+
+// validateReview normalises a review input.
+func validateReview(in ReviewInput) (ReviewInput, error) {
+	if in.PersonID == nil || *in.PersonID == uuid.Nil {
+		return in, fmt.Errorf("%w: person_id is required", ErrInvalid)
+	}
+	if in.ReviewerID == nil || *in.ReviewerID == uuid.Nil {
+		return in, fmt.Errorf("%w: reviewer_id is required", ErrInvalid)
+	}
+	if in.PeriodStart == nil || in.PeriodStart.IsZero() {
+		return in, fmt.Errorf("%w: period_start is required", ErrInvalid)
+	}
+	if in.PeriodEnd == nil || in.PeriodEnd.IsZero() {
+		return in, fmt.Errorf("%w: period_end is required", ErrInvalid)
+	}
+	in.PeriodStart = ptr(dateOnly(*in.PeriodStart))
+	in.PeriodEnd = ptr(dateOnly(*in.PeriodEnd))
+	if in.PeriodEnd.Before(*in.PeriodStart) {
+		return in, fmt.Errorf("%w: period_end is before period_start", ErrInvalid)
+	}
+	if in.Rating == nil || *in.Rating < 1 || *in.Rating > 5 {
+		return in, fmt.Errorf("%w: rating must be between 1 and 5", ErrInvalid)
+	}
+	if in.Comments != nil {
+		in.Comments = ptr(trim(*in.Comments))
+	}
+	if in.Status != nil {
+		st := ReviewStatus(*in.Status)
+		if !st.Valid() {
+			return in, fmt.Errorf("%w: status must be draft|submitted|approved|rejected", ErrInvalid)
+		}
+	} else {
+		st := ReviewDraft
+		in.Status = ptr(string(st))
+	}
+	return in, nil
+}
+
+func ptr[T any](v T) *T { return &v }

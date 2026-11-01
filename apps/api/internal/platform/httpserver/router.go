@@ -816,6 +816,18 @@ func registerPeople(reg *routing.Registry, h *people.Handler) {
 	reg.Gated("people.person.manage", http.MethodDelete, "/api/v1/people/departments/{id}",
 		"Archive a department", h.ArchiveDepartment)
 
+	// Performance reviews (§8.5, decision D8).
+	reg.Gated("people.review.read", http.MethodGet, "/api/v1/people/reviews",
+		"List performance reviews", h.ListReviews)
+	reg.Gated("people.review.read", http.MethodGet, "/api/v1/people/reviews/{id}",
+		"Get a performance review", h.GetReview)
+	reg.Gated("people.review.manage", http.MethodPost, "/api/v1/people/reviews",
+		"Create a performance review", h.CreateReview)
+	reg.Gated("people.review.manage", http.MethodPut, "/api/v1/people/reviews/{id}",
+		"Update a performance review", h.UpdateReview)
+	reg.Gated("people.review.manage", http.MethodDelete, "/api/v1/people/reviews/{id}",
+		"Delete a performance review", h.DeleteReview)
+
 	// Session activity: who is signed in now, and how long they have been. This
 	// is derived read-only from the auth session rows (§8.5).
 	reg.Gated("people.session.read", http.MethodGet, "/api/v1/people/presence",

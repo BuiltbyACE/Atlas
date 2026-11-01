@@ -16,6 +16,7 @@ const (
 	EntityDepartment   = "people.department"
 	EntityLeaveRequest = "people.leave_request"
 	EntityPerson       = "people.person"
+	EntityReview       = "people.review"
 )
 
 // Service coordinates the people module: validation, state transitions,
@@ -145,4 +146,88 @@ func (s *Service) ArchiveDepartment(ctx context.Context, actor uuid.UUID, id uui
 	}
 	s.writeAudit(ctx, actor, "people.department.archived", EntityDepartment, id, nil, nil)
 	return nil
+}
+
+// ── performance reviews ─────────────────────────────────────────────────
+
+// CreateReview inserts a new review (§8.5, D8).
+func (s *Service) CreateReview(ctx context.Context, actor uuid.UUID, in ReviewInput) (Review, error) {
+	normalised, err := validateReview(in)
+	if err != nil {
+		return Review{}, err
+	}
+	r := Review{
+		ID:          uuid.New(),
+		PersonID:    *normalised.PersonID,
+		ReviewerID:  *normalised.ReviewerID,
+		PeriodStart: *normalised.PeriodStart,
+		PeriodEnd:   *normalised.PeriodEnd,
+		Rating:      *normalised.Rating,
+		Comments:    normalised.CommentsOrEmpty(),
+		Status:      ReviewStatus(*normalised.Status),
+	}
+	r, err = s.store.CreateReview(ctx, r, nil)
+	if err != nil {
+		return Review{}, err
+	}
+	s.writeAudit(ctx, actor, "people.review.created", EntityReview, r.ID, nil,
+		map[string]any{"person_id": r.PersonID, "rating": r.Rating, "status": r.Status})
+	return r, nil
+}
+
+// GetReview returns one review by ID.
+func (s *Service) GetReview(ctx context.Context, id uuid.UUID) (*Review, error) {
+	return s.store.GetReview(ctx, id)
+}
+
+// ListReviews returns a page of reviews, optionally filtered by person/status.
+func (s *Service) ListReviews(ctx context.Context, q ListReviewsQuery, limit int, before *Cursor) ([]Review, error) {
+	return s.store.ListReviews(ctx, q, limit, before)
+}
+
+// UpdateReview updates a review with optimistic concurrency (§6.6).
+func (s *Service) UpdateReview(ctx context.Context, actor uuid.UUID, id uuid.UUID, expectedVersion int, in ReviewInput) (Review, error) {
+	normalised, err := validateReview(in)
+	if err != nil {
+		return Review{}, err
+	}
+	_, err = s.store.GetReview(ctx, id)
+	if err != nil {
+		return Review{}, err
+	}
+	r := Review{
+		ID:          id,
+		PersonID:    *normalised.PersonID,
+		ReviewerID:  *normalised.ReviewerID,
+		PeriodStart: *normalised.PeriodStart,
+		PeriodEnd:   *normalised.PeriodEnd,
+		Rating:      *normalised.Rating,
+		Comments:    normalised.CommentsOrEmpty(),
+		Status:      ReviewStatus(*normalised.Status),
+		Version:     expectedVersion,
+	}
+	r, err = s.store.UpdateReview(ctx, r, expectedVersion, nil)
+	if err != nil {
+		return Review{}, err
+	}
+	s.writeAudit(ctx, actor, "people.review.updated", EntityReview, r.ID, nil,
+		map[string]any{"person_id": r.PersonID, "rating": r.Rating, "status": r.Status})
+	return r, nil
+}
+
+// DeleteReview deletes a review with optimistic concurrency (§6.6).
+func (s *Service) DeleteReview(ctx context.Context, actor uuid.UUID, id uuid.UUID, expectedVersion int) error {
+	if err := s.store.DeleteReview(ctx, id, expectedVersion, nil); err != nil {
+		return err
+	}
+	s.writeAudit(ctx, actor, "people.review.deleted", EntityReview, id, nil, nil)
+	return nil
+}
+
+// CommentsOrEmpty returns the comments string or "" if nil.
+func (in ReviewInput) CommentsOrEmpty() string {
+	if in.Comments == nil {
+		return ""
+	}
+	return *in.Comments
 }

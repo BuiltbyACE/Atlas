@@ -596,6 +596,192 @@ func (h *Handler) ArchiveDepartment(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "archived"})
 }
 
+// ── performance reviews ─────────────────────────────────────────────────
+
+// reviewView is one performance review record.
+type reviewView struct {
+	ID          string `json:"id"`
+	PersonID    string `json:"person_id"`
+	ReviewerID  string `json:"reviewer_id"`
+	PeriodStart string `json:"period_start"`
+	PeriodEnd   string `json:"period_end"`
+	Rating      int    `json:"rating"`
+	Comments    string `json:"comments"`
+	Status      string `json:"status"`
+	Version     int    `json:"version"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// reviewReq is the create/update request body for a review.
+type reviewReq struct {
+	PersonID    *uuid.UUID `json:"person_id"`
+	ReviewerID  *uuid.UUID `json:"reviewer_id"`
+	PeriodStart *string    `json:"period_start"`
+	PeriodEnd   *string    `json:"period_end"`
+	Rating      *int       `json:"rating"`
+	Comments    *string    `json:"comments"`
+	Status      *string    `json:"status"`
+}
+
+// reviewViewOf converts a Review to its view.
+func reviewViewOf(r Review) reviewView {
+	return reviewView{
+		ID:          r.ID.String(),
+		PersonID:    r.PersonID.String(),
+		ReviewerID:  r.ReviewerID.String(),
+		PeriodStart: dateString(r.PeriodStart),
+		PeriodEnd:   dateString(r.PeriodEnd),
+		Rating:      r.Rating,
+		Comments:    r.Comments,
+		Status:      string(r.Status),
+		Version:     r.Version,
+		CreatedAt:   r.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:   r.UpdatedAt.Format(time.RFC3339),
+	}
+}
+
+// parseReviewReq converts an HTTP request body into a service ReviewInput.
+func parseReviewReq(req reviewReq) ReviewInput {
+	in := ReviewInput{
+		PersonID: req.PersonID,
+		ReviewerID: req.ReviewerID,
+		Rating:   req.Rating,
+		Comments: req.Comments,
+		Status:   req.Status,
+	}
+	if req.PeriodStart != nil {
+		if t, err := time.Parse("2006-01-02", *req.PeriodStart); err == nil {
+			in.PeriodStart = &t
+		}
+	}
+	if req.PeriodEnd != nil {
+		if t, err := time.Parse("2006-01-02", *req.PeriodEnd); err == nil {
+			in.PeriodEnd = &t
+		}
+	}
+	return in
+}
+
+// ListReviews handles GET /api/v1/people/reviews.
+func (h *Handler) ListReviews(w http.ResponseWriter, r *http.Request) {
+	q := ListReviewsQuery{}
+	if personID := r.URL.Query().Get("person_id"); personID != "" {
+		if id, err := uuid.Parse(personID); err == nil {
+			q.PersonID = &id
+		}
+	}
+	if status := r.URL.Query().Get("status"); status != "" {
+		st := ReviewStatus(status)
+		q.Status = &st
+	}
+	limit, cursor, err := httpx.ParsePage(r)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	before, err := cursorOrNil(cursor)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	reviews, err := h.service.ListReviews(r.Context(), q, limit, before)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	views := make([]reviewView, 0, len(reviews))
+	for _, rv := range reviews {
+		views = append(views, reviewViewOf(rv))
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
+}
+
+// GetReview handles GET /api/v1/people/reviews/{id}.
+func (h *Handler) GetReview(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.idParam(w, r, "id", "review")
+	if !ok {
+		return
+	}
+	review, err := h.service.GetReview(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, reviewViewOf(*review))
+}
+
+// CreateReview handles POST /api/v1/people/reviews.
+func (h *Handler) CreateReview(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	var req reviewReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	review, err := h.service.CreateReview(r.Context(), principal.PersonID, parseReviewReq(req))
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(review.Version))
+	httpx.WriteJSON(w, http.StatusCreated, reviewViewOf(review))
+}
+
+// UpdateReview handles PUT /api/v1/people/reviews/{id}.
+func (h *Handler) UpdateReview(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "review")
+	if !ok {
+		return
+	}
+	current, err := h.service.GetReview(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	var req reviewReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	review, err := h.service.UpdateReview(r.Context(), principal.PersonID, id, current.Version, parseReviewReq(req))
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.SetETag(w, int64(review.Version))
+	httpx.WriteJSON(w, http.StatusOK, reviewViewOf(review))
+}
+
+// DeleteReview handles DELETE /api/v1/people/reviews/{id}.
+func (h *Handler) DeleteReview(w http.ResponseWriter, r *http.Request) {
+	principal, ok := h.principal(w, r)
+	if !ok {
+		return
+	}
+	id, ok := h.idParam(w, r, "id", "review")
+	if !ok {
+		return
+	}
+	current, err := h.service.GetReview(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := h.service.DeleteReview(r.Context(), principal.PersonID, id, current.Version); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 // ── session activity ────────────────────────────────────────────────────────
 
 // GetPresence handles GET /api/v1/people/presence: who is signed in and active

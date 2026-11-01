@@ -58,6 +58,13 @@ type Store interface {
 	// Session activity (§8.5): who is signed in, and for how long.
 	ListActiveSessions(ctx context.Context, since time.Time) ([]Session, error)
 	ListSessions(ctx context.Context, q ListSessionsQuery, limit int, before *Cursor) ([]Session, error)
+
+	// Performance reviews (§8.5, decision D8).
+	CreateReview(ctx context.Context, r Review, ev *outbox.Event) (Review, error)
+	GetReview(ctx context.Context, id uuid.UUID) (*Review, error)
+	ListReviews(ctx context.Context, q ListReviewsQuery, limit int, before *Cursor) ([]Review, error)
+	UpdateReview(ctx context.Context, r Review, expectedVersion int, ev *outbox.Event) (Review, error)
+	DeleteReview(ctx context.Context, id uuid.UUID, expectedVersion int, ev *outbox.Event) error
 }
 
 // PGStore implements Store over Postgres.
@@ -972,6 +979,142 @@ func (s *PGStore) ListActiveSessions(ctx context.Context, since time.Time) ([]Se
 		out = append(out, sess)
 	}
 	return out, rows.Err()
+}
+
+// ── performance reviews ─────────────────────────────────────────────────
+
+// ListReviewsQuery filters a review listing.
+type ListReviewsQuery struct {
+	PersonID *uuid.UUID
+	Status   *ReviewStatus
+	Reviewer *uuid.UUID
+}
+
+const reviewCols = `
+	r.id, r.person_id, r.reviewer_id, r.period_start, r.period_end,
+	r.rating, r.comments, r.status, r.version, r.created_at, r.updated_at`
+
+func scanReview(row rowScanner) (Review, error) {
+	var r Review
+	var periodStart, periodEnd time.Time
+	if err := row.Scan(
+		&r.ID, &r.PersonID, &r.ReviewerID, &periodStart, &periodEnd,
+		&r.Rating, &r.Comments, &r.Status, &r.Version,
+		&r.CreatedAt, &r.UpdatedAt,
+	); err != nil {
+		return Review{}, fmt.Errorf("people: scan review: %w", err)
+	}
+	r.PeriodStart = dateOnly(periodStart)
+	r.PeriodEnd = dateOnly(periodEnd)
+	if r.Status == "" {
+		r.Status = ReviewDraft
+	}
+	return r, nil
+}
+
+// CreateReview inserts a new review and appends its outbox event.
+func (s *PGStore) CreateReview(ctx context.Context, r Review, ev *outbox.Event) (Review, error) {
+	err := s.db.QueryRow(ctx, `
+		INSERT INTO people.reviews
+			(id, person_id, reviewer_id, period_start, period_end,
+			 rating, comments, status, version, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, now(), now())
+		RETURNING id, version, created_at, updated_at`,
+		r.ID, r.PersonID, r.ReviewerID, r.PeriodStart, r.PeriodEnd,
+		r.Rating, r.Comments, r.Status,
+	).Scan(&r.ID, &r.Version, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		return Review{}, fmt.Errorf("people: create review: %w", err)
+	}
+	return r, nil
+}
+
+// GetReview returns a single review by id.
+func (s *PGStore) GetReview(ctx context.Context, id uuid.UUID) (*Review, error) {
+	r, err := scanReview(s.db.QueryRow(ctx, `
+		SELECT ` + reviewCols + ` FROM people.reviews WHERE id = $1`, id))
+	if err != nil {
+		return nil, fmt.Errorf("people: get review: %w", err)
+	}
+	return &r, nil
+}
+
+// ListReviews returns a keyset page of reviews, newest first.
+func (s *PGStore) ListReviews(ctx context.Context, q ListReviewsQuery, limit int, before *Cursor) ([]Review, error) {
+	where := make([]string, 0, 4)
+	args := make([]any, 0, 6)
+	add := func(clause string, v any) {
+		args = append(args, v)
+		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	if q.PersonID != nil {
+		add("r.person_id = $%d", *q.PersonID)
+	}
+	if q.Status != nil {
+		add("r.status = $%d", string(*q.Status))
+	}
+	if q.Reviewer != nil {
+		add("r.reviewer_id = $%d", *q.Reviewer)
+	}
+	if before != nil {
+		args = append(args, before.At.UTC(), before.ID)
+		where = append(where, fmt.Sprintf("(r.created_at, r.id) < ($%d, $%d)", len(args)-1, len(args)))
+	}
+	args = append(args, limit)
+
+	sql := `SELECT ` + reviewCols + "\nFROM people.reviews r"
+	if len(where) > 0 {
+		sql += " WHERE " + strings.Join(where, " AND ")
+	}
+	sql += fmt.Sprintf(" ORDER BY r.created_at DESC, r.id DESC LIMIT $%d", len(args))
+
+	rows, err := s.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("people: list reviews: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]Review, 0, 8)
+	for rows.Next() {
+		r, err := scanReview(rows)
+		if err != nil {
+			return nil, fmt.Errorf("people: scan review: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UpdateReview updates a review with optimistic concurrency.
+func (s *PGStore) UpdateReview(ctx context.Context, r Review, expectedVersion int, ev *outbox.Event) (Review, error) {
+	err := s.db.QueryRow(ctx, `
+		UPDATE people.reviews
+		SET person_id = $2, reviewer_id = $3, period_start = $4, period_end = $5,
+		    rating = $6, comments = $7, status = $8, version = version + 1,
+		    updated_at = now()
+		WHERE id = $1 AND version = $9
+		RETURNING version, updated_at`,
+		r.ID, r.PersonID, r.ReviewerID, r.PeriodStart, r.PeriodEnd,
+		r.Rating, r.Comments, r.Status, expectedVersion,
+	).Scan(&r.Version, &r.UpdatedAt)
+	if err != nil {
+		return Review{}, fmt.Errorf("people: update review: %w", err)
+	}
+	return r, nil
+}
+
+// DeleteReview deletes a review with optimistic concurrency.
+func (s *PGStore) DeleteReview(ctx context.Context, id uuid.UUID, expectedVersion int, ev *outbox.Event) error {
+	result, err := s.db.Exec(ctx, `
+		DELETE FROM people.reviews
+		WHERE id = $1 AND version = $2`, id, expectedVersion)
+	if err != nil {
+		return fmt.Errorf("people: delete review: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
 }
 
 // ListSessions returns a keyset page of sessions, newest activity first. From

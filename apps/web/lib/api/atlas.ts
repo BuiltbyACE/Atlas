@@ -3985,6 +3985,89 @@ export function archiveDepartment(id: string): Promise<{ status: string }> {
   });
 }
 
+// ── Performance reviews (§8.5, decision D8) ───────────────────────────────
+
+export interface Review {
+  id: string;
+  person_id: string;
+  reviewer_id: string;
+  period_start: string;
+  period_end: string;
+  rating: number;
+  comments: string;
+  status: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReviewListQuery {
+  limit?: number;
+  cursor?: string;
+  person_id?: string;
+  status?: string;
+  [key: string]: QueryValue;
+}
+
+export interface CreateReviewBody {
+  person_id: string;
+  reviewer_id: string;
+  period_start: string;
+  period_end: string;
+  rating: number;
+  comments?: string;
+  status?: string;
+}
+
+export interface UpdateReviewBody {
+  person_id?: string;
+  reviewer_id?: string;
+  period_start?: string;
+  period_end?: string;
+  rating?: number;
+  comments?: string;
+  status?: string;
+}
+
+export function listReviews(query: ReviewListQuery = {}): Promise<Page<Review>> {
+  return apiFetch<Page<Review>>("/api/v1/people/reviews", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getReview(id: string): Promise<Review> {
+  return apiFetch<Review>(`/api/v1/people/reviews/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function createReview(body: CreateReviewBody): Promise<Review> {
+  return apiFetch<Review>("/api/v1/people/reviews", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateReview(
+  id: string,
+  version: number,
+  body: UpdateReviewBody,
+): Promise<Review> {
+  return apiFetch<Review>(`/api/v1/people/reviews/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function deleteReview(id: string, version: number): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(`/api/v1/people/reviews/${id}`, {
+    method: "DELETE",
+    headers: ifMatch(version),
+  });
+}
+
 // ── Intel read wrappers (§8.8) ───────────────────────────────────────────────
 
 export const DECISION_OUTCOMES = ["open", "approved", "rejected", "deferred"] as const;
