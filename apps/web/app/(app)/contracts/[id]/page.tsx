@@ -24,8 +24,13 @@ import {
   listContractMilestones,
   listContractObligations,
   listOrganizations,
+  approveContract,
+  activateContract,
+  sendContract,
   setContractStatus,
   signContract,
+  submitContract,
+  terminateContract,
   type Contract,
   type ContractDeliverable,
   type ContractMilestone,
@@ -350,6 +355,44 @@ function ContractEditor({
     }
   }
 
+  async function onLifecycle(action: string) {
+    const updated = await run(async () => {
+      switch (action) {
+        case "submit":
+          return submitContract(contract.id, contract.version);
+        case "approve":
+          return approveContract(contract.id, contract.version);
+        case "send":
+          return sendContract(contract.id, contract.version);
+        case "activate":
+          return activateContract(contract.id, contract.version);
+        case "terminate":
+          return terminateContract(contract.id, contract.version);
+        default:
+          return null;
+      }
+    });
+    if (updated) {
+      reset();
+    }
+  }
+
+  // Lifecycle actions available based on current status
+  const lifecycleActions: { label: string; action: string; variant: string }[] = [];
+  if (contract.status === "draft") {
+    lifecycleActions.push({ label: "Submit for review", action: "submit", variant: "primary" });
+  } else if (contract.status === "internal_review") {
+    lifecycleActions.push({ label: "Approve", action: "approve", variant: "primary" });
+  } else if (contract.status === "approved") {
+    lifecycleActions.push({ label: "Send to client", action: "send", variant: "primary" });
+  } else if (contract.status === "sent") {
+    lifecycleActions.push({ label: "Sign contract", action: "sign", variant: "primary" });
+  } else if (contract.status === "signed") {
+    lifecycleActions.push({ label: "Activate", action: "activate", variant: "primary" });
+  } else if (contract.status === "active") {
+    lifecycleActions.push({ label: "Terminate", action: "terminate", variant: "danger" });
+  }
+
   return (
     <Card title="Manage contract">
       {problem && <ProblemNotice error={problem} title="The contract wasn't updated" />}
@@ -372,29 +415,40 @@ function ContractEditor({
           </Select>
         </Field>
 
-        {!isSigned && (
-          <div className="flex items-end gap-2 pt-4">
-            <Button type="submit" variant="primary" disabled={busy}>
-              {busy ? "Saving…" : "Save status"}
-            </Button>
+        <div className="pt-4 border-t border-line">
+          <p className="text-[12px] font-medium text-night mb-3">Lifecycle actions</p>
+          <div className="flex flex-wrap gap-2">
+            {lifecycleActions.map((action) => (
+              <Button
+                key={action.action}
+                type="button"
+                variant={action.variant as any}
+                onClick={() => onLifecycle(action.action)}
+                disabled={busy}
+              >
+                {busy ? "Processing…" : action.label}
+              </Button>
+            ))}
+            {!isSigned && contract.status === "sent" && (
+              <Button
+                type="button"
+                variant="primary"
+                onClick={onSign}
+                disabled={busy}
+              >
+                {busy ? "Signing…" : "Sign contract"}
+              </Button>
+            )}
             <Button
-              type="button"
-              variant="primary"
-              onClick={onSign}
+              type="submit"
+              variant="secondary"
               disabled={busy}
+              className="ml-auto"
             >
-              {busy ? "Signing…" : "Sign contract"}
-            </Button>
-          </div>
-        )}
-
-        {isSigned && (
-          <div className="flex items-end gap-2 pt-4">
-            <Button type="submit" variant="primary" disabled={busy}>
               {busy ? "Saving…" : "Save status"}
             </Button>
           </div>
-        )}
+        </div>
       </form>
     </Card>
   );

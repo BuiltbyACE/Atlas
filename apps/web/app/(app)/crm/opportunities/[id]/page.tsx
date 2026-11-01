@@ -19,6 +19,7 @@ import {
   Th,
 } from "@/components/ui";
 import {
+  createProposal,
   getOpportunity,
   listLeads,
   listOpportunities,
@@ -248,6 +249,20 @@ function OpportunityEditor({
     }
   }
 
+  async function onCreateProposal(event: React.MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    const created = await run(async () => {
+      return createProposal(opportunity.id, {
+        scope_summary: "",
+        price_minor: 0,
+        currency: opportunity.currency,
+      });
+    });
+    if (created) {
+      reset();
+    }
+  }
+
   return (
     <Card title="Manage opportunity">
       {problem && <ProblemNotice error={problem} title="The opportunity wasn't updated" />}
@@ -288,6 +303,14 @@ function OpportunityEditor({
               disabled={busy}
             >
               Mark as lost
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={onCreateProposal}
+              disabled={busy}
+            >
+              {busy ? "Creating…" : "Create proposal"}
             </Button>
           </div>
         )}

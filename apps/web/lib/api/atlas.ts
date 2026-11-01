@@ -1107,11 +1107,21 @@ export function listFollowups(query: FollowupListQuery = {}): Promise<Page<Follo
   });
 }
 
+export function getFollowup(id: string): Promise<Followup> {
+  return apiFetch<Followup>(`/api/v1/crm/followups/${id}`, { cache: "no-store" });
+}
+
 export function listInteractions(
   query: InteractionListQuery = {},
 ): Promise<Page<CrmInteraction>> {
   return apiFetch<Page<CrmInteraction>>("/api/v1/crm/interactions", {
     query,
+    cache: "no-store",
+  });
+}
+
+export function getInteraction(id: string): Promise<CrmInteraction> {
+  return apiFetch<CrmInteraction>(`/api/v1/crm/interactions/${id}`, {
     cache: "no-store",
   });
 }
@@ -1375,6 +1385,41 @@ export interface CreateProposalBody {
   discount_minor?: number;
   valid_until?: string;
   document_file_id?: string;
+}
+
+/** A priced offer against an opportunity (§8.1). */
+export interface Proposal {
+  id: string;
+  ref: string;
+  opportunity_id: string;
+  version_no: number;
+  scope_summary?: string;
+  line_items?: unknown;
+  price_minor: number;
+  currency: string;
+  discount_minor?: number;
+  valid_until?: string;
+  document_file_id?: string;
+  status: ProposalStatus | string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
+
+export const PROPOSAL_STATUSES = [
+  "draft",
+  "sent",
+  "accepted",
+  "declined",
+  "expired",
+] as const;
+
+export function getProposal(id: string): Promise<Proposal> {
+  return apiFetch<Proposal>(`/api/v1/crm/proposals/${id}`, {
+    cache: "no-store",
+  });
 }
 
 export function createProposal(
@@ -1646,6 +1691,118 @@ export function createChangeRequest(
     "/api/v1/contracts/change-requests",
     { method: "POST", body },
   );
+}
+
+/** A service level agreement term (§8.3). */
+export interface ContractSLATerm {
+  id: string;
+  contract_id: string;
+  metric: string;
+  target: string;
+  measurement_window: string;
+  system_ids: string[];
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export function listContractSLATerms(
+  contractId: string,
+): Promise<ContractSLATerm[]> {
+  return apiFetch<{ items: ContractSLATerm[] }>(
+    `/api/v1/contracts/${contractId}/sla-terms`,
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+export function createContractSLATerm(
+  contractId: string,
+  body: { metric: string; target: string; measurement_window?: string; system_ids?: string[] },
+): Promise<ContractSLATerm> {
+  return apiFetch<ContractSLATerm>(
+    `/api/v1/contracts/${contractId}/sla-terms`,
+    { method: "POST", body },
+  );
+}
+
+export function listContractChangeRequests(
+  contractId: string,
+): Promise<ContractChangeRequest[]> {
+  return apiFetch<{ items: ContractChangeRequest[] }>(
+    `/api/v1/contracts/${contractId}/change-requests`,
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+export function approveContractChangeRequest(
+  id: string,
+  reason?: string,
+): Promise<ContractChangeRequest> {
+  return apiFetch<ContractChangeRequest>(
+    `/api/v1/change-requests/${id}/approve`,
+    { method: "POST", body: { reason } },
+  );
+}
+
+export function rejectContractChangeRequest(
+  id: string,
+  reason?: string,
+): Promise<ContractChangeRequest> {
+  return apiFetch<ContractChangeRequest>(
+    `/api/v1/change-requests/${id}/reject`,
+    { method: "POST", body: { reason } },
+  );
+}
+
+/** Contract lifecycle transitions (§8.3). */
+export function submitContract(
+  id: string,
+  version: number,
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/submit`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function approveContract(
+  id: string,
+  version: number,
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/approve`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function sendContract(
+  id: string,
+  version: number,
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/send`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function activateContract(
+  id: string,
+  version: number,
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/activate`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function terminateContract(
+  id: string,
+  version: number,
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/terminate`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
 }
 
 // ── finance (§8.4) ──────────────────────────────────────────────────────────
