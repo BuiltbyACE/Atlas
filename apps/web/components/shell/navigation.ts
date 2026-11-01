@@ -159,5 +159,10 @@ export function breadcrumbFor(
   trail.push({ label: link.label, href: link.href });
   if (pathname.startsWith("/work/projects/")) trail.push({ label: "Project" });
   else if (pathname.startsWith("/work/tasks/")) trail.push({ label: "Task" });
+  else if (pathname.startsWith("/crm/leads/")) trail.push({ label: "Lead" });
+  else if (pathname.startsWith("/crm/contacts/")) trail.push({ label: "Contact" });
+  else if (pathname.startsWith("/crm/organizations/")) trail.push({ label: "Organization" });
+  else if (pathname.startsWith("/crm/opportunities/")) trail.push({ label: "Opportunity" });
+  else if (pathname.startsWith("/contracts/")) trail.push({ label: "Contract" });
   return trail;
 }

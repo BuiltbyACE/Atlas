@@ -1055,11 +1055,21 @@ export function listLeads(query: LeadListQuery = {}): Promise<Page<Lead>> {
   return apiFetch<Page<Lead>>("/api/v1/crm/leads", { query, cache: "no-store" });
 }
 
+export function getLead(id: string): Promise<Lead> {
+  return apiFetch<Lead>(`/api/v1/crm/leads/${id}`, { cache: "no-store" });
+}
+
 export function listOpportunities(
   query: OpportunityListQuery = {},
 ): Promise<Page<Opportunity>> {
   return apiFetch<Page<Opportunity>>("/api/v1/crm/opportunities", {
     query,
+    cache: "no-store",
+  });
+}
+
+export function getOpportunity(id: string): Promise<Opportunity> {
+  return apiFetch<Opportunity>(`/api/v1/crm/opportunities/${id}`, {
     cache: "no-store",
   });
 }
@@ -1073,11 +1083,21 @@ export function listOrganizations(
   });
 }
 
+export function getOrganization(id: string): Promise<CrmOrganization> {
+  return apiFetch<CrmOrganization>(`/api/v1/crm/organizations/${id}`, {
+    cache: "no-store",
+  });
+}
+
 export function listContacts(query: ContactListQuery = {}): Promise<Page<CrmContact>> {
   return apiFetch<Page<CrmContact>>("/api/v1/crm/contacts", {
     query,
     cache: "no-store",
   });
+}
+
+export function getContact(id: string): Promise<CrmContact> {
+  return apiFetch<CrmContact>(`/api/v1/crm/contacts/${id}`, { cache: "no-store" });
 }
 
 export function listFollowups(query: FollowupListQuery = {}): Promise<Page<Followup>> {
@@ -1479,6 +1499,10 @@ export function listContracts(query: ContractListQuery = {}): Promise<Page<Contr
   return apiFetch<Page<Contract>>("/api/v1/contracts", { query, cache: "no-store" });
 }
 
+export function getContract(id: string): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}`, { cache: "no-store" });
+}
+
 export function listContractMilestones(id: string): Promise<ContractMilestone[]> {
   return apiFetch<{ items: ContractMilestone[] }>(
     `/api/v1/contracts/${id}/milestones`,
@@ -1489,6 +1513,13 @@ export function listContractMilestones(id: string): Promise<ContractMilestone[]>
 export function listContractObligations(id: string): Promise<ContractObligation[]> {
   return apiFetch<{ items: ContractObligation[] }>(
     `/api/v1/contracts/${id}/obligations`,
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+export function listContractDeliverables(id: string): Promise<ContractDeliverable[]> {
+  return apiFetch<{ items: ContractDeliverable[] }>(
+    `/api/v1/contracts/${id}/deliverables`,
     { cache: "no-store" },
   ).then((body) => body.items);
 }

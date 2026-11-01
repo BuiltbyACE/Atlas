@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { ButtonLink } from "@/components/form";
 import { Icon } from "@/components/icons";
 import { SignalRefresh } from "@/components/signal-refresh";
@@ -366,7 +368,9 @@ function LeadRow({
     <tr>
       <Td>
         <div className="flex flex-col items-start gap-1">
-          <Tag>{lead.ref}</Tag>
+          <Link href={`/crm/leads/${lead.id}`} className="font-semibold text-night hover:underline">
+            <Tag>{lead.ref}</Tag>
+          </Link>
           {lead.need_summary && (
             <span className="line-clamp-1 max-w-[26ch] text-[13px] text-muted">
               {lead.need_summary}
@@ -428,7 +432,12 @@ function OpportunityRow({
     <tr>
       <Td>
         <div className="flex flex-col items-start gap-1">
-          <span className="font-medium">{opportunity.title}</span>
+          <Link
+            href={`/crm/opportunities/${opportunity.id}`}
+            className="font-semibold text-night hover:underline"
+          >
+            {opportunity.title}
+          </Link>
           <Tag>{opportunity.ref}</Tag>
         </div>
       </Td>
