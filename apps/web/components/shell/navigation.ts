@@ -106,6 +106,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Proposals", href: "/crm/proposals", icon: "document", section: "Revenue", keywords: "priced offers accepted declined", roles: ["ceo_commercial", "ceo_internal", "sales_rep"] },
       { label: "Contracts", href: "/contracts", icon: "document", section: "Revenue", keywords: "agreements signing milestones renewals obligations", roles: ["ceo_commercial", "ceo_internal"] },
       { label: "Finance", href: "/finance", icon: "card", section: "Revenue", keywords: "cash receivables expenses invoices budgets payments profitability recurring", roles: ["ceo_internal", "ceo_commercial", "finance_officer"] },
+      { label: "My Expenses", href: "/finance/my-expenses", icon: "card", section: "Revenue", keywords: "expense claim reimbursement receipts", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
     ],
   },
   {
