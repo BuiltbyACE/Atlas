@@ -41,6 +41,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/httpserver"
 	"github.com/safaristack/atlas/apps/api/internal/platform/logging"
 	"github.com/safaristack/atlas/apps/api/internal/platform/telemetry"
+	"github.com/safaristack/atlas/apps/api/internal/scorecard"
 	"github.com/safaristack/atlas/apps/api/internal/settings"
 	"github.com/safaristack/atlas/apps/api/internal/systems"
 	"github.com/safaristack/atlas/apps/api/internal/units"
@@ -231,6 +232,8 @@ func run() error {
 		Audit:         audit.NewHandler(auditService, logger),
 		Dashboard: dashboard.NewHandler(
 			dashboard.NewService(dashboard.NewPGStore(pool), audit.NewPGStore(pool), logger), logger),
+		Scorecard: scorecard.NewHandler(
+			scorecard.NewService(scorecard.NewPGStore(pool), logger), logger),
 		Files:        filesHandler,
 		Work:         work.NewHandler(workService, logger),
 		People:       people.NewHandler(peopleService, logger),

@@ -97,6 +97,7 @@ export const NAV_SECTIONS: NavSection[] = [
     links: [
       { label: "Commercial dashboard", href: "/dashboard/commercial", icon: "pie", section: "Revenue", keywords: "pipeline receivables cash leads", roles: ["ceo_internal", "ceo_commercial"] },
       { label: "Daily Brief", href: "/dashboard/daily", icon: "clipboard", section: "Revenue", keywords: "yesterday today attention decisions", roles: ["ceo_internal", "ceo_commercial"] },
+      { label: "Scorecard", href: "/dashboard/scorecard", icon: "dashboard", section: "Revenue", keywords: "financial operational commercial systems people health", roles: ["ceo_internal", "ceo_commercial"] },
       { label: "CRM", href: "/crm", icon: "people", section: "Revenue", keywords: "leads pipeline sales opportunities contacts clients", roles: ["ceo_commercial", "ceo_internal", "sales_rep"] },
       { label: "Contracts", href: "/contracts", icon: "document", section: "Revenue", keywords: "agreements signing milestones renewals obligations", roles: ["ceo_commercial", "ceo_internal"] },
       { label: "Finance", href: "/finance", icon: "card", section: "Revenue", keywords: "cash receivables expenses invoices budgets payments profitability recurring", roles: ["ceo_internal", "ceo_commercial", "finance_officer"] },

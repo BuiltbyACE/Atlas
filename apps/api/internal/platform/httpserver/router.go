@@ -23,6 +23,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/files"
+	"github.com/safaristack/atlas/apps/api/internal/scorecard"
 	"github.com/safaristack/atlas/apps/api/internal/finance"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
 	"github.com/safaristack/atlas/apps/api/internal/intel"
@@ -57,6 +58,8 @@ type Deps struct {
 	Audit *audit.Handler
 	// Dashboard is the executive dashboard read model (§8.8); mounted when present.
 	Dashboard *dashboard.Handler
+	// Scorecard is the company health roll-up (§8.9); mounted when present.
+	Scorecard *scorecard.Handler
 	// Files is optional, and only mounted when object storage is configured
 	// (local development may run without a bucket).
 	Files *files.Handler
@@ -146,6 +149,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Dashboard != nil {
 		registerDashboard(reg, d.Dashboard)
+	}
+
+	if d.Scorecard != nil {
+		registerScorecard(reg, d.Scorecard)
 	}
 
 	if d.Files != nil {
@@ -321,6 +328,14 @@ func registerDashboard(reg *routing.Registry, h *dashboard.Handler) {
 		"Executive dashboard tiles", h.Summary)
 	reg.Gated("intel.dashboard.read", http.MethodGet, "/api/v1/dashboard/executive/daily",
 		"Daily executive brief", h.DailyBrief)
+}
+
+// registerScorecard declares the company scorecard (§8.9). It aggregates
+// financial, operational, commercial, systems and people metrics, so the
+// single read route is gated by intel.dashboard.read, held by both CEOs.
+func registerScorecard(reg *routing.Registry, h *scorecard.Handler) {
+	reg.Gated("intel.dashboard.read", http.MethodGet, "/api/v1/dashboard/scorecard",
+		"Company scorecard", h.Scorecard)
 }
 
 // registerWork declares the Phase 2 work-orchestration surface. Reads need

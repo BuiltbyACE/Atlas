@@ -2823,6 +2823,80 @@ export function getDailyBrief(date?: string): Promise<DailyBrief> {
   });
 }
 
+// ── scorecard (§8.9) ────────────────────────────────────────────────────────
+
+export interface Scorecard {
+  generated_at: string;
+  financial: ScorecardFinancial;
+  operational: ScorecardOperational;
+  commercial: ScorecardCommercial;
+  systems: ScorecardSystems;
+  people: ScorecardPeople;
+}
+
+export interface ScorecardFinancial {
+  cash_minor: number;
+  receivables_outstanding_minor: number;
+  receivables_overdue_minor: number;
+  invoiced_90d_minor: number;
+  collected_90d_minor: number;
+  expenses_30d_minor: number;
+  pending_expenses: number;
+  overdue_invoice_count: number;
+  upcoming_renewals_30d: number;
+  active_budget_count: number;
+  budgets_over_threshold: number;
+}
+
+export interface ScorecardOperational {
+  active_projects: number;
+  planning_projects: number;
+  overdue_tasks: number;
+  open_escalations: number;
+  completed_tasks_30d: number;
+}
+
+export interface ScorecardCommercial {
+  pipeline_value_minor: number;
+  open_opportunities: number;
+  won_opportunities_30d: number;
+  lost_opportunities_30d: number;
+  open_leads: number;
+  qualified_leads_30d: number;
+}
+
+export interface ScorecardSystems {
+  systems_total: number;
+  systems_tier_1: number;
+  systems_tier_2: number;
+  systems_tier_3: number;
+  checks_total: number;
+  checks_failing: number;
+  checks_warning: number;
+  checks_unprobed: number;
+  open_incidents: number;
+  open_sev_1: number;
+  open_sev_2: number;
+  incidents_30d: number;
+  availability_bp: number;
+}
+
+export interface ScorecardPeople {
+  headcount: number;
+  active: number;
+  on_leave: number;
+  onboarding: number;
+  exited: number;
+  missed_reports_30d: number;
+  approved_leave_today: number;
+}
+
+export function getScorecard(): Promise<Scorecard> {
+  return apiFetch<Scorecard>("/api/v1/dashboard/scorecard", {
+    cache: "no-store",
+  });
+}
+
 // ── systems (§8.6) ──────────────────────────────────────────────────────────
 
 /**
