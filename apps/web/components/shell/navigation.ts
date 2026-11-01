@@ -81,6 +81,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Workload", href: "/work/workload", icon: "bars", section: "Work", keywords: "capacity deadlines", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
       { label: "Escalations", href: "/work/escalations", icon: "alert", section: "Work", badge: "escalations", keywords: "overdue", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
       { label: "Time entries", href: "/work/time-entries", icon: "clock", section: "Work", keywords: "timesheet hours logged tasks", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
+      { label: "My Work", href: "/dashboard/my-work", icon: "dashboard", section: "Work", keywords: "my tasks my reports my leave my time", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
     ],
   },
   {
