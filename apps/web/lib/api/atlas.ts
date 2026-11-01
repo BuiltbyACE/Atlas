@@ -562,6 +562,78 @@ export function verifyEvidence(id: string): Promise<Evidence> {
   });
 }
 
+// ── work: time entries ──────────────────────────────────────────────────────
+
+export interface TimeEntry {
+  id: string;
+  person_id: string;
+  task_id: string;
+  project_id: string;
+  entry_date: string;
+  minutes: number;
+  note?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TimeEntryBody {
+  task_id: string;
+  entry_date: string;
+  minutes: number;
+  note?: string;
+}
+
+export interface TimeEntryListQuery {
+  limit?: number;
+  cursor?: string;
+  person_id?: string;
+  task_id?: string;
+  project_id?: string;
+  from?: string;
+  to?: string;
+  [key: string]: QueryValue;
+}
+
+export function listTimeEntries(query: TimeEntryListQuery = {}): Promise<Page<TimeEntry>> {
+  return apiFetch<Page<TimeEntry>>("/api/v1/work/time-entries", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getTimeEntry(id: string): Promise<TimeEntry> {
+  return apiFetch<TimeEntry>(`/api/v1/work/time-entries/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function createTimeEntry(body: TimeEntryBody): Promise<TimeEntry> {
+  return apiFetch<TimeEntry>("/api/v1/work/time-entries", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateTimeEntry(
+  id: string,
+  version: number,
+  body: TimeEntryBody,
+): Promise<TimeEntry> {
+  return apiFetch<TimeEntry>(`/api/v1/work/time-entries/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function deleteTimeEntry(id: string, version: number): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(`/api/v1/work/time-entries/${id}`, {
+    method: "DELETE",
+    headers: ifMatch(version),
+  });
+}
+
 // ── work: escalations ───────────────────────────────────────────────────────
 
 export function listEscalations(
