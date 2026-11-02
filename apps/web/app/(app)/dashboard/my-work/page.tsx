@@ -1,7 +1,3 @@
-"use client";
-
-import { useEffect, useState } from "react";
-
 import {
   Badge,
   Card,
@@ -15,8 +11,6 @@ import {
   Th,
   statusTone,
 } from "@/components/ui";
-import { useToast } from "@/components/toast";
-import { requireUser } from "@/lib/auth/session";
 import {
   getTodayReport,
   listDailyReports,
@@ -31,14 +25,13 @@ import {
   type TimeEntry,
 } from "@/lib/api/atlas";
 import { ApiError } from "@/lib/api/client";
+import { requireUser } from "@/lib/auth/session";
 import { personDirectory, personName } from "@/lib/directory";
 import { formatDay, formatMinor, humanise, isOverdue } from "@/lib/format";
-import { useMutation } from "@/lib/use-mutation";
 
 /**
- * My Work dashboard. A personal overview for employees: my open tasks, my
- * today's daily report status, my pending leave requests, my recent time
- * entries, and approvals waiting for my decision.
+ * My Work dashboard. A personal overview for employees: my tasks, reports,
+ * leave, time entries and pending approvals at a glance.
  */
 export const dynamic = "force-dynamic";
 
@@ -55,61 +48,44 @@ export default async function MyWorkPage() {
   const user = await requireUser();
   const me = user.person_id;
 
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [todayReport, setTodayReport] = useState<DailyReport | null>(null);
-  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
-  const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([]);
-  const [pendingApprovals, setPendingApprovals] = useState<Approval[]>([]);
-  const [error, setError] = useState<ApiError | null>(null);
-  const [names, setNames] = useState<Record<string, string>>({});
+  const [
+    tasksResult,
+    reportResult,
+    leaveResult,
+    timeResult,
+    approvalsResult,
+    dirResult,
+  ] = await Promise.allSettled([
+    me
+      ? listTasks({ assignee_person_id: me, limit: 50 })
+      : Promise.reject(new Error("no person")),
+    me ? getTodayReport() : Promise.reject(new Error("no person")),
+    me
+      ? listLeaveRequests({ person_id: me, limit: 20 })
+      : Promise.reject(new Error("no person")),
+    me
+      ? listTimeEntries({ person_id: me, limit: 20 })
+      : Promise.reject(new Error("no person")),
+    listPendingApprovals(user.roles[0] ? { role: user.roles[0] } : {}),
+    personDirectory(),
+  ]);
 
-  useEffect(() => {
-    const load = async () => {
-      const [
-        tasksResult,
-        reportResult,
-        leaveResult,
-        timeResult,
-        approvalsResult,
-        dirResult,
-      ] = await Promise.allSettled([
-        me
-          ? listTasks({ assignee_person_id: me, limit: 50 })
-          : Promise.reject(new Error("no person")),
-        me ? getTodayReport() : Promise.reject(new Error("no person")),
-        me
-          ? listLeaveRequests({ person_id: me, limit: 20 })
-          : Promise.reject(new Error("no person")),
-        me
-          ? listTimeEntries({ person_id: me, limit: 20 })
-          : Promise.reject(new Error("no person")),
-        listPendingApprovals({ limit: 20 }),
-        personDirectory(),
-      ]);
-
-      if (tasksResult.status === "fulfilled")
-        setTasks(tasksResult.value.items);
-      if (reportResult.status === "fulfilled") setTodayReport(reportResult.value);
-      if (leaveResult.status === "fulfilled")
-        setLeaveRequests(leaveResult.value.items);
-      if (timeResult.status === "fulfilled")
-        setTimeEntries(timeResult.value.items);
-      if (approvalsResult.status === "fulfilled")
-        setPendingApprovals(approvalsResult.value.items);
-      if (dirResult.status === "fulfilled") {
-        const dir = dirResult.value;
-        const nameMap: Record<string, string> = {};
-        dir.forEach((name, id) => {
-          nameMap[id] = name;
-        });
-        setNames(nameMap);
-      }
-    };
-
-    load().catch((err) => {
-      if (err instanceof ApiError) setError(err);
-    });
-  }, [me]);
+  const tasks: Task[] =
+    tasksResult.status === "fulfilled" ? tasksResult.value.items : [];
+  const todayReport: DailyReport | null =
+    reportResult.status === "fulfilled" ? reportResult.value : null;
+  const leaveRequests: LeaveRequest[] =
+    leaveResult.status === "fulfilled" ? leaveResult.value.items : [];
+  const timeEntries: TimeEntry[] =
+    timeResult.status === "fulfilled" ? timeResult.value.items : [];
+  const pendingApprovals: Approval[] =
+    approvalsResult.status === "fulfilled"
+      ? approvalsResult.value.items
+      : [];
+  const names: Record<string, string> =
+    dirResult.status === "fulfilled"
+      ? Object.fromEntries([...dirResult.value].map(([id, name]) => [id, name]))
+      : {};
 
   const openTasks = tasks.filter(
     (t) => t.status !== "done" && t.status !== "cancelled",
@@ -126,17 +102,6 @@ export default async function MyWorkPage() {
         title="My Work"
         description="Your tasks, reports, leave, time and approvals at a glance."
       />
-
-      {error && (
-        <ProblemNotice
-          error={error}
-          title={
-            error.status === 403
-              ? "You do not have permission to view your work dashboard"
-              : "My Work could not be loaded"
-          }
-        />
-      )}
 
       <StatGrid label="My work at a glance">
         <Stat
