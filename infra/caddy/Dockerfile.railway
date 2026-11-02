@@ -1,0 +1,16 @@
+# syntax=docker/dockerfile:1
+
+# Atlas edge for Railway. Build context: infra/caddy.
+#
+# Caddy terminates nothing here — Railway's edge owns TLS and forwards plain
+# HTTP on $PORT. This image only routes by path so the browser stays on one
+# origin, which is what keeps the session cookie first-party and removes CORS.
+FROM caddy:2-alpine
+
+COPY Caddyfile.railway /etc/caddy/Caddyfile
+
+# Caddy needs a writable config/data dir even with persistence disabled.
+ENV XDG_CONFIG_HOME=/config \
+    XDG_DATA_HOME=/data
+
+EXPOSE 8080

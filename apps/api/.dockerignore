@@ -1,0 +1,16 @@
+# Build context hygiene for the Go images (Railway + CI).
+# Keeps local binaries, coverage output and secrets out of the image layer cache.
+
+bin/
+tmp/
+*.exe
+*.test
+*.out
+coverage.out
+
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore

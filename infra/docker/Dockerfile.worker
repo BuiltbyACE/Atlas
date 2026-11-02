@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1
+
+# ── Stage 1: build ─────────────────────────────────────────────
+FROM golang:1.27-alpine AS build
+
+WORKDIR /src
+
+# Cache modules first so dependency download is not repeated on every change.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build \
+      -ldflags="-s -w -X main.version=${VERSION}" \
+      -o /out/atlas-worker ./cmd/atlas-worker
+
+# ── Stage 2: run ───────────────────────────────────────────────
+# Distroless: no shell, no package manager, runs as non-root. The worker needs
+# its own image rather than a start-command override because Railway wraps
+# string commands in /bin/sh -c, and this image has no shell.
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY --from=build /out/atlas-worker /usr/local/bin/atlas-worker
+
+USER nonroot
+ENTRYPOINT ["/usr/local/bin/atlas-worker"]

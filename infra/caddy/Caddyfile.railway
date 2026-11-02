@@ -1,0 +1,79 @@
+# Atlas — Railway edge configuration (docs/ATLAS.md §5.3)
+#
+# Same-origin routing, identical in shape to infra/caddy/Caddyfile, but driven
+# by the Railway environment instead of host.docker.internal:
+#
+#   /internal/*   → 404 (never public)
+#   /socket*      → Elixir orchestrator (Phoenix Channels, WebSocket)
+#   /api/*, /webhooks/* → Go core API
+#   everything    → Next.js web app
+#
+# Railway terminates TLS at its own edge and forwards plain HTTP to this
+# container on $PORT, so Caddy must not attempt ACME or redirect to HTTPS.
+# Upstreams are private-network DNS names, e.g.
+#   http://api.railway.internal:8080
+
+{
+	admin off
+	persist_config off
+	auto_https off
+}
+
+:{$PORT:8080} {
+	encode zstd gzip
+
+	log {
+		output stdout
+		format json
+	}
+
+	# Health probe for Railway. Answered by the edge itself so a slow or
+	# starting backend cannot make the edge look unhealthy.
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	# ── Service-to-service API is never exposed publicly ──────
+	@internal path /internal/*
+	respond @internal 404
+
+	# ── Realtime: Phoenix Channels WebSocket ──────────────────
+	@socket path /socket*
+	handle @socket {
+		reverse_proxy {$ATLAS_ORCHESTRATOR_UPSTREAM} {
+			# A websocket is long-lived: do not buffer or time it out early.
+			flush_interval -1
+			transport http {
+				dial_timeout 10s
+				response_header_timeout 30s
+			}
+		}
+	}
+
+	# ── Public API + provider webhooks → Go ───────────────────
+	@api path /api/* /webhooks/*
+	handle @api {
+		reverse_proxy {$ATLAS_API_UPSTREAM} {
+			transport http {
+				dial_timeout 10s
+				response_header_timeout 60s
+			}
+		}
+	}
+
+	# ── Everything else → Next.js ─────────────────────────────
+	handle {
+		reverse_proxy {$ATLAS_WEB_UPSTREAM} {
+			transport http {
+				dial_timeout 10s
+				response_header_timeout 60s
+			}
+		}
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}

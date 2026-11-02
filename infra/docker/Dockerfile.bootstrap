@@ -1,0 +1,39 @@
+# syntax=docker/dockerfile:1
+
+# Atlas one-shot bootstrap image: database roles, extensions, Go migrations,
+# the role/permission seed, the first account, and the orchestrator service
+# token.
+#
+# Build context: the REPOSITORY ROOT, because this image needs both the Go
+# sources (apps/api) and the bootstrap scripts (infra/bootstrap).
+#
+# It is based on postgres:16-alpine rather than distroless because it needs a
+# shell and psql: creating login roles is DDL that the Go service deliberately
+# cannot do.
+
+# ── Stage 1: build the operator CLI ───────────────────────────
+FROM golang:1.27-alpine AS build
+
+WORKDIR /src
+
+COPY apps/api/go.mod apps/api/go.sum ./
+RUN go mod download
+
+COPY apps/api/ ./
+
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build \
+      -ldflags="-s -w -X main.version=${VERSION}" \
+      -o /out/atlas-cli ./cmd/atlas-cli
+
+# ── Stage 2: run ──────────────────────────────────────────────
+FROM postgres:16-alpine
+
+COPY --from=build /out/atlas-cli /usr/local/bin/atlas-cli
+COPY infra/bootstrap/roles.sql /usr/local/share/atlas/roles.sql
+COPY infra/bootstrap/entrypoint.sh /usr/local/bin/atlas-bootstrap
+
+RUN chmod 0755 /usr/local/bin/atlas-bootstrap
+
+ENTRYPOINT ["/usr/local/bin/atlas-bootstrap"]
+CMD ["migrate"]

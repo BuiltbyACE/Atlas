@@ -31,6 +31,9 @@ out/
 *.tsbuildinfo
 npm-debug.log*
 yarn-error.log*
+test-results/
+playwright-report/
+blob-report/
 
 # ── Elixir (apps/orchestrator) ───────────────────────────────
 /apps/orchestrator/_build/

@@ -1,0 +1,33 @@
+# Root build context hygiene. Only the bootstrap image builds from the
+# repository root; everything else builds from apps/<service>.
+#
+# Without this, the context includes apps/web/node_modules (hundreds of MB) and
+# the Elixir _build tree, which makes every upload slow.
+
+.git
+.github
+images
+docs
+
+**/node_modules
+**/.next
+**/out
+**/_build
+**/deps
+**/cover
+
+**/*.exe
+**/*.test
+**/*.out
+**/coverage.out
+**/*.tsbuildinfo
+**/test-results
+**/playwright-report
+
+.env
+.env.*
+!.env.example
+
+**/.env
+**/.env.*
+!**/.env.example

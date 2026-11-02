@@ -1,0 +1,18 @@
+# Build context hygiene for the orchestrator image.
+# The release is built from scratch inside the image.
+
+_build
+deps
+cover
+doc
+.elixir_ls
+*.tar
+erl_crash.dump
+*.ez
+
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore

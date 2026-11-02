@@ -22,9 +22,19 @@ RUN mix compile && mix release
 # ── Stage 2: run ───────────────────────────────────────────────
 FROM alpine:3.20
 
-RUN adduser -D -H -u 1000 appuser
+# A release built on Alpine needs the runtime libraries of the Erlang VM it
+# bundles: ERTS links against libstdc++, ncurses and OpenSSL. Without these the
+# release aborts at boot with a missing shared object.
+RUN apk add --no-cache libstdc++ ncurses-libs openssl ca-certificates \
+    && adduser -D -H -u 1000 appuser
 
 COPY --from=build --chown=appuser /app/_build/prod/rel/atlas_orchestrator /app
+
+# The orchestrator is a stateless websocket/logic service: it never needs an
+# Erlang distribution or remote shell, and starting epmd in a container adds a
+# failure mode for nothing. Operators use logs and health probes.
+ENV RELEASE_DISTRIBUTION=none \
+    MIX_ENV=prod
 
 USER appuser
 EXPOSE 4000
