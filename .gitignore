@@ -55,6 +55,10 @@ erl_crash.dump
 /data/
 /infra/compose/data/
 
+# Local dev launchers (developer-machine specific, never deployed)
+/start_all.bat
+/start_web.bat
+
 # ── Misc ─────────────────────────────────────────────────────
 *.log
 tmp/
