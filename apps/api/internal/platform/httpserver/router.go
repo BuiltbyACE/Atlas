@@ -22,6 +22,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/contracts"
 	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
+	"github.com/safaristack/atlas/apps/api/internal/chat"
 	"github.com/safaristack/atlas/apps/api/internal/email"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/finance"
@@ -97,6 +98,8 @@ type Deps struct {
 	// Intel is the Phase 6 executive intelligence surface (§8.8): decisions,
 	// risks, briefs and metric snapshots; mounted when present.
 	Intel *intel.Handler
+	// Chat is the Phase 6 messaging surface; mounted when present.
+	Chat *chat.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -161,6 +164,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Email != nil {
 		registerEmail(reg, d.Email)
+	}
+
+	if d.Chat != nil {
+		registerChat(reg, d.Chat)
 	}
 
 	if d.Files != nil {
@@ -357,6 +364,11 @@ func registerScorecard(reg *routing.Registry, h *scorecard.Handler) {
 // registerEmail declares the Phase 6 two-way email surface. Sending is gated
 // by core.email.send; reading inbox threads is authenticated.
 func registerEmail(reg *routing.Registry, h *email.Handler) {
+	h.Routes(reg)
+}
+
+// registerChat declares the Phase 6 messaging surface.
+func registerChat(reg *routing.Registry, h *chat.Handler) {
 	h.Routes(reg)
 }
 

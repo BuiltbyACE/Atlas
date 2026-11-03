@@ -30,6 +30,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/contracts"
 	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
+	"github.com/safaristack/atlas/apps/api/internal/chat"
 	emailapi "github.com/safaristack/atlas/apps/api/internal/email"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/finance"
@@ -227,6 +228,10 @@ func run() error {
 	emailService := emailapi.NewService(emailapi.NewPGStore(pool), logger)
 	emailHandler := emailapi.NewHandler(emailService, logger)
 
+	// Chat is the Phase 6 messaging surface.
+	chatService := chat.NewService(chat.NewPGStore(pool), logger)
+	chatHandler := chat.NewHandler(chatService, logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -252,6 +257,7 @@ func run() error {
 		Units:        unitsHandler,
 		Intel:        intelHandler,
 		Email:        emailHandler,
+		Chat:         chatHandler,
 	})
 
 	srv := &http.Server{
