@@ -23,7 +23,7 @@ RUN npm ci --omit=dev
 
 COPY --from=build --chown=node:node /app/.next ./.next
 COPY --from=build --chown=node:node /app/public ./public
-COPY --from=build /app/next.config.ts ./next.config.ts
+COPY --from=build /app/next.config.mjs ./next.config.mjs
 
 # `next start` binds to HOSTNAME when it is set. Inside a container the default
 # is loopback, which is unreachable from the edge, so bind all interfaces.

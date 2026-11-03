@@ -49,7 +49,7 @@ Three rules that decide everything (ATLAS.md §5.2, ADR-002):
 Key consequences you will feel daily:
 
 - **One origin.** Caddy routes `/api/*` to Go and everything else to Next.js, so
-  cookies are first-party and there is no CORS. Locally, a `next.config.ts`
+  cookies are first-party and there is no CORS. Locally, a `next.config.mjs`
   rewrite proxies `/api/*` to Go (see §5).
 - **The session cookie is the only client auth token.** Never store it in
   JavaScript; it is HttpOnly. Just let the browser send it.
@@ -265,7 +265,7 @@ task api:run       # Go API on :8080
 cd apps/web; npm install; npm run dev   # Next.js on :3000
 ```
 
-The web app reaches Go through the `next.config.ts` rewrite, so in the browser
+The web app reaches Go through the `next.config.mjs` rewrite, so in the browser
 `/api/v1/...` is same-origin on `:3000` — the cookie and `SameSite=Lax` behave
 exactly as in production. You do **not** need CORS locally.
 
@@ -329,7 +329,7 @@ apps/web/
 │   ├── api/generated/             # generated client goes here
 │   ├── auth/session.ts            # getCurrentUser / requireUser
 │   └── realtime/socket.ts         # Phoenix client + hooks (done)
-├── next.config.ts                 # /api/* rewrite to Go
+├── next.config.mjs                 # /api/* rewrite to Go
 └── README.md
 ```
 
@@ -421,7 +421,7 @@ against Go's JWKS).
 
 Two caveats:
 
-- `next.config.ts` rewrites do **not** proxy WebSockets. In dev, the browser
+- `next.config.mjs` rewrites do **not** proxy WebSockets. In dev, the browser
   connects straight to `NEXT_PUBLIC_REALTIME_URL` (the orchestrator on `:4000`);
   in production Caddy proxies `/socket`.
 - For a socket to authenticate, the **Go API must be running** (Elixir fetches

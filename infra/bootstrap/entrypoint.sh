@@ -50,8 +50,12 @@ migrate)
     wait_for_db "$ATLAS_ADMIN_DATABASE_URL"
 
     log "applying login roles, grants and extensions"
+    # `-o /dev/null` keeps the generated CREATE/ALTER ROLE statements (which
+    # contain the passwords) out of the service logs; \gexec still executes
+    # them and errors still reach stderr.
     psql "$ATLAS_ADMIN_DATABASE_URL" \
         -v ON_ERROR_STOP=1 \
+        -o /dev/null \
         -v migrator_pw="$ATLAS_MIGRATOR_DB_PASSWORD" \
         -v api_pw="$ATLAS_API_DB_PASSWORD" \
         -v worker_pw="$ATLAS_WORKER_DB_PASSWORD" \

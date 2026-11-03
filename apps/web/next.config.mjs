@@ -1,5 +1,3 @@
-import type { NextConfig } from "next";
-
 /**
  * Atlas web configuration.
  *
@@ -16,11 +14,18 @@ import type { NextConfig } from "next";
  * Next.js rewrites do not proxy WebSockets. In development the browser connects
  * to the orchestrator directly via NEXT_PUBLIC_REALTIME_URL; in production
  * Caddy proxies `/socket` to the Elixir orchestrator.
+ *
+ * This file is plain `.mjs` on purpose. `next start` loads the config at boot,
+ * and a TypeScript config would force a runtime `npm install typescript` in the
+ * production image, which fails because the app directory is read-only for the
+ * non-root user.
  */
+
 const apiInternalUrl =
   process.env.ATLAS_API_INTERNAL_URL ?? "http://localhost:8080";
 
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   reactStrictMode: true,
   // `next build` treats ESLint errors as fatal. The app currently has
   // pre-existing violations in ~15 files (mostly `react-hooks/rules-of-hooks`
