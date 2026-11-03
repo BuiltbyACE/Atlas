@@ -273,6 +273,7 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
       event: "unit.changed",
       payload: payload
     }
+
     assert payload["type"] == "unit.changed"
 
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
@@ -301,6 +302,7 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
       event: "decision.changed",
       payload: payload
     }
+
     assert payload["type"] == "decision.changed"
 
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}

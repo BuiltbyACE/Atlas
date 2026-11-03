@@ -22,8 +22,41 @@ if config_env() == :prod do
     System.get_env("SECRET_KEY_BASE") ||
       raise "SECRET_KEY_BASE is not set (required to sign session/websocket state)."
 
+  # The browser opens /socket through Caddy on the public edge, so the Origin
+  # header is the public domain, not this service's internal hostname. Phoenix
+  # refuses a websocket whose Origin it does not recognise, which shows up in
+  # the UI as a permanently "Offline" live pill. Accept every configured public
+  # origin; ATLAS_ALLOWED_ORIGINS adds comma-separated extras (for example the
+  # Railway-generated hostname during a domain migration).
+  normalize_origin = fn origin ->
+    origin = String.trim(origin)
+
+    cond do
+      origin == "" -> nil
+      String.starts_with?(origin, ["http://", "https://"]) -> origin
+      true -> "https://" <> origin
+    end
+  end
+
+  allowed_origins =
+    [
+      System.get_env("ATLAS_PUBLIC_BASE_URL"),
+      System.get_env("RAILWAY_SERVICE_EDGE_URL"),
+      System.get_env("ATLAS_ALLOWED_ORIGINS")
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.flat_map(&String.split(&1, ",", trim: true))
+    |> Enum.map(normalize_origin)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+
+  if allowed_origins == [] do
+    raise "Set ATLAS_PUBLIC_BASE_URL (or ATLAS_ALLOWED_ORIGINS) so the socket can verify the browser Origin."
+  end
+
   config :atlas_orchestrator, AtlasOrchestrator.Endpoint,
     secret_key_base: secret_key_base,
+    check_origin: allowed_origins,
     http: [
       ip: {0, 0, 0, 0},
       port: String.to_integer(System.get_env("PORT") || "4000")

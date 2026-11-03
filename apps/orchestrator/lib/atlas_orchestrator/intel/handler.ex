@@ -27,8 +27,8 @@ defmodule AtlasOrchestrator.Intel.Handler do
   require Logger
 
   alias AtlasOrchestrator.Dashboard.Signals, as: DashboardSignals
-  alias AtlasOrchestrator.Realtime
   alias AtlasOrchestrator.Intel.Signals
+  alias AtlasOrchestrator.Realtime
 
   @board_topic "intel:board"
   @dashboard_topic "exec:dashboard"
