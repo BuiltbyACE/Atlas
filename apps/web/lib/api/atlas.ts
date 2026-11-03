@@ -4857,3 +4857,349 @@ export function updateIntegrationRegistration(
     headers: ifMatch(version),
   });
 }
+
+// ═════════════════════════════════════════════════════════════════════
+// Email (§8.4)
+// ═════════════════════════════════════════════════════════════════════
+
+export interface EmailThread {
+  id: string;
+  subject: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EmailMessage {
+  id: string;
+  thread_id: string;
+  direction: "inbound" | "outbound";
+  from_address: string;
+  to_addresses: string[];
+  cc_addresses: string[];
+  bcc_addresses: string[];
+  subject: string;
+  body_text: string;
+  body_html: string;
+  message_id: string;
+  in_reply_to?: string;
+  references?: string;
+  received_at?: string;
+  sent_at?: string;
+  status: "received" | "sent" | "delivered" | "failed";
+  provider_ref?: string;
+  error_message?: string;
+  created_at: string;
+}
+
+export interface EmailAddress {
+  id: string;
+  user_id: string;
+  address: string;
+  verified: boolean;
+  is_primary: boolean;
+  created_at: string;
+}
+
+export interface ThreadListItem {
+  id: string;
+  subject: string;
+  updated_at: string;
+  message_count: number;
+  unread_count: number;
+  latest?: EmailMessage;
+}
+
+/** Compose and send an email (`POST /api/v1/email/compose`, `core.email.send`). */
+export interface ComposeEmailBody {
+  thread_id?: string;
+  subject: string;
+  body_text?: string;
+  body_html?: string;
+  from_address: string;
+  to_addresses: string[];
+  cc_addresses?: string[];
+  bcc_addresses?: string[];
+  in_reply_to?: string;
+  references?: string;
+  idempotency_key?: string;
+}
+
+export function composeEmail(body: ComposeEmailBody): Promise<{
+  id: string;
+  thread_id: string;
+  status: string;
+  created_at: string;
+}> {
+  return apiFetch<{
+    id: string;
+    thread_id: string;
+    status: string;
+    created_at: string;
+  }>("/api/v1/email/compose", {
+    method: "POST",
+    body,
+  });
+}
+
+/** List email threads (`GET /api/v1/email/threads`, authenticated). */
+export function listEmailThreads(): Promise<ThreadListItem[]> {
+  return apiFetch<ThreadListItem[]>("/api/v1/email/threads", {
+    cache: "no-store",
+  });
+}
+
+/** Get an email thread with messages (`GET /api/v1/email/threads/{id}`, authenticated). */
+export function getEmailThread(id: string): Promise<EmailMessage[]> {
+  return apiFetch<EmailMessage[]>(`/api/v1/email/threads/${id}`, {
+    cache: "no-store",
+  });
+}
+
+/** List the caller's verified send-as addresses (`GET /api/v1/email/addresses`, authenticated). */
+export function listEmailAddresses(): Promise<EmailAddress[]> {
+  return apiFetch<EmailAddress[]>("/api/v1/email/addresses", {
+    cache: "no-store",
+  });
+}
+
+/** Register a send-as email address (`POST /api/v1/email/addresses`, authenticated). */
+export interface RegisterEmailAddressBody {
+  address: string;
+  is_primary?: boolean;
+}
+
+export function registerEmailAddress(
+  body: RegisterEmailAddressBody,
+): Promise<EmailAddress> {
+  return apiFetch<EmailAddress>("/api/v1/email/addresses", {
+    method: "POST",
+    body,
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// Chat (§8.5)
+// ═════════════════════════════════════════════════════════════════════
+
+export interface ChatConversation {
+  id: string;
+  type: "direct" | "group";
+  name?: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversation_id: string;
+  sender_id: string;
+  sender_name?: string;
+  body: string;
+  body_type: "text" | "file" | "system";
+  reply_to_message?: string;
+  created_at: string;
+  edited_at?: string;
+}
+
+export interface ConversationView {
+  id: string;
+  type: "direct" | "group";
+  name?: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  last_message?: ChatMessage;
+  unread_count: number;
+}
+
+/** List the caller's conversations (`GET /api/v1/chat/conversations`, authenticated). */
+export function listChatConversations(): Promise<ConversationView[]> {
+  return apiFetch<ConversationView[]>("/api/v1/chat/conversations", {
+    cache: "no-store",
+  });
+}
+
+/** Start a 1:1 or group conversation (`POST /api/v1/chat/conversations`, authenticated). */
+export interface CreateChatConversationBody {
+  type: "direct" | "group";
+  name?: string;
+  participant: string[];
+}
+
+export function createChatConversation(
+  body: CreateChatConversationBody,
+): Promise<ChatConversation> {
+  return apiFetch<ChatConversation>("/api/v1/chat/conversations", {
+    method: "POST",
+    body,
+  });
+}
+
+/** List messages in a conversation (`GET /api/v1/chat/conversations/{id}/messages`, authenticated). */
+export function listChatMessages(conversationId: string): Promise<ChatMessage[]> {
+  return apiFetch<ChatMessage[]>(
+    `/api/v1/chat/conversations/${conversationId}/messages`,
+    { cache: "no-store" },
+  );
+}
+
+/** Send a message in a conversation (`POST /api/v1/chat/conversations/{id}/messages`, authenticated). */
+export interface SendChatMessageBody {
+  body: string;
+  body_type?: "text" | "file" | "system";
+  reply_to_message?: string;
+}
+
+export function sendChatMessage(
+  conversationId: string,
+  body: SendChatMessageBody,
+): Promise<ChatMessage> {
+  return apiFetch<ChatMessage>(
+    `/api/v1/chat/conversations/${conversationId}/messages`,
+    {
+      method: "POST",
+      body,
+    },
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// Documents (§8.6)
+// ═════════════════════════════════════════════════════════════════════
+
+export type DocumentCategory =
+  | "invoice"
+  | "system_doc"
+  | "contract"
+  | "policy"
+  | "other";
+
+export interface Document {
+  id: string;
+  key: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  category: DocumentCategory;
+  description: string;
+  uploaded_by: string;
+  uploaded_at: string;
+  updated_at: string;
+  is_public: boolean;
+  version: number;
+}
+
+export interface UploadResult {
+  document: Document;
+  upload_url: string;
+  headers?: Record<string, string>;
+}
+
+export interface DownloadResult {
+  document: Document;
+  download_url: string;
+}
+
+export interface DocumentShare {
+  document_id: string;
+  user_id: string;
+  permission: "read" | "write";
+  shared_by: string;
+  created_at: string;
+}
+
+/** Register a document upload (`POST /api/v1/documents`, authenticated).
+ * Returns a presigned PUT URL the client PUTs the file to. */
+export interface PrepareUploadBody {
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  category?: DocumentCategory;
+  description?: string;
+}
+
+export function prepareDocumentUpload(
+  body: PrepareUploadBody,
+): Promise<UploadResult> {
+  return apiFetch<UploadResult>("/api/v1/documents", {
+    method: "POST",
+    body,
+  });
+}
+
+/** List documents (`GET /api/v1/documents`, authenticated). */
+export interface ListDocumentsQuery {
+  category?: DocumentCategory;
+  limit?: number;
+  cursor?: string;
+}
+
+export function listDocuments(
+  query: ListDocumentsQuery = {},
+): Promise<Document[]> {
+  const q: Record<string, string | number> = {};
+  if (query.category) q.category = query.category;
+  if (query.limit !== undefined) q.limit = query.limit;
+  if (query.cursor) q.cursor = query.cursor;
+  return apiFetch<Document[]>("/api/v1/documents", {
+    query: q as Record<string, QueryValue>,
+    cache: "no-store",
+  });
+}
+
+/** Get document metadata + presigned download URL (`GET /api/v1/documents/{id}`, authenticated). */
+export function getDocument(id: string): Promise<DownloadResult> {
+  return apiFetch<DownloadResult>(`/api/v1/documents/${id}`, {
+    cache: "no-store",
+  });
+}
+
+/** Update document metadata (`PUT /api/v1/documents/{id}`, authenticated). */
+export interface UpdateDocumentBody {
+  category?: DocumentCategory;
+  description?: string;
+  is_public?: boolean;
+}
+
+export function updateDocument(
+  id: string,
+  body: UpdateDocumentBody,
+): Promise<Document> {
+  return apiFetch<Document>(`/api/v1/documents/${id}`, {
+    method: "PUT",
+    body,
+  });
+}
+
+/** Delete a document record (`DELETE /api/v1/documents/{id}`, authenticated). */
+export function deleteDocument(id: string): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(`/api/v1/documents/${id}`, {
+    method: "DELETE",
+  });
+}
+
+/** Grant access to a document (`POST /api/v1/documents/{id}/shares`, authenticated). */
+export interface ShareDocumentBody {
+  user_id: string;
+  permission: "read" | "write";
+}
+
+export function shareDocument(
+  id: string,
+  body: ShareDocumentBody,
+): Promise<DocumentShare> {
+  return apiFetch<DocumentShare>(`/api/v1/documents/${id}/shares`, {
+    method: "POST",
+    body,
+  });
+}
+
+/** List shares for a document (`GET /api/v1/documents/{id}/shares`, authenticated). */
+export function listDocumentShares(id: string): Promise<DocumentShare[]> {
+  return apiFetch<DocumentShare[]>(
+    `/api/v1/documents/${id}/shares`,
+    { cache: "no-store" },
+  );
+}
+
