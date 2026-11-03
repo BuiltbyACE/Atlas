@@ -23,6 +23,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/chat"
+	"github.com/safaristack/atlas/apps/api/internal/documents"
 	"github.com/safaristack/atlas/apps/api/internal/email"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/finance"
@@ -100,6 +101,8 @@ type Deps struct {
 	Intel *intel.Handler
 	// Chat is the Phase 6 messaging surface; mounted when present.
 	Chat *chat.Handler
+	// Documents is the Phase 6 document storage surface; mounted when present.
+	Documents *documents.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -168,6 +171,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Chat != nil {
 		registerChat(reg, d.Chat)
+	}
+
+	if d.Documents != nil {
+		registerDocuments(reg, d.Documents)
 	}
 
 	if d.Files != nil {
@@ -369,6 +376,11 @@ func registerEmail(reg *routing.Registry, h *email.Handler) {
 
 // registerChat declares the Phase 6 messaging surface.
 func registerChat(reg *routing.Registry, h *chat.Handler) {
+	h.Routes(reg)
+}
+
+// registerDocuments declares the Phase 6 document storage surface.
+func registerDocuments(reg *routing.Registry, h *documents.Handler) {
 	h.Routes(reg)
 }
 

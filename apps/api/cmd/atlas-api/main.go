@@ -31,6 +31,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/chat"
+	"github.com/safaristack/atlas/apps/api/internal/documents"
 	emailapi "github.com/safaristack/atlas/apps/api/internal/email"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/finance"
@@ -232,6 +233,10 @@ func run() error {
 	chatService := chat.NewService(chat.NewPGStore(pool), logger)
 	chatHandler := chat.NewHandler(chatService, logger)
 
+	// Documents is the Phase 6 document storage surface.
+	documentsService := documents.NewService(documents.NewPGStore(pool), nil, logger)
+	documentsHandler := documents.NewHandler(documentsService, logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -258,6 +263,7 @@ func run() error {
 		Intel:        intelHandler,
 		Email:        emailHandler,
 		Chat:         chatHandler,
+		Documents:    documentsHandler,
 	})
 
 	srv := &http.Server{
