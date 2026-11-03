@@ -22,6 +22,14 @@ const apiInternalUrl =
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // `next build` treats ESLint errors as fatal. The app currently has
+  // pre-existing violations in ~15 files (mostly `react-hooks/rules-of-hooks`
+  // from async client components, plus unescaped entities). Those need a
+  // behavioural fix, not a formatting one, so CI keeps running `npm run lint`
+  // while the production build does not fail on them.
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   async rewrites() {
     return [
       {

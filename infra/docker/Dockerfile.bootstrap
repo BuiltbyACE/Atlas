@@ -27,7 +27,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
       -o /out/atlas-cli ./cmd/atlas-cli
 
 # ── Stage 2: run ──────────────────────────────────────────────
-FROM postgres:16-alpine
+# Matches the server major version Railway's Postgres template runs (18), so
+# `psql` and the server never disagree about protocol or catalogue queries.
+FROM postgres:18-alpine
 
 COPY --from=build /out/atlas-cli /usr/local/bin/atlas-cli
 COPY infra/bootstrap/roles.sql /usr/local/share/atlas/roles.sql

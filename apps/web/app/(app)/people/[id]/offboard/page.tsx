@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Button, Field, TextInput } from "@/components/form";
@@ -16,11 +16,10 @@ import { useMutation } from "@/lib/use-mutation";
  * in one transaction. A destructive action, so it requires explicit
  * confirmation.
  */
-export default async function OffboardPage({
-  params,
-}: {
-  params: { id: string };
-}) {
+export default function OffboardPage() {
+  // A client component cannot receive `params` as a promise and await it, so
+  // the route param is read on the client instead.
+  const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const notify = useToast();
   const { busy, problem, run, reset } = useMutation();
@@ -32,7 +31,7 @@ export default async function OffboardPage({
     const data = new FormData(event.currentTarget);
 
     const result = await run(() =>
-      offboardPerson(params.id, {
+      offboardPerson(id, {
         reason: String(data.get("reason") ?? "").trim(),
         last_working_day:
           String(data.get("last_working_day") ?? "").trim() || undefined,

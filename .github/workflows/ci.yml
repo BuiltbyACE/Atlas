@@ -219,7 +219,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: apps/api
-          file: infra/docker/Dockerfile.api
+          file: apps/api/Dockerfile
           push: false
           tags: atlas-api:ci
 
@@ -227,7 +227,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: apps/orchestrator
-          file: infra/docker/Dockerfile.orchestrator
+          file: apps/orchestrator/Dockerfile
           push: false
           tags: atlas-orchestrator:ci
 
@@ -235,7 +235,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: apps/web
-          file: infra/docker/Dockerfile.web
+          file: apps/web/Dockerfile
           push: false
           tags: atlas-web:ci
 
