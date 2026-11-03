@@ -65,7 +65,7 @@ type Message struct {
 	BodyHTML     string           `json:"body_html"`
 	MessageID    string           `json:"message_id"`
 	InReplyTo    string           `json:"in_reply_to,omitempty"`
-	References   string           `json:"references,omitempty"`
+	MsgReferences string          `json:"msg_references,omitempty"`
 	ReceivedAt   *time.Time       `json:"received_at,omitempty"`
 	SentAt       *time.Time       `json:"sent_at,omitempty"`
 	Status       MessageStatus    `json:"status"`
@@ -342,11 +342,11 @@ func (s *PGStore) CreateMessage(ctx context.Context, ex Execer, m *Message) erro
 	if _, err := ex.Exec(ctx, `
 		INSERT INTO core.email_messages
 		(id, thread_id, direction, from_address, to_addresses, cc_addresses, bcc_addresses,
-		 subject, body_text, body_html, message_id, in_reply_to, references,
+		 subject, body_text, body_html, message_id, in_reply_to, msg_references,
 		 received_at, sent_at, status, provider_ref, error_message, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 		m.ID, m.ThreadID, m.Direction, m.FromAddress, m.ToAddresses, m.CCAddresses, m.BCCAddresses,
-		m.Subject, m.BodyText, m.BodyHTML, m.MessageID, m.InReplyTo, m.References,
+		m.Subject, m.BodyText, m.BodyHTML, m.MessageID, m.InReplyTo, m.MsgReferences,
 		m.ReceivedAt, m.SentAt, m.Status, m.ProviderRef, m.ErrorMessage, m.CreatedAt,
 	); err != nil {
 		return fmt.Errorf("email: create message: %w", err)
@@ -360,11 +360,11 @@ func (s *PGStore) GetMessage(ctx context.Context, id uuid.UUID) (*Message, error
 	var receivedAt, sentAt *time.Time
 	if err := s.db.QueryRow(ctx, `
 		SELECT id, thread_id, direction, from_address, to_addresses, cc_addresses, bcc_addresses,
-		       subject, body_text, body_html, message_id, in_reply_to, references,
+		       subject, body_text, body_html, message_id, in_reply_to, msg_references,
 		       received_at, sent_at, status, provider_ref, error_message, created_at
 		FROM core.email_messages WHERE id = $1`, id).Scan(
 		&m.ID, &m.ThreadID, &m.Direction, &m.FromAddress, &m.ToAddresses, &m.CCAddresses, &m.BCCAddresses,
-		&m.Subject, &m.BodyText, &m.BodyHTML, &m.MessageID, &m.InReplyTo, &m.References,
+		&m.Subject, &m.BodyText, &m.BodyHTML, &m.MessageID, &m.InReplyTo, &m.MsgReferences,
 		&receivedAt, &sentAt, &m.Status, &m.ProviderRef, &m.ErrorMessage, &m.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -382,11 +382,11 @@ func (s *PGStore) GetMessageByProviderRef(ctx context.Context, messageID string)
 	var receivedAt, sentAt *time.Time
 	if err := s.db.QueryRow(ctx, `
 		SELECT id, thread_id, direction, from_address, to_addresses, cc_addresses, bcc_addresses,
-		       subject, body_text, body_html, message_id, in_reply_to, references,
+		       subject, body_text, body_html, message_id, in_reply_to, msg_references,
 		       received_at, sent_at, status, provider_ref, error_message, created_at
 		FROM core.email_messages WHERE message_id = $1`, messageID).Scan(
 		&m.ID, &m.ThreadID, &m.Direction, &m.FromAddress, &m.ToAddresses, &m.CCAddresses, &m.BCCAddresses,
-		&m.Subject, &m.BodyText, &m.BodyHTML, &m.MessageID, &m.InReplyTo, &m.References,
+		&m.Subject, &m.BodyText, &m.BodyHTML, &m.MessageID, &m.InReplyTo, &m.MsgReferences,
 		&receivedAt, &sentAt, &m.Status, &m.ProviderRef, &m.ErrorMessage, &m.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

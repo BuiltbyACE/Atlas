@@ -64,9 +64,9 @@ type SendMessageOptions struct {
 	ToAddresses    []string
 	CCAddresses    []string
 	BCCAddresses   []string
-	InReplyTo      string
-	References     string
-	Attachments    []AttachmentInput
+	InReplyTo     string
+	MsgReferences string
+	Attachments   []AttachmentInput
 	IdempotencyKey string
 }
 
@@ -150,7 +150,7 @@ func (s *Service) Send(ctx context.Context, opts SendMessageOptions) (*Message, 
 		BodyHTML:     opts.BodyHTML,
 		MessageID:    messageID.String(),
 		InReplyTo:    opts.InReplyTo,
-		References:   opts.References,
+		MsgReferences: opts.MsgReferences,
 		SentAt:       &now,
 		Status:       StatusSent,
 		CreatedAt:    now,
@@ -207,7 +207,7 @@ func (s *Service) Send(ctx context.Context, opts SendMessageOptions) (*Message, 
 type InboundMessage struct {
 	MessageID   string
 	InReplyTo   string
-	References  string
+	MsgReferences string
 	FromAddress string
 	ToAddresses []string
 	CCAddresses []string
@@ -267,7 +267,7 @@ func (s *Service) Receive(ctx context.Context, m InboundMessage) (*Message, erro
 		BodyHTML:     m.BodyHTML,
 		MessageID:    m.MessageID,
 		InReplyTo:    m.InReplyTo,
-		References:   m.References,
+		MsgReferences: m.MsgReferences,
 		ReceivedAt:   &now,
 		Status:       StatusReceived,
 		CreatedAt:    now,

@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS core.email_messages (
 	body_html       text NOT NULL DEFAULT '',
 	message_id      text NOT NULL UNIQUE,
 	in_reply_to     text,
-	references      text,
+	msg_references  text,
 	received_at     timestamptz,
 	sent_at         timestamptz,
 	status          text NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'sent', 'delivered', 'failed')),

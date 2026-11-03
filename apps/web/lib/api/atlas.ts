@@ -4882,7 +4882,7 @@ export interface EmailMessage {
   body_html: string;
   message_id: string;
   in_reply_to?: string;
-  references?: string;
+  msg_references?: string;
   received_at?: string;
   sent_at?: string;
   status: "received" | "sent" | "delivered" | "failed";
@@ -4920,7 +4920,7 @@ export interface ComposeEmailBody {
   cc_addresses?: string[];
   bcc_addresses?: string[];
   in_reply_to?: string;
-  references?: string;
+  msg_references?: string;
   idempotency_key?: string;
 }
 

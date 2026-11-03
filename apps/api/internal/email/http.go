@@ -55,7 +55,7 @@ type composeRequest struct {
 	CCAddresses   []string   `json:"cc_addresses,omitempty"`
 	BCCAddresses  []string   `json:"bcc_addresses,omitempty"`
 	InReplyTo     string     `json:"in_reply_to,omitempty"`
-	References    string     `json:"references,omitempty"`
+	MsgReferences string     `json:"msg_references,omitempty"`
 	IdempotencyKey string    `json:"idempotency_key,omitempty"`
 }
 
@@ -86,7 +86,7 @@ func (h *Handler) Compose(w http.ResponseWriter, r *http.Request) {
 		CCAddresses:    req.CCAddresses,
 		BCCAddresses:   req.BCCAddresses,
 		InReplyTo:      req.InReplyTo,
-		References:     req.References,
+		MsgReferences:  req.MsgReferences,
 		IdempotencyKey: req.IdempotencyKey,
 	})
 	if err != nil {
