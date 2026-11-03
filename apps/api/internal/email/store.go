@@ -202,19 +202,13 @@ func (s *PGStore) ListThreads(ctx context.Context, limit int, before *uuid.UUID)
 	rows, err := s.db.Query(ctx, `
 		SELECT t.id, t.subject, t.updated_at,
 		       COALESCE(mc.message_count, 0) AS message_count,
-		       COALESCE(mc.unread_count, 0) AS unread_count,
-		       lm.id, lm.direction, lm.from_address, lm.subject, lm.created_at, lm.status
+		       COALESCE(mc.unread_count, 0) AS unread_count
 		FROM core.email_threads t
 		JOIN LATERAL (
 			SELECT COUNT(*) AS message_count,
 			       COUNT(*) FILTER (WHERE status = 'received' AND received_at IS NOT NULL) AS unread_count
 			FROM core.email_messages m WHERE m.thread_id = t.id
 		) mc ON TRUE
-		JOIN LATERAL (
-			SELECT id, direction, from_address, subject, created_at, status
-			FROM core.email_messages m2 WHERE m2.thread_id = t.id
-			ORDER BY created_at DESC LIMIT 1
-		) lm ON TRUE
 		WHERE ` + where + `
 		ORDER BY t.updated_at DESC
 		LIMIT $%d`, args...)
@@ -226,28 +220,11 @@ func (s *PGStore) ListThreads(ctx context.Context, limit int, before *uuid.UUID)
 	var threads []ThreadListItem
 	for rows.Next() {
 		var t ThreadListItem
-		var latestID *uuid.UUID
-		var latestDirection *MessageDirection
-		var latestFrom, latestSubject *string
-		var latestCreated *time.Time
-		var latestStatus *MessageStatus
 		if err := rows.Scan(
 			&t.ID, &t.Subject, &t.UpdatedAt,
 			&t.MessageCount, &t.UnreadCount,
-			&latestID, &latestDirection, &latestFrom, &latestSubject, &latestCreated, &latestStatus,
 		); err != nil {
 			return nil, fmt.Errorf("email: scan thread: %w", err)
-		}
-		if latestID != nil {
-			t.Latest = &MessageView{
-				ID:            *latestID,
-				ThreadID:      t.ID,
-				Direction:     *latestDirection,
-				FromAddress:   *latestFrom,
-				Subject:       *latestSubject,
-				CreatedAt:     *latestCreated,
-				Status:        *latestStatus,
-			}
 		}
 		threads = append(threads, t)
 	}
