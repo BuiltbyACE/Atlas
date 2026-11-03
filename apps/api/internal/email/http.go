@@ -41,6 +41,8 @@ func (h *Handler) Routes(reg *routing.Registry) {
 		"List email threads (inbox)", h.ListThreads)
 	reg.Authenticated(http.MethodGet, "/api/v1/email/threads/{id}",
 		"Get an email thread with messages", h.GetThread)
+	reg.Public(http.MethodPost, "/internal/v1/email/inbound",
+		"Inbound email webhook from Resend", h.ReceiveInbound)
 }
 
 // ── request and response shapes ──────────────────────────────
@@ -131,4 +133,73 @@ func (h *Handler) GetThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, messages)
+}
+
+// ReceiveInbound handles POST /internal/v1/email/inbound from Resend.
+func (h *Handler) ReceiveInbound(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		From        string   `json:"from"`
+		To          []string `json:"to"`
+		Cc          []string `json:"cc,omitempty"`
+		Bcc         []string `json:"bcc,omitempty"`
+		Subject     string   `json:"subject"`
+		Text        string   `json:"text"`
+		Html        string   `json:"html"`
+		MessageID   string   `json:"message_id"`
+		InReplyTo   string   `json:"in_reply_to,omitempty"`
+		References  string   `json:"references,omitempty"`
+		Attachments []struct {
+			Filename    string `json:"filename"`
+			ContentType string `json:"content_type"`
+			Size        int64  `json:"size"`
+			URL         string `json:"url"`
+		} `json:"attachments,omitempty"`
+	}
+	if err := httpx.DecodeJSON(w, r, &payload); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+
+	attachments := make([]InboundAttachment, 0, len(payload.Attachments))
+	for _, a := range payload.Attachments {
+		attachments = append(attachments, InboundAttachment{
+			Filename:    a.Filename,
+			ContentType: a.ContentType,
+			SizeBytes:   a.Size,
+			StorageKey:  a.URL, // Resend stores the attachment; we keep the URL as reference
+		})
+	}
+
+	msg, err := h.service.Receive(r.Context(), InboundMessage{
+		MessageID:   payload.MessageID,
+		InReplyTo:   payload.InReplyTo,
+		MsgReferences: payload.References,
+		FromAddress: payload.From,
+		ToAddresses: payload.To,
+		CCAddresses: payload.Cc,
+		Subject:     payload.Subject,
+		BodyText:    payload.Text,
+		BodyHTML:    payload.Html,
+		Attachments: attachments,
+	})
+	if err != nil {
+		if errors.Is(err, ErrInvalid) {
+			httpx.WriteError(w, r, h.logger, httpx.BadRequest(err.Error()))
+			return
+		}
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+
+	// Duplicate message (already received) is not an error.
+	if msg == nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusCreated, map[string]string{
+		"id":        msg.ID.String(),
+		"thread_id": msg.ThreadID.String(),
+		"status":    string(msg.Status),
+	})
 }
