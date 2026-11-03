@@ -20,7 +20,12 @@ COPY priv priv
 RUN mix compile && mix release
 
 # ── Stage 2: run ───────────────────────────────────────────────
-FROM alpine:3.20
+# The runtime base MUST match the builder's Alpine release: ERTS bundles a
+# NIF (`crypto`) that links against the builder's OpenSSL. `alpine:3.20` ships
+# OpenSSL 3.0, so a release built on Alpine 3.24 fails to load `crypto.so`
+# (`EVP_PKEY_sign_message_init: symbol not found`) and the app cannot even
+# generate a SCRAM nonce. Keep these two versions equal.
+FROM alpine:3.24
 
 # A release built on Alpine needs the runtime libraries of the Erlang VM it
 # bundles: ERTS links against libstdc++, ncurses and OpenSSL. Without these the
