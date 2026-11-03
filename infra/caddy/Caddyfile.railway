@@ -34,8 +34,13 @@
 	}
 
 	# ── Service-to-service API is never exposed publicly ──────
-	@internal path /internal/*
-	respond @internal 404
+	# This must be a `handle` block, not a bare `respond` directive: Caddy sorts
+	# `handle` before `respond` in its directive order, so a standalone
+	# `respond @internal 404` would never run — the catch-all `handle` below
+	# would proxy `/internal/*` to Next.js instead of refusing it.
+	handle /internal/* {
+		respond 404
+	}
 
 	# ── Realtime: Phoenix Channels WebSocket ──────────────────
 	@socket path /socket*
