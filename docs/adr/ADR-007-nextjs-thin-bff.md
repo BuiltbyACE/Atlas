@@ -16,7 +16,7 @@
 
 Next.js (App Router, TypeScript) is **UI + a thin BFF only**:
 
-- **Same origin, two services.** Caddy routes on one domain (e.g. `atlas.safaristack.co.ke` **[DECIDE]**): `/api/*` → Go, `/socket` (WebSocket) → Elixir, everything else → Next.js.
+- **Same origin, two services.** Caddy routes on one domain (**decided:** `atlas.safaristacksolutions.co.ke`): `/api/*` → Go, `/socket` (WebSocket) → Elixir, everything else → Next.js.
 - **Server components** call Go over the internal network, forwarding the user's session cookie; Go authorises every call as that user.
 - **Client components** call `/api/*` directly via a TypeScript client **generated from Go's OpenAPI spec**, so frontend and backend share one contract.
 - **Route handlers / server actions** exist only as thin pass-throughs (e.g. file-upload streaming). They never contain business rules and never talk to PostgreSQL.

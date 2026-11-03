@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://atlas.safaristack.co.ke/schemas/events/finance.expense.rejected.v1.schema.json",
+  "$id": "https://atlas.safaristacksolutions.co.ke/schemas/events/finance.expense.rejected.v1.schema.json",
   "title": "finance.expense.rejected.v1",
   "description": "An expense claim was rejected, with the reason carried for the claimant (docs/ATLAS.md §8.4).",
   "type": "object",

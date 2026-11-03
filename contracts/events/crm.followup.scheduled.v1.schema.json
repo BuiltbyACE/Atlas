@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://atlas.safaristack.co.ke/schemas/events/crm.followup.scheduled.v1.schema.json",
+  "$id": "https://atlas.safaristacksolutions.co.ke/schemas/events/crm.followup.scheduled.v1.schema.json",
   "title": "crm.followup.scheduled.v1",
   "description": "A follow-up was scheduled for a lead or opportunity (docs/ATLAS.md §8.1).",
   "type": "object",

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://atlas.safaristack.co.ke/schemas/events/contracts.contract.status_changed.v1.schema.json",
+  "$id": "https://atlas.safaristacksolutions.co.ke/schemas/events/contracts.contract.status_changed.v1.schema.json",
   "title": "contracts.contract.status_changed.v1",
   "description": "A contract moved between lifecycle statuses (docs/ATLAS.md §8.3).",
   "type": "object",

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://atlas.safaristack.co.ke/schemas/events/crm.opportunity.lost.v1.schema.json",
+  "$id": "https://atlas.safaristacksolutions.co.ke/schemas/events/crm.opportunity.lost.v1.schema.json",
   "title": "crm.opportunity.lost.v1",
   "description": "An opportunity was lost; the reason feeds strategy reviews (docs/ATLAS.md §8.1).",
   "type": "object",

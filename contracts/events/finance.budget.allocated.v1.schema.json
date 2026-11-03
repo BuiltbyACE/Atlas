@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://atlas.safaristack.co.ke/schemas/events/finance.budget.allocated.v1.schema.json",
+  "$id": "https://atlas.safaristacksolutions.co.ke/schemas/events/finance.budget.allocated.v1.schema.json",
   "title": "finance.budget.allocated.v1",
   "description": "A budget was created, approved or its allocation changed (docs/ATLAS.md §8.4).",
   "type": "object",

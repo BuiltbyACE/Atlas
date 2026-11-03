@@ -187,7 +187,7 @@ Every non-2xx is `application/problem+json` (ATLAS.md §11):
 
 ```json
 {
-  "type": "https://atlas.safaristack.co.ke/problems/unauthenticated",
+  "type": "https://atlas.safaristacksolutions.co.ke/problems/unauthenticated",
   "title": "Unauthorized",
   "status": 401,
   "detail": "Authentication is required.",
@@ -448,8 +448,8 @@ Two caveats:
 
 Tracked in ATLAS.md §21. Most relevant to you:
 
-- **D1 — domain** (`atlas.safaristack.co.ke` appears already in Problem `type`
-  URIs). **D2 — hosting/region** (latency to Kenya).
+- **D1 — domain** (`atlas.safaristacksolutions.co.ke` is now the live origin and
+  appears in Problem `type` URIs). **D2 — hosting/region** (latency to Kenya).
 - **UI kit [DECIDE]** — Tailwind is chosen; a component kit (e.g. shadcn/ui) is
   proposed in ATLAS.md §15 but not decided.
 - **Email provider** (invitations, password resets) — not yet chosen; the UI

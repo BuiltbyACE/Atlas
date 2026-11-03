@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://atlas.safaristack.co.ke/schemas/events/crm.followup.missed.v1.schema.json",
+  "$id": "https://atlas.safaristacksolutions.co.ke/schemas/events/crm.followup.missed.v1.schema.json",
   "title": "crm.followup.missed.v1",
   "description": "A follow-up passed its due date without completion; emitted by the sweep (docs/ATLAS.md §8.1).",
   "type": "object",

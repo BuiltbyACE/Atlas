@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://atlas.safaristack.co.ke/schemas/events/crm.proposal.sent.v1.schema.json",
+  "$id": "https://atlas.safaristacksolutions.co.ke/schemas/events/crm.proposal.sent.v1.schema.json",
   "title": "crm.proposal.sent.v1",
   "description": "A proposal was sent to the client (docs/ATLAS.md §8.1).",
   "type": "object",

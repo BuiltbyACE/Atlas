@@ -167,5 +167,5 @@ func problemType(code string) string {
 	if code == "" {
 		return "about:blank"
 	}
-	return "https://atlas.safaristack.co.ke/problems/" + strings.ToLower(code)
+	return "https://atlas.safaristacksolutions.co.ke/problems/" + strings.ToLower(code)
 }

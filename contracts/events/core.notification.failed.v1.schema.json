@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://atlas.safaristack.co.ke/schemas/events/core.notification.failed.v1.schema.json",
+  "$id": "https://atlas.safaristacksolutions.co.ke/schemas/events/core.notification.failed.v1.schema.json",
   "title": "core.notification.failed.v1",
   "description": "A notification exhausted its delivery attempts (docs/ATLAS.md §6.4, §8.10, §7.4). Emitted by the dispatcher so a failed send is visible rather than silent.",
   "type": "object",

@@ -275,7 +275,7 @@ These rules prevent "two backends doing the same thing". They are architectural 
 
 Next.js does not embed or run Go. The pattern is:
 
-- **Same origin, two services.** Caddy routes `/api/*` to Go and everything else to Next.js on one domain (e.g. `atlas.safaristack.co.ke` **[DECIDE]**). This keeps cookies first-party and avoids CORS complexity.
+- **Same origin, two services.** Caddy routes `/api/*` to Go and everything else to Next.js on one domain (**decided:** `atlas.safaristacksolutions.co.ke`). This keeps cookies first-party and avoids CORS complexity.
 - **Next.js server components** call Go over the internal network, forwarding the user's session cookie. Go authorises every call as that user.
 - **Next.js client components** call `/api/*` directly via a TypeScript client **generated from Go's OpenAPI spec**, so the frontend and backend share one contract.
 - **Next.js route handlers / server actions** may exist only as thin pass-throughs (e.g. file upload streaming). They never contain business rules and never talk to PostgreSQL.
