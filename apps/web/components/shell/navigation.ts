@@ -114,6 +114,8 @@ export const NAV_SECTIONS: NavSection[] = [
     title: "Platform",
     links: [
       { label: "Systems", href: "/systems", icon: "server", section: "Platform", keywords: "monitoring uptime incidents checks domains certificates credentials health", roles: ["ceo_internal", "system_admin"] },
+      { label: "Units", href: "/units", icon: "building", section: "Platform", keywords: "business units integrations indicators", roles: ["ceo_internal", "ceo_commercial", "unit_manager"] },
+      { label: "Intel", href: "/intel", icon: "pie", section: "Platform", keywords: "decisions risks briefs metric snapshots", roles: ["ceo_internal", "ceo_commercial"] },
     ],
   },
 ];
@@ -125,10 +127,7 @@ export interface ComingNextItem {
   roles?: string[];
 }
 
-export const COMING_NEXT: ComingNextItem[] = [
-  { label: "Units", icon: "building", roles: ["ceo_internal", "ceo_commercial", "unit_manager"] },
-  { label: "Intel", icon: "pie", roles: ["ceo_internal", "ceo_commercial"] },
-];
+export const COMING_NEXT: ComingNextItem[] = [];
 
 export const SETTINGS_LINK: NavLink = {
   label: "Settings",
