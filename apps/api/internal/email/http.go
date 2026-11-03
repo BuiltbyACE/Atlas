@@ -8,6 +8,7 @@ package email
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -108,7 +109,7 @@ func (h *Handler) Compose(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListThreads(w http.ResponseWriter, r *http.Request) {
 	threads, err := h.service.ListThreads(r.Context(), 50, nil)
 	if err != nil {
-		h.logger.Error("email: list threads failed", slog.String("error", err.Error()))
+		h.logger.Error("email: list threads failed", slog.String("error", fmt.Sprintf("%+v", err)))
 		httpx.WriteError(w, r, h.logger, err)
 		return
 	}
