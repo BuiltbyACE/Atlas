@@ -51,7 +51,7 @@ func NewPGStore(db *pgxpool.Pool) *PGStore { return &PGStore{db: db} }
 // unitCols is the unit projection with derived integration/indicator counts.
 const unitCols = `
 	u.id, u.ref, u.name, u.code, u.kind, u.owner_person_id, COALESCE(p.full_name, ''),
-	u.description, u.status, u.version, u.created_at, u.updated_at,
+	u.description, CASE WHEN u.active THEN 'active' ELSE 'retired' END AS status, u.version, u.created_at, u.updated_at,
 	COALESCE(ig.total, 0), COALESCE(ig.active, 0), COALESCE(ind.count, 0)`
 
 // unitJoins left-joins the derived aggregates.
@@ -89,7 +89,7 @@ func (s *PGStore) ListUnits(ctx context.Context, q UnitQuery, limit int, before 
 		add("u.kind = $%d", string(*q.Kind))
 	}
 	if q.Status != nil {
-		add("u.status = $%d", string(*q.Status))
+		add("u.active = $%d", *q.Status == "active")
 	}
 	if q.OwnerID != nil {
 		add("u.owner_person_id = $%d", *q.OwnerID)
