@@ -22,6 +22,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/contracts"
 	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
+	"github.com/safaristack/atlas/apps/api/internal/email"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/finance"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
@@ -60,6 +61,8 @@ type Deps struct {
 	Dashboard *dashboard.Handler
 	// Scorecard is the company health roll-up (§8.9); mounted when present.
 	Scorecard *scorecard.Handler
+	// Email is the Phase 6 two-way email surface; mounted when present.
+	Email *email.Handler
 	// Files is optional, and only mounted when object storage is configured
 	// (local development may run without a bucket).
 	Files *files.Handler
@@ -154,6 +157,10 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.Scorecard != nil {
 		registerScorecard(reg, d.Scorecard)
+	}
+
+	if d.Email != nil {
+		registerEmail(reg, d.Email)
 	}
 
 	if d.Files != nil {
@@ -345,6 +352,12 @@ func registerDashboard(reg *routing.Registry, h *dashboard.Handler) {
 func registerScorecard(reg *routing.Registry, h *scorecard.Handler) {
 	reg.Gated("intel.dashboard.read", http.MethodGet, "/api/v1/dashboard/scorecard",
 		"Company scorecard", h.Scorecard)
+}
+
+// registerEmail declares the Phase 6 two-way email surface. Sending is gated
+// by core.email.send; reading inbox threads is authenticated.
+func registerEmail(reg *routing.Registry, h *email.Handler) {
+	h.Routes(reg)
 }
 
 // registerWork declares the Phase 2 work-orchestration surface. Reads need

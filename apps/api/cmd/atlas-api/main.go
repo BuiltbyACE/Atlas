@@ -30,6 +30,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/contracts"
 	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
+	emailapi "github.com/safaristack/atlas/apps/api/internal/email"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/finance"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
@@ -221,6 +222,11 @@ func run() error {
 	intelService.SetAudit(auditWriter)
 	intelHandler := intel.NewHandler(intelService, logger)
 
+	// Email is the Phase 6 two-way surface: outbound through the SMTP adapter
+	// already used for invitations, inbound through a provider webhook.
+	emailService := emailapi.NewService(emailapi.NewPGStore(pool), logger)
+	emailHandler := emailapi.NewHandler(emailService, logger)
+
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
 		Logger:        logger,
@@ -245,6 +251,7 @@ func run() error {
 		Systems:      systemsHandler,
 		Units:        unitsHandler,
 		Intel:        intelHandler,
+		Email:        emailHandler,
 	})
 
 	srv := &http.Server{
