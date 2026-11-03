@@ -1,9 +1,6 @@
-"use client";
-
 import Link from "next/link";
-import { useState } from "react";
 
-import { Button, ButtonLink, Field, Select, TextInput } from "@/components/form";
+import { ButtonLink } from "@/components/form";
 import { Icon } from "@/components/icons";
 import { SignalRefresh } from "@/components/signal-refresh";
 import {
@@ -22,15 +19,14 @@ import {
   getContact,
   listLeads,
   listOpportunities,
-  updateContact,
   type CrmContact,
   type Lead,
   type Opportunity,
 } from "@/lib/api/atlas";
 import { ApiError } from "@/lib/api/client";
-import { personDirectory, personName } from "@/lib/directory";
 import { formatDay, formatMinor, humanise } from "@/lib/format";
-import { useMutation } from "@/lib/use-mutation";
+
+import { ContactEditor } from "./contact-editor";
 
 /**
  * Contact detail. Reads the contact and its related leads and opportunities
@@ -74,10 +70,9 @@ export default async function ContactDetailPage({
     );
   }
 
-  const [leadsResult, opportunitiesResult, names] = await Promise.all([
+  const [leadsResult, opportunitiesResult] = await Promise.all([
     safe<{ items: Lead[] }>(listLeads(), { items: [] }),
     safe<{ items: Opportunity[] }>(listOpportunities(), { items: [] }),
-    personDirectory(),
   ]);
 
   const relatedLeads = leadsResult.items.filter((l) => l.contact_id === id);
@@ -256,61 +251,3 @@ export default async function ContactDetailPage({
   );
 }
 
-function ContactEditor({
-  contact,
-}: {
-  contact: CrmContact;
-}) {
-  const { busy, problem, run, reset } = useMutation();
-  const [role, setRole] = useState(contact.role ?? "");
-  const [whatsapp, setWhatsapp] = useState(contact.whatsapp_number ?? "");
-
-  async function onSave(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const updated = await run(async () => {
-      return updateContact(contact.id, contact.version, {
-        name: contact.name,
-        role: role || undefined,
-        whatsapp_number: whatsapp || undefined,
-        phones: contact.phones,
-        emails: contact.emails,
-        consent_marketing: contact.consent_marketing,
-        consent_whatsapp: contact.consent_whatsapp,
-        consent_call_recording: contact.consent_call_recording,
-      });
-    });
-    if (updated) {
-      reset();
-    }
-  }
-
-  return (
-    <Card title="Manage contact">
-      {problem && <ProblemNotice error={problem} title="The contact wasn't updated" />}
-
-      <form onSubmit={onSave} className="flex flex-col gap-4 px-6 py-[22px]">
-        <Field label="Role">
-          <TextInput
-            name="role"
-            defaultValue={contact.role ?? ""}
-            onChange={(e) => setRole(e.target.value)}
-            placeholder="e.g. Procurement Manager"
-          />
-        </Field>
-        <Field label="WhatsApp number">
-          <TextInput
-            name="whatsapp"
-            defaultValue={contact.whatsapp_number ?? ""}
-            onChange={(e) => setWhatsapp(e.target.value)}
-            placeholder="+254 7xx xxx xxx"
-          />
-        </Field>
-        <div className="flex items-end gap-2 pt-4">
-          <Button type="submit" variant="primary" disabled={busy}>
-            {busy ? "Saving…" : "Save"}
-          </Button>
-        </div>
-      </form>
-    </Card>
-  );
-}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Drawer } from "@/components/drawer";
 import { Button, Field, Select, TextInput } from "@/components/form";
@@ -20,13 +20,19 @@ import { useMutation } from "@/lib/use-mutation";
  * Opens in a drawer over the CRM page. Name is the only required field;
  * everything else is optional context for the commercial team.
  */
-export default async function NewOrganizationPage() {
+export default function NewOrganizationPage() {
   const router = useRouter();
   const notify = useToast();
   const { busy, problem, run, reset } = useMutation();
   const [open, setOpen] = useState(true);
+  const [people, setPeople] = useState<Map<string, string>>(new Map());
 
-  const people = await personDirectory();
+  useEffect(() => {
+    personDirectory().then(
+      (directory) => setPeople(directory),
+      () => setPeople(new Map()),
+    );
+  }, []);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

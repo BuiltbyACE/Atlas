@@ -40,7 +40,7 @@ import { useMutation } from "@/lib/use-mutation";
  */
 export const dynamic = "force-dynamic";
 
-export default async function MyExpensesPage() {
+export default function MyExpensesPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [expenses, setExpenses] = useState<FinanceExpense[]>([]);

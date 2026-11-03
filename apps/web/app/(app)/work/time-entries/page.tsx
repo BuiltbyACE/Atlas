@@ -45,10 +45,11 @@ import { useMutation } from "@/lib/use-mutation";
  */
 export const dynamic = "force-dynamic";
 
-export default async function TimeEntriesPage() {
+export default function TimeEntriesPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [entries, setEntries] = useState<TimeEntry[]>([]);
+  const [names, setNames] = useState<Map<string, string>>(new Map());
   const [error, setError] = useState<ApiError | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -68,7 +69,12 @@ export default async function TimeEntriesPage() {
     );
   }, [taskFilter, personFilter]);
 
-  const names = await personDirectory();
+  useEffect(() => {
+    personDirectory().then(
+      (directory) => setNames(directory),
+      () => setNames(new Map()),
+    );
+  }, []);
 
   const totalMinutes = entries.reduce((sum, e) => sum + e.minutes, 0);
   const totalHours = (totalMinutes / 60).toFixed(1);

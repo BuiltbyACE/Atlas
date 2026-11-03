@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Drawer } from "@/components/drawer";
 import { Button, Field, Select, TextInput } from "@/components/form";
@@ -21,17 +21,24 @@ import { useMutation } from "@/lib/use-mutation";
  * Opens in a drawer over the contracts page. Organization and type are
  * required; everything else drafts the agreement for later completion.
  */
-export default async function NewContractPage() {
+export default function NewContractPage() {
   const router = useRouter();
   const notify = useToast();
   const { busy, problem, run, reset } = useMutation();
   const [open, setOpen] = useState(true);
+  const [orgs, setOrgs] = useState<CrmOrganization[]>([]);
+  const [people, setPeople] = useState<Map<string, string>>(new Map());
 
-  const orgs = await listOrganizations({ limit: 200 }).then(
-    (page) => page.items,
-    () => [] as CrmOrganization[],
-  );
-  const people = await personDirectory();
+  useEffect(() => {
+    listOrganizations({ limit: 200 }).then(
+      (page) => setOrgs(page.items),
+      () => setOrgs([]),
+    );
+    personDirectory().then(
+      (directory) => setPeople(directory),
+      () => setPeople(new Map()),
+    );
+  }, []);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

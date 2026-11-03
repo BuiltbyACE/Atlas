@@ -154,7 +154,7 @@ export default function NewReviewPage() {
           onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setComments(e.target.value)}
         />
         <p className="mt-1 text-[11.5px] text-muted">
-          Free-form comments on the person's performance.
+          Free-form comments on the person&rsquo;s performance.
         </p>
       </Field>
 

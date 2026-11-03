@@ -1,5 +1,3 @@
-"use client";
-
 import { SignalRefresh } from "@/components/signal-refresh";
 import {
   Badge,

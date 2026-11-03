@@ -154,7 +154,7 @@ export default async function MyWorkPage() {
               iconTone="success"
               title="No open tasks"
             >
-              You're all caught up.
+              You&rsquo;re all caught up.
             </EmptyState>
           ) : (
             <Table>
@@ -226,7 +226,7 @@ export default async function MyWorkPage() {
                 iconTone="warning"
                 title="No report filed yet"
               >
-                File today's report to track your progress.
+                File today&rsquo;s report to track your progress.
               </EmptyState>
             </div>
           )}

@@ -1,7 +1,3 @@
-"use client";
-
-import Link from "next/link";
-
 import { ButtonLink } from "@/components/form";
 import { Icon } from "@/components/icons";
 import { SignalRefresh } from "@/components/signal-refresh";
@@ -15,15 +11,14 @@ import {
   Th,
 } from "@/components/ui";
 import {
-  completeFollowup,
-  cancelFollowup,
   getFollowup,
   type Followup,
 } from "@/lib/api/atlas";
 import { ApiError } from "@/lib/api/client";
 import { personDirectory, personName } from "@/lib/directory";
 import { formatDay, formatDateTime, humanise } from "@/lib/format";
-import { useMutation } from "@/lib/use-mutation";
+
+import { FollowupActions } from "./followup-actions";
 
 /**
  * Follow-up detail. Read one scheduled follow-up and complete or cancel it.
@@ -36,7 +31,6 @@ export default async function FollowupDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { busy, problem, run, reset } = useMutation();
 
   let followup: Followup;
   try {
@@ -64,24 +58,6 @@ export default async function FollowupDetailPage({
     followup.status !== "done" &&
     followup.status !== "missed" &&
     followup.status !== "cancelled";
-
-  async function onComplete(outcome: string) {
-    const updated = await run(async () => {
-      return completeFollowup(followup.id, followup.version, outcome);
-    });
-    if (updated) {
-      reset();
-    }
-  }
-
-  async function onCancel(outcome: string) {
-    const updated = await run(async () => {
-      return cancelFollowup(followup.id, followup.version, outcome);
-    });
-    if (updated) {
-      reset();
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -164,39 +140,10 @@ export default async function FollowupDetailPage({
       </Card>
 
       {isOpen ? (
-        <Card title="Resolve follow-up">
-          <form className="flex flex-col gap-3 px-6 py-[22px]" onSubmit={async (e) => {
-            e.preventDefault();
-            const data = new FormData(e.currentTarget);
-            await onComplete(String(data.get("outcome") ?? "Completed"));
-          }}>
-            <Field label="Outcome">
-              <TextInput
-                name="outcome"
-                required
-                placeholder="e.g. Spoke with decision maker, sent proposal"
-              />
-            </Field>
-            <div className="flex items-end gap-2 pt-4">
-              <Button type="submit" variant="primary" disabled={busy}>
-                {busy ? "Completing…" : "Mark as done"}
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                onClick={async () => {
-                  const outcome = window.prompt("Reason for cancelling:");
-                  if (outcome !== null) {
-                    await onCancel(outcome);
-                  }
-                }}
-                disabled={busy}
-              >
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </Card>
+        <FollowupActions
+          followupId={followup.id}
+          version={followup.version}
+        />
       ) : null}
 
       <Card title="Timestamps">
@@ -222,76 +169,5 @@ export default async function FollowupDetailPage({
         </Table>
       </Card>
     </div>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-[12px] font-medium text-night">{label}</label>
-      {children}
-    </div>
-  );
-}
-
-function TextInput({
-  name,
-  value,
-  onChange,
-  placeholder,
-  required,
-}: {
-  name: string;
-  value?: string;
-  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  placeholder?: string;
-  required?: boolean;
-}) {
-  return (
-    <input
-      name={name}
-      value={value ?? ""}
-      onChange={onChange}
-      placeholder={placeholder}
-      required={required}
-      className="w-full rounded-control border border-line-strong bg-white px-3 text-[14.5px] text-night outline-none transition placeholder:text-[#7A879C] focus:border-atlas focus:shadow-[0_0_0_3px_rgba(26,108,245,.15)] h-11"
-    />
-  );
-}
-
-function Button({
-  children,
-  onClick,
-  variant,
-  disabled,
-  type,
-}: {
-  children: React.ReactNode;
-  onClick?: () => void;
-  variant?: "primary" | "secondary" | "danger" | "ghost";
-  disabled?: boolean;
-  type?: "submit" | "reset" | "button";
-}) {
-  return (
-    <button
-      type={type || "button"}
-      onClick={onClick}
-      disabled={disabled}
-      className={`px-4 py-2 rounded font-medium text-sm transition ${
-        variant === "primary"
-          ? "bg-atlas text-white hover:bg-atlas-hover disabled:bg-atlas/50"
-          : variant === "danger"
-            ? "bg-[#C0352B] text-white hover:bg-[#9E2A22] disabled:bg-[#C0352B]/50"
-            : "border-line-strong bg-white text-night hover:border-[#B8C3D6] hover:bg-[#FCFCFD] disabled:opacity-60"
-      }`}
-    >
-      {children}
-    </button>
   );
 }

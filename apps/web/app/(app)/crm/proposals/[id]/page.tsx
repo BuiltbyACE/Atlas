@@ -1,7 +1,3 @@
-"use client";
-
-import Link from "next/link";
-
 import { ButtonLink } from "@/components/form";
 import { Icon } from "@/components/icons";
 import { SignalRefresh } from "@/components/signal-refresh";

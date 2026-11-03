@@ -33,9 +33,10 @@ import { useMutation } from "@/lib/use-mutation";
  */
 export const dynamic = "force-dynamic";
 
-export default async function InteractionsPage() {
+export default function InteractionsPage() {
   const router = useRouter();
   const [interactions, setInteractions] = useState<CrmInteraction[]>([]);
+  const [names, setNames] = useState<Map<string, string>>(new Map());
   const [error, setError] = useState<ApiError | null>(null);
 
   useEffect(() => {
@@ -46,9 +47,11 @@ export default async function InteractionsPage() {
         else throw err;
       },
     );
+    personDirectory().then(
+      (directory) => setNames(directory),
+      () => setNames(new Map()),
+    );
   }, []);
-
-  const names = await personDirectory();
 
   return (
     <div className="space-y-6">

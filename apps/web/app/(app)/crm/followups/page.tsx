@@ -32,9 +32,10 @@ import { useMutation } from "@/lib/use-mutation";
  */
 export const dynamic = "force-dynamic";
 
-export default async function FollowupsPage() {
+export default function FollowupsPage() {
   const router = useRouter();
   const [followups, setFollowups] = useState<Followup[]>([]);
+  const [names, setNames] = useState<Map<string, string>>(new Map());
   const [error, setError] = useState<ApiError | null>(null);
 
   useEffect(() => {
@@ -45,9 +46,11 @@ export default async function FollowupsPage() {
         else throw err;
       },
     );
+    personDirectory().then(
+      (directory) => setNames(directory),
+      () => setNames(new Map()),
+    );
   }, []);
-
-  const names = await personDirectory();
 
   return (
     <div className="space-y-6">

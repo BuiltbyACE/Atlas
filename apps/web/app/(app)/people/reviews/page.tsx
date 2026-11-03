@@ -32,7 +32,7 @@ import { humanise } from "@/lib/format";
  */
 export const dynamic = "force-dynamic";
 
-export default async function ReviewsPage() {
+export default function ReviewsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [reviews, setReviews] = useState<Review[]>([]);

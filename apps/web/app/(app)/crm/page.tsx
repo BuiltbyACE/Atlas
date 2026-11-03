@@ -179,6 +179,30 @@ export default async function CrmPage({
         }
       />
 
+      <div className="flex flex-wrap items-center gap-2">
+        <ButtonLink href="/crm/leads" size="sm" variant="secondary">
+          All leads
+        </ButtonLink>
+        <ButtonLink href="/crm/opportunities" size="sm" variant="secondary">
+          All opportunities
+        </ButtonLink>
+        <ButtonLink href="/crm/organizations" size="sm" variant="secondary">
+          Organizations
+        </ButtonLink>
+        <ButtonLink href="/crm/contacts" size="sm" variant="secondary">
+          Contacts
+        </ButtonLink>
+        <ButtonLink href="/crm/interactions" size="sm" variant="secondary">
+          Interactions
+        </ButtonLink>
+        <ButtonLink href="/crm/followups" size="sm" variant="secondary">
+          Follow-ups
+        </ButtonLink>
+        <ButtonLink href="/crm/proposals" size="sm" variant="secondary">
+          Proposals
+        </ButtonLink>
+      </div>
+
       <StatGrid label="Sales overview">
         <Stat
           label="Open pipeline"

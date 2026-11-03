@@ -252,7 +252,7 @@ function QuickJump({ onClose, userRoles }: { onClose: () => void; userRoles: str
     return [...pages, ...actions].filter(
       (item) => !q || `${item.label} ${item.group} ${item.keywords}`.toLowerCase().includes(q),
     );
-  }, [query]);
+  }, [query, userRoles]);
 
   useEffect(() => {
     input.current?.focus();

@@ -48,13 +48,39 @@ export function heartbeat(): Promise<void> {
 
 // ── auth write wrappers (§6.1) ──────────────────────────────────────────────
 
+/** A role grant on an invite or a personnel record. */
+export interface RoleGrantSpec {
+  role_key: string;
+  /** Where the grant applies. Permissions are not scope-filtered yet, so the
+   * invite form grants at company scope. */
+  scope_type:
+    | "company"
+    | "business_unit"
+    | "department"
+    | "project"
+    | "own";
+  scope_id?: string;
+}
+
 /** Body for inviting a person (`POST /api/v1/auth/invites`). */
 export interface CreateInviteBody {
   email: string;
   full_name: string;
   employment_type?: string;
-  role_grants?: string[];
+  role_grants?: RoleGrantSpec[];
   ttl_hours?: number;
+}
+
+/** A row of the role catalogue (`GET /api/v1/roles`, `core.role.read`). */
+export interface Role {
+  key: string;
+  name: string;
+  description?: string;
+}
+
+/** List the roles a grant may reference. */
+export function listRoles(): Promise<{ roles: Role[] }> {
+  return apiFetch<{ roles: Role[] }>("/api/v1/roles", { cache: "no-store" });
 }
 
 /** Invite a person to join Atlas (`POST /api/v1/auth/invites`, gated by
@@ -1492,6 +1518,18 @@ export function getProposal(id: string): Promise<Proposal> {
   return apiFetch<Proposal>(`/api/v1/crm/proposals/${id}`, {
     cache: "no-store",
   });
+}
+
+/** `GET /api/v1/crm/opportunities/{id}/proposals`: an opportunity's offers,
+ * newest version first (`crm.proposal.read`). There is no global list route,
+ * so the index page fans out over the opportunity list. */
+export function listProposals(
+  opportunityId: string,
+): Promise<{ items: Proposal[] }> {
+  return apiFetch<{ items: Proposal[] }>(
+    `/api/v1/crm/opportunities/${opportunityId}/proposals`,
+    { cache: "no-store" },
+  );
 }
 
 export function createProposal(

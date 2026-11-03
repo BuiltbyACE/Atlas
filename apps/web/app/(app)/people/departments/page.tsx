@@ -34,7 +34,7 @@ import { humanise } from "@/lib/format";
  */
 export const dynamic = "force-dynamic";
 
-export default async function DepartmentsPage() {
+export default function DepartmentsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [depts, setDepts] = useState<Department[]>([]);
