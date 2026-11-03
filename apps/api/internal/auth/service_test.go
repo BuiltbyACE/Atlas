@@ -21,6 +21,7 @@ type fakeStore struct {
 	services map[string]*ServiceIdentity
 	recovery map[string]bool // key: hex(recovery hash), true while unused
 	attempts []time.Time
+	roles    map[string]Role // key: role key
 
 	// principalErr, when set, is returned by LoadPrincipal (for the
 	// authorisation-check tests). permissions overrides the default set.
@@ -34,6 +35,7 @@ func newFakeStore() *fakeStore {
 		sessions: map[string]*Session{},
 		services: map[string]*ServiceIdentity{},
 		recovery: map[string]bool{},
+		roles:    map[string]Role{},
 	}
 }
 
@@ -197,6 +199,14 @@ func (f *fakeStore) InviteByTokenHash(ctx context.Context, hash []byte) (*Invite
 
 func (f *fakeStore) AcceptInvite(ctx context.Context, in AcceptInviteInput) (*AcceptedAccount, error) {
 	return nil, nil
+}
+
+func (f *fakeStore) ListRoles(ctx context.Context) ([]Role, error) {
+	roles := make([]Role, 0, len(f.roles))
+	for _, r := range f.roles {
+		roles = append(roles, r)
+	}
+	return roles, nil
 }
 
 // ── harness ──────────────────────────────────────────────────

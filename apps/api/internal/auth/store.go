@@ -75,6 +75,13 @@ type ServiceIdentity struct {
 	DisabledAt  *time.Time
 }
 
+// Role is a row of core.roles: the catalogue a role grant may name (§3.2).
+type Role struct {
+	Key         string
+	Name        string
+	Description string
+}
+
 // GrantSpec is a role grant carried on an invite.
 type GrantSpec struct {
 	RoleKey   string     `json:"role_key"`
@@ -142,6 +149,8 @@ type Store interface {
 	CreateInvite(ctx context.Context, inv *Invite) error
 	InviteByTokenHash(ctx context.Context, hash []byte) (*Invite, error)
 	AcceptInvite(ctx context.Context, in AcceptInviteInput) (*AcceptedAccount, error)
+
+	ListRoles(ctx context.Context) ([]Role, error)
 }
 
 // PGStore is the pgx-backed implementation of Store.
@@ -672,6 +681,35 @@ func (s *PGStore) AcceptInvite(ctx context.Context, in AcceptInviteInput) (*Acce
 		return nil, fmt.Errorf("auth: accept invite commit: %w", err)
 	}
 	return &AcceptedAccount{AccountID: accountID, PersonID: personID, Email: email}, nil
+}
+
+// ── roles ────────────────────────────────────────────────────
+
+// ListRoles returns the role catalogue ordered by key. It reads core.roles,
+// which the seed writes (§3.2), so the list always matches what a grant may
+// reference.
+func (s *PGStore) ListRoles(ctx context.Context) ([]Role, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT key, name, COALESCE(description, '')
+		FROM core.roles
+		ORDER BY key`)
+	if err != nil {
+		return nil, fmt.Errorf("auth: list roles: %w", err)
+	}
+	defer rows.Close()
+
+	var roles []Role
+	for rows.Next() {
+		var r Role
+		if err := rows.Scan(&r.Key, &r.Name, &r.Description); err != nil {
+			return nil, fmt.Errorf("auth: scan role: %w", err)
+		}
+		roles = append(roles, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("auth: roles: %w", err)
+	}
+	return roles, nil
 }
 
 // ── helpers ──────────────────────────────────────────────────

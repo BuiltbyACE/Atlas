@@ -56,12 +56,12 @@ type loginResponse struct {
 }
 
 type userResponse struct {
-	ID         string   `json:"id"`
-	Email      string   `json:"email"`
-	Name       string   `json:"name"`
-	Subject    string   `json:"subject"`
-	PersonID   string   `json:"person_id,omitempty"`
-	Roles      []string `json:"roles"`
+	ID          string   `json:"id"`
+	Email       string   `json:"email"`
+	Name        string   `json:"name"`
+	Subject     string   `json:"subject"`
+	PersonID    string   `json:"person_id,omitempty"`
+	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions"`
 }
 
@@ -106,6 +106,12 @@ type inviteResponse struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
 	Email     string    `json:"email"`
+}
+
+type roleResponse struct {
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 type acceptInviteRequest struct {
@@ -338,6 +344,26 @@ func (h *Handler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"revoked": count})
 }
 
+// ListRoles handles GET /api/v1/roles: the role catalogue an administrator may
+// grant on an invite or a personnel record. It is gated by core.role.read.
+func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
+	roles, err := h.service.Roles(r.Context())
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+
+	views := make([]roleResponse, 0, len(roles))
+	for _, role := range roles {
+		views = append(views, roleResponse{
+			Key:         role.Key,
+			Name:        role.Name,
+			Description: role.Description,
+		})
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"roles": views})
+}
+
 // RealtimeToken handles POST /api/v1/auth/realtime-token.
 func (h *Handler) RealtimeToken(w http.ResponseWriter, r *http.Request) {
 	principal, ok := authz.PrincipalFrom(r.Context())
@@ -436,12 +462,12 @@ func userView(p *authz.Principal) *userResponse {
 		perms = append(perms, perm)
 	}
 	return &userResponse{
-		ID:         p.UserID.String(),
-		Email:      p.Email,
-		Name:       p.Name,
-		Subject:    p.Subject,
-		PersonID:   uuidStringOrEmpty(p.PersonID),
-		Roles:      p.Roles,
+		ID:          p.UserID.String(),
+		Email:       p.Email,
+		Name:        p.Name,
+		Subject:     p.Subject,
+		PersonID:    uuidStringOrEmpty(p.PersonID),
+		Roles:       p.Roles,
 		Permissions: perms,
 	}
 }

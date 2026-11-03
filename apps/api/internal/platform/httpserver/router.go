@@ -23,7 +23,6 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
 	"github.com/safaristack/atlas/apps/api/internal/files"
-	"github.com/safaristack/atlas/apps/api/internal/scorecard"
 	"github.com/safaristack/atlas/apps/api/internal/finance"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
 	"github.com/safaristack/atlas/apps/api/internal/intel"
@@ -33,6 +32,7 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/health"
 	"github.com/safaristack/atlas/apps/api/internal/platform/httpx"
 	"github.com/safaristack/atlas/apps/api/internal/platform/routing"
+	"github.com/safaristack/atlas/apps/api/internal/scorecard"
 	"github.com/safaristack/atlas/apps/api/internal/settings"
 	"github.com/safaristack/atlas/apps/api/internal/systems"
 	"github.com/safaristack/atlas/apps/api/internal/units"
@@ -128,6 +128,7 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 			SecureCookies: d.Cfg.Env != config.EnvLocal,
 		}, d.Logger)
 		registerAuth(reg, handler)
+		registerRoles(reg, handler)
 		gate = auth.NewGate(d.Auth, d.Cfg.SessionCookieName, d.Logger)
 	}
 
@@ -241,6 +242,14 @@ func registerAuth(reg *routing.Registry, h *auth.Handler) {
 
 	reg.Gated("core.authz.check", http.MethodGet, "/internal/v1/authz/check",
 		"Check whether a user may join a realtime topic (service-to-service)", h.Check)
+}
+
+// registerRoles declares the role catalogue (§3.2). It is separate from the
+// identity routes because it describes configuration, not the caller: an
+// administrator reads it to pick a role when inviting a person.
+func registerRoles(reg *routing.Registry, h *auth.Handler) {
+	reg.Gated("core.role.read", http.MethodGet, "/api/v1/roles",
+		"List the roles a grant may reference", h.ListRoles)
 }
 
 // registerNotifications declares the notification surface (§6.4). The user

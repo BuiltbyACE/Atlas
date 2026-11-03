@@ -580,6 +580,13 @@ func (s *Service) MintServiceToken(ctx context.Context, serviceID string, fallba
 // JWKS is the public key set Elixir fetches to verify realtime tokens.
 func (s *Service) JWKS() ed25519jwt.JWKS { return s.key.JWKS() }
 
+// ── roles ────────────────────────────────────────────────────
+
+// Roles lists the role catalogue, for the invite form's grant picker.
+func (s *Service) Roles(ctx context.Context) ([]Role, error) {
+	return s.store.ListRoles(ctx)
+}
+
 // ── invites ──────────────────────────────────────────────────
 
 // Invite creates a single-use invitation. The plaintext token is returned here
