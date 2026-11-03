@@ -47,7 +47,7 @@ func testService(t *testing.T) *auth.Service {
 		SessionCookieName:  "atlas_session",
 		SessionIdleTimeout: 12 * time.Hour,
 		SessionAbsoluteTTL: 7 * 24 * time.Hour,
-	}, discardLogger())
+	}, discardLogger(), nil)
 }
 
 func testDeps(t *testing.T) Deps {

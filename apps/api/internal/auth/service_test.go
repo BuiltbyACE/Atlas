@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/hex"
+	"log/slog"
 	"net/netip"
 	"strings"
 	"testing"
@@ -209,6 +210,10 @@ func (f *fakeStore) ListRoles(ctx context.Context) ([]Role, error) {
 	return roles, nil
 }
 
+func (f *fakeStore) InviterName(ctx context.Context, userID uuid.UUID) (string, error) {
+	return "", nil
+}
+
 // ── harness ──────────────────────────────────────────────────
 
 type harness struct {
@@ -252,7 +257,7 @@ func newHarness(t *testing.T) *harness {
 		ServiceAudience:      "atlas-internal",
 		LoginMaxFailures:     3,
 		LoginWindow:          15 * time.Minute,
-	}, nil)
+	}, slog.Default(), nil)
 	service.SetClock(func() time.Time { return now })
 
 	return &harness{service: service, store: store, sealer: sealer, now: now}

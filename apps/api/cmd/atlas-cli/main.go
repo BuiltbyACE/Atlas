@@ -503,7 +503,7 @@ verify. Paste the output into the caller's ATLAS_SERVICE_TOKEN.
 		RealtimeTTL:      cfg.RealtimeTokenTTL,
 		ServiceAudience:  cfg.ServiceAudience,
 		ServiceTokenTTL:  cfg.ServiceTokenTTL,
-	}, logger)
+	}, logger, nil)
 
 	token, expires, err := service.MintServiceToken(ctx, *id, nil)
 	if err != nil {

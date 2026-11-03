@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/safaristack/atlas/apps/api/internal/adapters/email"
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
@@ -298,6 +299,15 @@ func newAuthService(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool)
 		return nil, err
 	}
 
+	emailSender := email.New(email.Config{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		From:     cfg.SMTPFrom,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword,
+		TLS:      cfg.SMTPTLS,
+	})
+
 	return auth.NewService(auth.NewPGStore(pool), sealer, key, auth.ServiceConfig{
 		SessionCookieName:    cfg.SessionCookieName,
 		SessionIdleTimeout:   cfg.SessionIdleTimeout,
@@ -312,7 +322,8 @@ func newAuthService(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool)
 		ServiceTokenTTL:      cfg.ServiceTokenTTL,
 		LoginMaxFailures:     5,
 		LoginWindow:          15 * time.Minute,
-	}, logger), nil
+		PublicBaseURL:        cfg.PublicBaseURL,
+	}, logger, emailSender), nil
 }
 
 // signingKey parses the configured Ed25519 key, or generates an ephemeral one

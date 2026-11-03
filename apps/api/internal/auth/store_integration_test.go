@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -140,7 +141,7 @@ func TestServiceIdentityTokenRoundTrip(t *testing.T) {
 		RealtimeIssuer:  "atlas",
 		ServiceAudience: "atlas-internal",
 		ServiceTokenTTL: time.Hour,
-	}, nil)
+	}, slog.Default(), nil)
 
 	token, expires, err := service.MintServiceToken(ctx, serviceID, nil)
 	if err != nil {

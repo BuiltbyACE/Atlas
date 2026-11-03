@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/safaristack/atlas/apps/api/internal/authz"
+	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/platform/ed25519jwt"
 )
 
@@ -63,6 +64,7 @@ type ServiceConfig struct {
 	LoginMaxFailures     int
 	LoginWindow          time.Duration
 	RecoveryCodeCount    int
+	PublicBaseURL        string
 }
 
 // Service applies the sign-in, session, MFA and token rules.
@@ -73,10 +75,12 @@ type Service struct {
 	cfg    ServiceConfig
 	logger *slog.Logger
 	now    func() time.Time
+
+	emailSender notifications.Sender // sends invitation emails to invitees
 }
 
 // NewService wires the dependencies. A nil logger is replaced by the default.
-func NewService(store Store, sealer *Sealer, key *ed25519jwt.Key, cfg ServiceConfig, logger *slog.Logger) *Service {
+func NewService(store Store, sealer *Sealer, key *ed25519jwt.Key, cfg ServiceConfig, logger *slog.Logger, emailSender notifications.Sender) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -93,12 +97,13 @@ func NewService(store Store, sealer *Sealer, key *ed25519jwt.Key, cfg ServiceCon
 		cfg.LoginWindow = 15 * time.Minute
 	}
 	return &Service{
-		store:  store,
-		sealer: sealer,
-		key:    key,
-		cfg:    cfg,
-		logger: logger,
-		now:    time.Now,
+		store:       store,
+		sealer:      sealer,
+		key:         key,
+		cfg:         cfg,
+		logger:      logger,
+		now:         time.Now,
+		emailSender: emailSender,
 	}
 }
 
@@ -590,7 +595,8 @@ func (s *Service) Roles(ctx context.Context) ([]Role, error) {
 // ── invites ──────────────────────────────────────────────────
 
 // Invite creates a single-use invitation. The plaintext token is returned here
-// and never stored.
+// and never stored. An invitation email is sent to the invitee so they can
+// accept through the public invite page.
 func (s *Service) Invite(ctx context.Context, email, fullName, employment string, grants []GrantSpec, invitedBy *uuid.UUID, ttl time.Duration) (string, *Invite, error) {
 	trimmed := strings.ToLower(strings.TrimSpace(email))
 	if !strings.Contains(trimmed, "@") {
@@ -622,7 +628,43 @@ func (s *Service) Invite(ctx context.Context, email, fullName, employment string
 	if err := s.store.CreateInvite(ctx, invite); err != nil {
 		return "", nil, err
 	}
+
+	// Send the invitation email. A failure here must not roll back the invite:
+	// the record exists and the token is returned so the caller can resend.
+	if s.emailSender != nil {
+		go func() {
+			sendCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			inviteURL := s.cfg.PublicBaseURL + "/invite?token=" + raw
+			_, _ = s.emailSender.Send(sendCtx, notifications.Message{
+				To:             trimmed,
+				Subject:        "You're invited to join Atlas",
+				Body: fmt.Sprintf(
+					"Hi %s,\n\nYou've been invited to join Atlas by %s.\n\nAccept your invitation here: %s\n\nThis invite expires in %s.\n",
+					invite.FullName,
+					invitedByName(s, invitedBy),
+					inviteURL,
+					ttl,
+				),
+				IdempotencyKey: "invite:" + id.String(),
+			})
+		}()
+	}
+
 	return raw, invite, nil
+}
+
+// invitedByName returns a display name for the inviter, or "someone" when the
+// inviter is unknown (nil pointer).
+func invitedByName(s *Service, invitedBy *uuid.UUID) string {
+	if invitedBy == nil {
+		return "someone"
+	}
+	name, err := s.store.InviterName(context.Background(), *invitedBy)
+	if err != nil || name == "" {
+		return "someone"
+	}
+	return name
 }
 
 // AcceptInvite turns a token plus a chosen password into an account.

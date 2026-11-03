@@ -151,6 +151,8 @@ type Store interface {
 	AcceptInvite(ctx context.Context, in AcceptInviteInput) (*AcceptedAccount, error)
 
 	ListRoles(ctx context.Context) ([]Role, error)
+
+	InviterName(ctx context.Context, userID uuid.UUID) (string, error)
 }
 
 // PGStore is the pgx-backed implementation of Store.
@@ -710,6 +712,23 @@ func (s *PGStore) ListRoles(ctx context.Context) ([]Role, error) {
 		return nil, fmt.Errorf("auth: roles: %w", err)
 	}
 	return roles, nil
+}
+
+// InviterName returns the full name of the person behind a user account, for
+// use in invitation emails. Returns "" when the account or person is unknown.
+func (s *PGStore) InviterName(ctx context.Context, userID uuid.UUID) (string, error) {
+	var name string
+	if err := s.db.QueryRow(ctx, `
+		SELECT p.full_name
+		FROM core.user_accounts a
+		JOIN people.persons p ON p.id = a.person_id
+		WHERE a.id = $1`, userID).Scan(&name); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("auth: inviter name: %w", err)
+	}
+	return name, nil
 }
 
 // ── helpers ──────────────────────────────────────────────────
