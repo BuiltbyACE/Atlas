@@ -147,7 +147,7 @@ var RolePermissions = map[string][]string{
 	),
 
 	"engineer": concat(
-		read("core.notification.read", "core.file.read"),
+		read("core.notification.read", "core.file.read", "people.person.read"),
 		all(
 			"core.file.write",
 			"work.project.read", "work.task.read", "work.task.write",
@@ -161,7 +161,7 @@ var RolePermissions = map[string][]string{
 	),
 
 	"staff": {
-		"core.notification.read", "core.file.read",
+		"core.notification.read", "core.file.read", "people.person.read",
 		"work.project.read", "work.task.read", "work.task.write", "work.evidence.write",
 		"people.daily_report.submit", "people.leave.request",
 		"finance.expense.read", "finance.expense.write",
