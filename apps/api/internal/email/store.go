@@ -226,11 +226,11 @@ func (s *PGStore) ListThreads(ctx context.Context, limit int, before *uuid.UUID)
 	var threads []ThreadListItem
 	for rows.Next() {
 		var t ThreadListItem
-		var latestID uuid.UUID
-		var latestDirection MessageDirection
-		var latestFrom, latestSubject string
-		var latestCreated time.Time
-		var latestStatus MessageStatus
+		var latestID *uuid.UUID
+		var latestDirection *MessageDirection
+		var latestFrom, latestSubject *string
+		var latestCreated *time.Time
+		var latestStatus *MessageStatus
 		if err := rows.Scan(
 			&t.ID, &t.Subject, &t.UpdatedAt,
 			&t.MessageCount, &t.UnreadCount,
@@ -238,14 +238,16 @@ func (s *PGStore) ListThreads(ctx context.Context, limit int, before *uuid.UUID)
 		); err != nil {
 			return nil, fmt.Errorf("email: scan thread: %w", err)
 		}
-		t.Latest = &MessageView{
-			ID:            latestID,
-			ThreadID:      t.ID,
-			Direction:     latestDirection,
-			FromAddress:   latestFrom,
-			Subject:       latestSubject,
-			CreatedAt:     latestCreated,
-			Status:        latestStatus,
+		if latestID != nil {
+			t.Latest = &MessageView{
+				ID:            *latestID,
+				ThreadID:      t.ID,
+				Direction:     *latestDirection,
+				FromAddress:   *latestFrom,
+				Subject:       *latestSubject,
+				CreatedAt:     *latestCreated,
+				Status:        *latestStatus,
+			}
 		}
 		threads = append(threads, t)
 	}
