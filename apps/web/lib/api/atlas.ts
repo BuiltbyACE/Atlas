@@ -4859,6 +4859,32 @@ export function updateIntegrationRegistration(
 }
 
 // ═════════════════════════════════════════════════════════════════════
+// ── GitHub Engineering Intelligence (§8.9) ──────────────────────────────────
+
+/** The current GitHub connection status for the signed-in person. */
+export interface GitHubStatus {
+  connected: boolean;
+  installation_id?: number;
+  account_login?: string;
+  account_type?: string;
+  person_id?: string;
+}
+
+/** Fetch the current GitHub connection status. */
+export function getGitHubStatus(): Promise<GitHubStatus> {
+  return apiFetch<GitHubStatus>("/api/v1/integrations/github/status", {
+    cache: "no-store",
+  });
+}
+
+/** Redirect to GitHub App installation. */
+export function connectGitHub(personId: string): Promise<void> {
+  return apiFetch<void>("/api/v1/integrations/github/install", {
+    method: "GET",
+    query: { person_id: personId },
+  });
+}
+
 // Email (§8.4)
 // ═════════════════════════════════════════════════════════════════════
 
@@ -4974,6 +5000,20 @@ export function registerEmailAddress(
   return apiFetch<EmailAddress>("/api/v1/email/addresses", {
     method: "POST",
     body,
+  });
+}
+
+/** Delete a send-as email address (`DELETE /api/v1/email/addresses/{id}`, authenticated). */
+export function deleteEmailAddress(id: string): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(`/api/v1/email/addresses/${id}`, {
+    method: "DELETE",
+  });
+}
+
+/** Set a send-as address as primary (`POST /api/v1/email/addresses/{id}/primary`, authenticated). */
+export function setPrimaryEmailAddress(id: string): Promise<EmailAddress> {
+  return apiFetch<EmailAddress>(`/api/v1/email/addresses/${id}/primary`, {
+    method: "POST",
   });
 }
 
@@ -5202,4 +5242,5 @@ export function listDocumentShares(id: string): Promise<DocumentShare[]> {
     { cache: "no-store" },
   );
 }
+
 

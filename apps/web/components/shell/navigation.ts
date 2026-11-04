@@ -116,6 +116,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Systems", href: "/systems", icon: "server", section: "Platform", keywords: "monitoring uptime incidents checks domains certificates credentials health", roles: ["ceo_internal", "system_admin"] },
       { label: "Units", href: "/units", icon: "building", section: "Platform", keywords: "business units integrations indicators", roles: ["ceo_internal", "ceo_commercial", "unit_manager"] },
       { label: "Intel", href: "/intel", icon: "pie", section: "Platform", keywords: "decisions risks briefs metric snapshots", roles: ["ceo_internal", "ceo_commercial"] },
+      { label: "GitHub", href: "/integrations/github", icon: "github", section: "Platform", keywords: "connect repository code activity", roles: ["ceo_internal", "ceo_commercial", "engineer", "staff"] },
     ],
   },
   {
@@ -123,6 +124,7 @@ export const NAV_SECTIONS: NavSection[] = [
     links: [
       { label: "Inbox", href: "/email/inbox", icon: "document", section: "Communicate", keywords: "email messages inbox messages", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
       { label: "Compose", href: "/email/compose", icon: "plus", section: "Communicate", keywords: "send email write message", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
+      { label: "Addresses", href: "/email/addresses", icon: "card", section: "Communicate", keywords: "send as addresses email identity", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
     ],
   },
 ];
@@ -180,5 +182,6 @@ export function breadcrumbFor(
   else if (pathname.startsWith("/crm/proposals/")) trail.push({ label: "Proposal" });
   else if (pathname.startsWith("/contracts/")) trail.push({ label: "Contract" });
   else if (pathname.startsWith("/email/threads/")) trail.push({ label: "Message" });
+  else if (pathname.startsWith("/email/addresses")) trail.push({ label: "Addresses" });
   return trail;
 }
