@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -36,6 +37,117 @@ func (s *fakeStore) ReleaseDelivery(_ context.Context, deliveryID string) error 
 
 func (s *fakeStore) WriteEvent(_ context.Context, ev outbox.Event) error {
 	s.events = append(s.events, ev)
+	return nil
+}
+
+// GitHub installations (fake).
+func (s *fakeStore) CreateInstallation(_ context.Context, in InstallationInput) (Installation, error) {
+	return Installation{
+		ID:            uuid.New(),
+		InstallationID: in.InstallationID,
+		AccountType:    in.AccountType,
+		AccountLogin:   in.AccountLogin,
+		AccountID:      in.AccountID,
+		PersonID:       in.PersonID,
+		Status:         in.Status,
+		AuthorizedRepos: in.AuthorizedRepos,
+	}, nil
+}
+func (s *fakeStore) GetInstallation(_ context.Context, id uuid.UUID) (*Installation, error) {
+	return nil, nil
+}
+func (s *fakeStore) GetInstallationByGitHubID(_ context.Context, installationID int64) (*Installation, error) {
+	return nil, nil
+}
+func (s *fakeStore) ListInstallations(_ context.Context, q InstallationQuery, limit int, before *Cursor) ([]Installation, error) {
+	return nil, nil
+}
+func (s *fakeStore) UpdateInstallationStatus(_ context.Context, id uuid.UUID, status InstallationStatus) (Installation, error) {
+	return Installation{}, nil
+}
+func (s *fakeStore) LinkPersonToInstallation(_ context.Context, id uuid.UUID, personID uuid.UUID) (Installation, error) {
+	return Installation{}, nil
+}
+
+// GitHub user mappings (fake).
+func (s *fakeStore) CreateUserMapping(_ context.Context, in UserMappingInput) (UserMapping, error) {
+	return UserMapping{
+		ID:           uuid.New(),
+		PersonID:      in.PersonID,
+		GitHubUserID:  in.GitHubUserID,
+		GitHubLogin:   in.GitHubLogin,
+		InstallationID: in.InstallationID,
+		IsPrimary:     in.IsPrimary,
+	}, nil
+}
+func (s *fakeStore) GetUserMapping(_ context.Context, id uuid.UUID) (*UserMapping, error) {
+	return nil, nil
+}
+func (s *fakeStore) GetUserMappingByGitHubID(_ context.Context, githubUserID int64) (*UserMapping, error) {
+	return nil, nil
+}
+func (s *fakeStore) ListUserMappings(_ context.Context, q UserMappingQuery) ([]UserMapping, error) {
+	return nil, nil
+}
+func (s *fakeStore) SetPrimaryMapping(_ context.Context, id uuid.UUID) (UserMapping, error) {
+	return UserMapping{}, nil
+}
+func (s *fakeStore) DeleteUserMapping(_ context.Context, id uuid.UUID) error {
+	return nil
+}
+
+// GitHub repositories (fake).
+func (s *fakeStore) CreateRepository(_ context.Context, in RepositoryInput) (Repository, error) {
+	return Repository{
+		ID:             uuid.New(),
+		InstallationID: in.InstallationID,
+		GitHubRepoID:   in.GitHubRepoID,
+		FullName:       in.FullName,
+		Name:           in.Name,
+		IsPrivate:      in.IsPrivate,
+		ProjectID:      in.ProjectID,
+	}, nil
+}
+func (s *fakeStore) GetRepository(_ context.Context, id uuid.UUID) (*Repository, error) {
+	return nil, nil
+}
+func (s *fakeStore) GetRepositoryByGitHubID(_ context.Context, installationID int64, githubRepoID int64) (*Repository, error) {
+	return nil, nil
+}
+func (s *fakeStore) ListRepositories(_ context.Context, q RepositoryQuery) ([]Repository, error) {
+	return nil, nil
+}
+func (s *fakeStore) LinkRepositoryToProject(_ context.Context, id uuid.UUID, projectID uuid.UUID) (Repository, error) {
+	return Repository{}, nil
+}
+func (s *fakeStore) UpdateLastPushedAt(_ context.Context, id uuid.UUID, pushedAt time.Time) (Repository, error) {
+	return Repository{}, nil
+}
+
+// GitHub events (fake).
+func (s *fakeStore) CreateGitHubEvent(_ context.Context, in GitHubEventInput) (GitHubEvent, error) {
+	return GitHubEvent{
+		ID:             uuid.New(),
+		InstallationID: in.InstallationID,
+		DeliveryID:     in.DeliveryID,
+		EventType:      in.EventType,
+		Action:         in.Action,
+		Repository:     in.Repository,
+		SenderLogin:    in.SenderLogin,
+		SenderID:       in.SenderID,
+		Payload:        in.Payload,
+	}, nil
+}
+func (s *fakeStore) GetGitHubEvent(_ context.Context, id uuid.UUID) (*GitHubEvent, error) {
+	return nil, nil
+}
+func (s *fakeStore) GetGitHubEventByDeliveryID(_ context.Context, deliveryID string) (*GitHubEvent, error) {
+	return nil, nil
+}
+func (s *fakeStore) ListGitHubEvents(_ context.Context, q GitHubEventQuery, limit int, before *Cursor) ([]GitHubEvent, error) {
+	return nil, nil
+}
+func (s *fakeStore) MarkProcessed(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
@@ -125,14 +237,17 @@ func TestHandleGitHubLinksMergedPullRequest(t *testing.T) {
 	if len(work.attached) != 1 || work.attached[0] != taskID {
 		t.Fatalf("attached = %v, want [%s]", work.attached, taskID)
 	}
-	if len(store.events) != 1 {
-		t.Fatalf("events = %d, want 1", len(store.events))
+	if len(store.events) != 2 {
+		t.Fatalf("events = %d, want 2 (generic PR + merged PR link)", len(store.events))
 	}
-	if store.events[0].Type != outbox.TypeGitPullRequestMergedV1 {
-		t.Fatalf("event type = %q", store.events[0].Type)
+	if store.events[0].Type != outbox.TypeGitHubPullRequestV1 {
+		t.Fatalf("first event type = %q, want %q", store.events[0].Type, outbox.TypeGitHubPullRequestV1)
+	}
+	if store.events[1].Type != outbox.TypeGitPullRequestMergedV1 {
+		t.Fatalf("second event type = %q, want %q", store.events[1].Type, outbox.TypeGitPullRequestMergedV1)
 	}
 	var payload outbox.GitPullRequestMergedPayload
-	if err := json.Unmarshal(store.events[0].Payload, &payload); err != nil {
+	if err := json.Unmarshal(store.events[1].Payload, &payload); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
 	if payload.TaskID != taskID || payload.EvidenceID != work.evidenceID {
@@ -166,8 +281,8 @@ func TestHandleGitHubIsIdempotentByDelivery(t *testing.T) {
 	if len(work.attached) != 1 {
 		t.Fatalf("attached %d times, want 1", len(work.attached))
 	}
-	if len(store.events) != 1 {
-		t.Fatalf("events = %d, want 1", len(store.events))
+	if len(store.events) != 2 {
+		t.Fatalf("events = %d, want 2 (generic PR + merged PR link)", len(store.events))
 	}
 }
 
@@ -190,11 +305,11 @@ func TestHandleGitHubIgnoresUnmerged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleGitHub: %v", err)
 	}
-	if outcome.Status != StatusIgnored {
-		t.Fatalf("status = %q, want %q", outcome.Status, StatusIgnored)
+	if outcome.Status != StatusRecorded {
+		t.Fatalf("status = %q, want %q", outcome.Status, StatusRecorded)
 	}
-	if len(work.attached) != 0 || len(store.events) != 0 {
-		t.Fatal("an unmerged PR must not link or emit")
+	if len(work.attached) != 0 || len(store.events) != 1 {
+		t.Fatalf("an unmerged PR must not link but must store: attached=%d events=%d", len(work.attached), len(store.events))
 	}
 }
 
@@ -209,11 +324,11 @@ func TestHandleGitHubUnlinkedRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleGitHub: %v", err)
 	}
-	if outcome.Status != StatusUnlinked {
-		t.Fatalf("status = %q, want %q", outcome.Status, StatusUnlinked)
+	if outcome.Status != StatusRecorded {
+		t.Fatalf("status = %q, want %q", outcome.Status, StatusRecorded)
 	}
-	if len(store.events) != 0 {
-		t.Fatal("an unlinked PR must not emit an event")
+	if len(store.events) != 1 {
+		t.Fatalf("an unlinked PR must store an event: events=%d", len(store.events))
 	}
 }
 

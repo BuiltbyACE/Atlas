@@ -33,6 +33,17 @@
 		respond "ok" 200
 	}
 
+	# ── Public API + provider webhooks → Go ───────────────────
+	@api path /api/* /webhooks/* /internal/v1/email/inbound
+	handle @api {
+		reverse_proxy {$ATLAS_API_UPSTREAM} {
+			transport http {
+				dial_timeout 10s
+				response_header_timeout 60s
+			}
+		}
+	}
+
 	# ── Service-to-service API is never exposed publicly ──────
 	# This must be a `handle` block, not a bare `respond` directive: Caddy sorts
 	# `handle` before `respond` in its directive order, so a standalone
@@ -52,17 +63,6 @@
 			transport http {
 				dial_timeout 10s
 				response_header_timeout 30s
-			}
-		}
-	}
-
-	# ── Public API + provider webhooks → Go ───────────────────
-	@api path /api/* /webhooks/*
-	handle @api {
-		reverse_proxy {$ATLAS_API_UPSTREAM} {
-			transport http {
-				dial_timeout 10s
-				response_header_timeout 60s
 			}
 		}
 	}

@@ -12,7 +12,7 @@ import (
 
 func TestReceiveGitHubRequiresConfiguration(t *testing.T) {
 	svc := newTestService(newFakeStore(), &fakeWork{refs: map[string]uuid.UUID{}})
-	h := NewHandler(svc, "", nil)
+	h := NewHandler(svc, "", "", "", nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", nil)
 	rec := httptest.NewRecorder()
@@ -25,7 +25,7 @@ func TestReceiveGitHubRequiresConfiguration(t *testing.T) {
 
 func TestReceiveGitHubRejectsBadSignature(t *testing.T) {
 	svc := newTestService(newFakeStore(), &fakeWork{refs: map[string]uuid.UUID{}})
-	h := NewHandler(svc, "s3cr3t", nil)
+	h := NewHandler(svc, "s3cr3t", "", "", nil)
 
 	body := mergedPullRequestBody("ship", "PRJ-2026-007/T-0142")
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
@@ -50,7 +50,7 @@ func TestReceiveGitHubAcceptsSignedDelivery(t *testing.T) {
 		projectID:  uuid.New(),
 	}
 	svc := newTestService(newFakeStore(), work)
-	h := NewHandler(svc, secret, nil)
+	h := NewHandler(svc, secret, "", "", nil)
 
 	body := mergedPullRequestBody("ship", "PRJ-2026-007/T-0142")
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))

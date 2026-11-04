@@ -914,6 +914,15 @@ func registerIntegrations(reg *routing.Registry, h *integrations.Handler) {
 	// GitHub webhook: public, HMAC-signed, de-duplicated by delivery id (§11).
 	reg.Public(http.MethodPost, "/webhooks/github",
 		"Receive GitHub webhook deliveries (signed, de-duplicated)", h.ReceiveGitHub)
+
+	// GitHub installation management (§8.9 Engineering Intelligence).
+	// The install route is public: it redirects to GitHub for authorization.
+	reg.Public(http.MethodGet, "/api/v1/integrations/github/install",
+		"Redirect to GitHub App installation page", h.InstallGitHub)
+	reg.Public(http.MethodGet, "/api/v1/integrations/github/callback",
+		"GitHub OAuth callback after App installation", h.GitHubInstallCallback)
+	reg.Authenticated(http.MethodGet, "/api/v1/integrations/github/status",
+		"GitHub connection status for the signed-in person", h.GetGitHubStatus)
 }
 
 // registerUnits declares the Phase 5 business-unit oversight surface (§8.7):

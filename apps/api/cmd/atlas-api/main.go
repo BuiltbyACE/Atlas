@@ -162,7 +162,7 @@ func run() error {
 		gitHubWork{service: workService},
 		logger,
 	)
-	integrationHandler := integrations.NewHandler(integrationService, cfg.GitHubWebhookSecret, logger)
+	integrationHandler := integrations.NewHandler(integrationService, cfg.GitHubWebhookSecret, cfg.GitHubAppSlug, cfg.PublicBaseURL, logger)
 	integrationService.SetAudit(auditWriter)
 
 	// People & accountability (Phase 2): daily reports and leave. These belong

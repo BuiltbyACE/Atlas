@@ -39,6 +39,37 @@ type Store interface {
 	ClaimDelivery(ctx context.Context, deliveryID, eventType string) (bool, error)
 	ReleaseDelivery(ctx context.Context, deliveryID string) error
 	WriteEvent(ctx context.Context, ev outbox.Event) error
+
+	// GitHub installations (§8.9 Engineering Intelligence).
+	CreateInstallation(ctx context.Context, in InstallationInput) (Installation, error)
+	GetInstallation(ctx context.Context, id uuid.UUID) (*Installation, error)
+	GetInstallationByGitHubID(ctx context.Context, installationID int64) (*Installation, error)
+	ListInstallations(ctx context.Context, q InstallationQuery, limit int, before *Cursor) ([]Installation, error)
+	UpdateInstallationStatus(ctx context.Context, id uuid.UUID, status InstallationStatus) (Installation, error)
+	LinkPersonToInstallation(ctx context.Context, id uuid.UUID, personID uuid.UUID) (Installation, error)
+
+	// GitHub user mappings (§8.9 Engineering Intelligence).
+	CreateUserMapping(ctx context.Context, in UserMappingInput) (UserMapping, error)
+	GetUserMapping(ctx context.Context, id uuid.UUID) (*UserMapping, error)
+	GetUserMappingByGitHubID(ctx context.Context, githubUserID int64) (*UserMapping, error)
+	ListUserMappings(ctx context.Context, q UserMappingQuery) ([]UserMapping, error)
+	SetPrimaryMapping(ctx context.Context, id uuid.UUID) (UserMapping, error)
+	DeleteUserMapping(ctx context.Context, id uuid.UUID) error
+
+	// GitHub repositories (§8.9 Engineering Intelligence).
+	CreateRepository(ctx context.Context, in RepositoryInput) (Repository, error)
+	GetRepository(ctx context.Context, id uuid.UUID) (*Repository, error)
+	GetRepositoryByGitHubID(ctx context.Context, installationID int64, githubRepoID int64) (*Repository, error)
+	ListRepositories(ctx context.Context, q RepositoryQuery) ([]Repository, error)
+	LinkRepositoryToProject(ctx context.Context, id uuid.UUID, projectID uuid.UUID) (Repository, error)
+	UpdateLastPushedAt(ctx context.Context, id uuid.UUID, pushedAt time.Time) (Repository, error)
+
+	// GitHub events (§8.9 Engineering Intelligence).
+	CreateGitHubEvent(ctx context.Context, in GitHubEventInput) (GitHubEvent, error)
+	GetGitHubEvent(ctx context.Context, id uuid.UUID) (*GitHubEvent, error)
+	GetGitHubEventByDeliveryID(ctx context.Context, deliveryID string) (*GitHubEvent, error)
+	ListGitHubEvents(ctx context.Context, q GitHubEventQuery, limit int, before *Cursor) ([]GitHubEvent, error)
+	MarkProcessed(ctx context.Context, id uuid.UUID) error
 }
 
 // PGStore is the Postgres-backed read model.

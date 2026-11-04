@@ -6,6 +6,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { createPortal } from "react-dom";
 
 import { BlobButton } from "@/components/blob-button";
+import { ConnectGitHubButton } from "@/components/connect-github-button";
 import { Icon, type IconName } from "@/components/icons";
 import { SignalRefresh } from "@/components/signal-refresh";
 import { cx } from "@/components/ui";
@@ -110,6 +111,7 @@ export function TopBar({
           <SignalRefresh topic={userTopic(userId)} />
         </span>
         <NotificationsBell userId={userId} />
+        <ConnectGitHubButton />
         <NewMenu />
       </div>
 

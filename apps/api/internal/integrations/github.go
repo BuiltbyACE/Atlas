@@ -23,6 +23,15 @@ const (
 	EventPullRequest = "pull_request"
 	actionClosed     = "closed"
 
+	// EventPush is the GitHub push event type.
+	EventPush = "push"
+	// EventCheckRun is the GitHub check_run event type.
+	EventCheckRun = "check_run"
+	// EventDeploymentStatus is the GitHub deployment_status event type.
+	EventDeploymentStatus = "deployment_status"
+	// EventInstallation is the GitHub installation event type.
+	EventInstallation = "installation"
+
 	// ProviderGitHub is the provider id stored with a delivery.
 	ProviderGitHub = "github"
 )
@@ -113,4 +122,183 @@ func ExtractTaskRefs(texts ...string) []string {
 		}
 	}
 	return out
+}
+
+// githubPush is the subset of GitHub's push payload Atlas reads.
+type githubPush struct {
+	Ref     string `json:"ref"`
+	Before  string `json:"before"`
+	After   string `json:"after"`
+	Commits []struct {
+		ID      string `json:"id"`
+		Message string `json:"message"`
+	} `json:"commits"`
+	Repository struct {
+		FullName string `json:"full_name"`
+	} `json:"repository"`
+	Sender struct {
+		Login string `json:"login"`
+		ID    int64  `json:"id"`
+	} `json:"sender"`
+}
+
+// ParsePush decodes the push subset of a GitHub delivery.
+func ParsePush(body []byte) (Push, error) {
+	var payload githubPush
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return Push{}, fmt.Errorf("%w: decode push: %v", ErrInvalid, err)
+	}
+	return Push{
+		Ref:        payload.Ref,
+		Before:     payload.Before,
+		After:      payload.After,
+		Commits:    len(payload.Commits),
+		Repository: payload.Repository.FullName,
+		Sender:     payload.Sender.Login,
+		SenderID:   payload.Sender.ID,
+	}, nil
+}
+
+// Push is the subset of a GitHub push payload Atlas acts on.
+type Push struct {
+	Ref        string
+	Before     string
+	After      string
+	Commits    int
+	Repository string
+	Sender     string
+	SenderID   int64
+}
+
+// githubPullRequest is the subset of GitHub's pull_request payload Atlas reads;
+// unknown fields are ignored. (Already defined above.)
+// githubCheckRun is the subset of GitHub's check_run payload Atlas reads.
+type githubCheckRun struct {
+	CheckRun struct {
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+	} `json:"check_run"`
+	Repository struct {
+		FullName string `json:"full_name"`
+	} `json:"repository"`
+	Sender struct {
+		Login string `json:"login"`
+		ID    int64  `json:"id"`
+	} `json:"sender"`
+}
+
+// ParseCheckRun decodes the check_run subset of a GitHub delivery.
+func ParseCheckRun(body []byte) (CheckRun, error) {
+	var payload githubCheckRun
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return CheckRun{}, fmt.Errorf("%w: decode check_run: %v", ErrInvalid, err)
+	}
+	return CheckRun{
+		Name:       payload.CheckRun.Name,
+		Status:     payload.CheckRun.Status,
+		Conclusion: payload.CheckRun.Conclusion,
+		Repository: payload.Repository.FullName,
+		Sender:     payload.Sender.Login,
+		SenderID:   payload.Sender.ID,
+	}, nil
+}
+
+// CheckRun is the subset of a GitHub check_run payload Atlas acts on.
+type CheckRun struct {
+	Name       string
+	Status     string
+	Conclusion string
+	Repository string
+	Sender     string
+	SenderID   int64
+}
+
+// githubDeploymentStatus is the subset of GitHub's deployment_status payload Atlas reads.
+type githubDeploymentStatus struct {
+	Deployment struct {
+		ID   int64  `json:"id"`
+		Environment string `json:"environment"`
+	} `json:"deployment"`
+	DeploymentStatus struct {
+		State string `json:"state"`
+	} `json:"deployment_status"`
+	Repository struct {
+		FullName string `json:"full_name"`
+	} `json:"repository"`
+	Sender struct {
+		Login string `json:"login"`
+		ID    int64  `json:"id"`
+	} `json:"sender"`
+}
+
+// ParseDeploymentStatus decodes the deployment_status subset of a GitHub delivery.
+func ParseDeploymentStatus(body []byte) (DeploymentStatus, error) {
+	var payload githubDeploymentStatus
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return DeploymentStatus{}, fmt.Errorf("%w: decode deployment_status: %v", ErrInvalid, err)
+	}
+	return DeploymentStatus{
+		DeploymentID: payload.Deployment.ID,
+		Environment:  payload.Deployment.Environment,
+		State:        payload.DeploymentStatus.State,
+		Repository:   payload.Repository.FullName,
+		Sender:       payload.Sender.Login,
+		SenderID:     payload.Sender.ID,
+	}, nil
+}
+
+// DeploymentStatus is the subset of a GitHub deployment_status payload Atlas acts on.
+type DeploymentStatus struct {
+	DeploymentID  int64
+	Environment   string
+	State         string
+	Repository    string
+	Sender        string
+	SenderID      int64
+}
+
+// githubInstallation is the subset of GitHub's installation payload Atlas reads.
+type githubInstallation struct {
+	Installation struct {
+		ID int64 `json:"id"`
+	} `json:"installation"`
+	Account struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+		ID    int64  `json:"id"`
+	} `json:"account"`
+	Sender struct {
+		Login string `json:"login"`
+		ID    int64  `json:"id"`
+	} `json:"sender"`
+	Action string `json:"action"`
+}
+
+// ParseInstallation decodes the installation subset of a GitHub delivery.
+func ParseInstallation(body []byte) (InstallationEvent, error) {
+	var payload githubInstallation
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return InstallationEvent{}, fmt.Errorf("%w: decode installation: %v", ErrInvalid, err)
+	}
+	return InstallationEvent{
+		InstallationID: payload.Installation.ID,
+		AccountLogin:   payload.Account.Login,
+		AccountType:    payload.Account.Type,
+		AccountID:      payload.Account.ID,
+		Action:         payload.Action,
+		Sender:         payload.Sender.Login,
+		SenderID:       payload.Sender.ID,
+	}, nil
+}
+
+// InstallationEvent is the subset of a GitHub installation payload Atlas acts on.
+type InstallationEvent struct {
+	InstallationID int64
+	AccountLogin   string
+	AccountType    string
+	AccountID      int64
+	Action         string
+	Sender         string
+	SenderID       int64
 }

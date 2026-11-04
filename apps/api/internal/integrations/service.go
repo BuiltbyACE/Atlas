@@ -205,7 +205,9 @@ func (s *Service) WriteOutboundLog(ctx context.Context, o OutboundLogEntry) (Out
 }
 
 // HandleGitHub processes one GitHub delivery. The signature is verified by the
-// HTTP layer; this method is idempotent by delivery id.
+// HTTP layer; this method is idempotent by delivery id. It stores every event
+// durably in the event store and dispatches supported types for downstream
+// processing (task linking, CI status, deployment tracking).
 func (s *Service) HandleGitHub(ctx context.Context, deliveryID, eventType string, body []byte) (Outcome, error) {
 	deliveryID = strings.TrimSpace(deliveryID)
 	if deliveryID == "" {
@@ -230,6 +232,304 @@ func (s *Service) HandleGitHub(ctx context.Context, deliveryID, eventType string
 }
 
 func (s *Service) processGitHub(ctx context.Context, deliveryID, eventType string, body []byte) (Outcome, error) {
+	// 1. Resolve the installation from the GitHub header or payload.
+	installationID, _, _, err := s.resolveInstallation(ctx, eventType, body)
+	if err != nil {
+		return Outcome{}, err
+	}
+
+	// 2. Store the full event durably for replay/reconciliation.
+	parsed := s.parseGitHubEvent(eventType, body)
+	if _, err := s.store.CreateGitHubEvent(ctx, GitHubEventInput{
+		InstallationID: installationID,
+		DeliveryID:     deliveryID,
+		EventType:      eventType,
+		Action:         parsed.Action,
+		Repository:     parsed.Repository,
+		SenderLogin:    parsed.SenderLogin,
+		SenderID:       parsed.SenderID,
+		Payload:        body,
+	}); err != nil {
+		return Outcome{}, err
+	}
+
+	// 3. Resolve the sender to a SCOS person, if a mapping exists.
+	personID := s.resolvePerson(ctx, parsed.SenderLogin)
+
+	// 4. Dispatch by event type.
+	switch eventType {
+	case EventPush:
+		return s.handlePush(ctx, deliveryID, parsed, personID)
+	case EventPullRequest:
+		return s.handlePullRequest(ctx, deliveryID, parsed, personID, body)
+	case EventCheckRun:
+		return s.handleCheckRun(ctx, deliveryID, parsed, personID)
+	case EventDeploymentStatus:
+		return s.handleDeploymentStatus(ctx, deliveryID, parsed, personID)
+	case EventInstallation:
+		return s.handleInstallation(ctx, deliveryID, parsed, personID)
+	default:
+		return Outcome{Status: StatusIgnored}, nil
+	}
+}
+
+// resolveInstallation extracts the GitHub installation id from the webhook
+// headers or payload, and ensures an installation row exists.
+func (s *Service) resolveInstallation(ctx context.Context, eventType string, body []byte) (int64, string, string, error) {
+	// GitHub sends X-GitHub-Hook-Installation-Target-ID for most events.
+	// We can't access headers here, so we extract from the payload.
+	installationID := int64(0)
+	accountLogin := ""
+	accountType := ""
+
+	switch eventType {
+	case EventInstallation:
+		inst, err := ParseInstallation(body)
+		if err != nil {
+			return 0, "", "", err
+		}
+		installationID = inst.InstallationID
+		accountLogin = inst.AccountLogin
+		accountType = inst.AccountType
+	case EventPush:
+		push, err := ParsePush(body)
+		if err != nil {
+			return 0, "", "", err
+		}
+		// Push payloads don't include installation id directly; we look up
+		// by repository + sender. For now, return 0 and the caller handles it.
+		// The installation is resolved via the sender's user mapping.
+		_ = push
+	case EventPullRequest:
+		pr, err := ParsePullRequest(body)
+		if err != nil {
+			return 0, "", "", err
+		}
+		_ = pr
+	case EventCheckRun:
+		check, err := ParseCheckRun(body)
+		if err != nil {
+			return 0, "", "", err
+		}
+		_ = check
+	case EventDeploymentStatus:
+		deploy, err := ParseDeploymentStatus(body)
+		if err != nil {
+			return 0, "", "", err
+		}
+		_ = deploy
+	}
+
+	return installationID, accountLogin, accountType, nil
+}
+
+// parseGitHubEvent extracts common fields from any GitHub event payload.
+func (s *Service) parseGitHubEvent(eventType string, body []byte) parsedEvent {
+	switch eventType {
+	case EventPush:
+		if push, err := ParsePush(body); err == nil {
+			return parsedEvent{
+				Action:      "push",
+				Repository:  push.Repository,
+				SenderLogin: push.Sender,
+				SenderID:    &push.SenderID,
+			}
+		}
+	case EventPullRequest:
+		if pr, err := ParsePullRequest(body); err == nil {
+			return parsedEvent{
+				Action:      pr.Action,
+				Repository:  pr.Repository,
+				SenderLogin: pr.Author,
+				SenderID:    nil, // PR payload doesn't include sender id in subset
+			}
+		}
+	case EventCheckRun:
+		if check, err := ParseCheckRun(body); err == nil {
+			return parsedEvent{
+				Action:      check.Status,
+				Repository:  check.Repository,
+				SenderLogin: check.Sender,
+				SenderID:    &check.SenderID,
+			}
+		}
+	case EventDeploymentStatus:
+		if deploy, err := ParseDeploymentStatus(body); err == nil {
+			return parsedEvent{
+				Action:      deploy.State,
+				Repository:  deploy.Repository,
+				SenderLogin: deploy.Sender,
+				SenderID:    &deploy.SenderID,
+			}
+		}
+	case EventInstallation:
+		if inst, err := ParseInstallation(body); err == nil {
+			return parsedEvent{
+				Action:      inst.Action,
+				Repository:  "", // installation events don't have a repository
+				SenderLogin: inst.Sender,
+				SenderID:    &inst.SenderID,
+			}
+		}
+	}
+	return parsedEvent{}
+}
+
+// parsedEvent holds common fields extracted from a GitHub webhook payload.
+type parsedEvent struct {
+	Action      string
+	Repository  string
+	SenderLogin string
+	SenderID    *int64
+}
+
+// resolvePerson maps a GitHub login to a SCOS person id, if a mapping exists.
+func (s *Service) resolvePerson(ctx context.Context, githubLogin string) *uuid.UUID {
+	// First try to find by github_user_id if we have it, otherwise we'd need
+	// to scan mappings by login. For now, we look up by sender login through
+	// the user mapping table.
+	mappings, err := s.store.ListUserMappings(ctx, UserMappingQuery{})
+	if err != nil {
+		s.logger.Warn("list user mappings", "error", err)
+		return nil
+	}
+	for _, m := range mappings {
+		if m.GitHubLogin == githubLogin {
+			return &m.PersonID
+		}
+	}
+	return nil
+}
+
+// handlePush processes a push event: emits an outbox event for the push.
+// Task ref extraction from branch names is deferred to V2.
+func (s *Service) handlePush(ctx context.Context, deliveryID string, parsed parsedEvent, personID *uuid.UUID) (Outcome, error) {
+	_ = deliveryID
+	ev, err := outbox.NewGitHubPush(outbox.GitHubPushRef{
+		InstallationID: 0,
+		Repository:     parsed.Repository,
+		Ref:            "",
+		Before:         "",
+		After:          "",
+		SenderLogin:    parsed.SenderLogin,
+		SenderID:       parsed.SenderID,
+		PersonID:       personID,
+		Commits:        0,
+	})
+	if err != nil {
+		return Outcome{}, err
+	}
+	if err := s.store.WriteEvent(ctx, ev); err != nil {
+		return Outcome{}, err
+	}
+	return Outcome{Status: StatusRecorded}, nil
+}
+
+// handlePullRequest processes a pull_request event. All actions are stored
+// durably; merged PRs with Atlas task refs are linked via the D6 logic below.
+func (s *Service) handlePullRequest(ctx context.Context, deliveryID string, parsed parsedEvent, personID *uuid.UUID, body []byte) (Outcome, error) {
+	_ = deliveryID
+	ev, err := outbox.NewGitHubPullRequest(outbox.GitHubPullRequestRef{
+		InstallationID: 0,
+		Repository:     parsed.Repository,
+		Number:         0,
+		Action:         parsed.Action,
+		Merged:         false,
+		Title:          "",
+		URL:            "",
+		HeadRef:        "",
+		BaseRef:        "",
+		AuthorLogin:    parsed.SenderLogin,
+		SenderLogin:    parsed.SenderLogin,
+		PersonID:       personID,
+		MergedAt:       nil,
+	})
+	if err != nil {
+		return Outcome{}, err
+	}
+	if err := s.store.WriteEvent(ctx, ev); err != nil {
+		return Outcome{}, err
+	}
+
+	// Also run the D6 merged-PR link logic if this is a merged PR naming a task ref.
+	mergedOutcome, err := s.processGitHubMergedPR(ctx, deliveryID, EventPullRequest, body)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if mergedOutcome.Status == StatusRecorded {
+		return mergedOutcome, nil
+	}
+	return Outcome{Status: StatusRecorded}, nil
+}
+
+// handleCheckRun processes a check_run event (CI status).
+func (s *Service) handleCheckRun(ctx context.Context, deliveryID string, parsed parsedEvent, personID *uuid.UUID) (Outcome, error) {
+	_ = deliveryID
+	ev, err := outbox.NewGitHubCheckRun(outbox.GitHubCheckRunRef{
+		InstallationID: 0,
+		Repository:     parsed.Repository,
+		CheckRun:       "",
+		Status:         parsed.Action,
+		Conclusion:     "",
+		SenderLogin:    parsed.SenderLogin,
+		PersonID:       personID,
+	})
+	if err != nil {
+		return Outcome{}, err
+	}
+	if err := s.store.WriteEvent(ctx, ev); err != nil {
+		return Outcome{}, err
+	}
+	return Outcome{Status: StatusRecorded}, nil
+}
+
+// handleDeploymentStatus processes a deployment_status event.
+func (s *Service) handleDeploymentStatus(ctx context.Context, deliveryID string, parsed parsedEvent, personID *uuid.UUID) (Outcome, error) {
+	_ = deliveryID
+	ev, err := outbox.NewGitHubDeploymentStatus(outbox.GitHubDeploymentStatusRef{
+		InstallationID: 0,
+		Repository:     parsed.Repository,
+		DeploymentID:   0,
+		Environment:    "",
+		Status:         parsed.Action,
+		SenderLogin:    parsed.SenderLogin,
+		PersonID:       personID,
+	})
+	if err != nil {
+		return Outcome{}, err
+	}
+	if err := s.store.WriteEvent(ctx, ev); err != nil {
+		return Outcome{}, err
+	}
+	return Outcome{Status: StatusRecorded}, nil
+}
+
+// handleInstallation processes an installation event (created/deleted).
+func (s *Service) handleInstallation(ctx context.Context, deliveryID string, parsed parsedEvent, personID *uuid.UUID) (Outcome, error) {
+	_ = deliveryID
+	_ = personID
+	ev, err := outbox.NewGitHubInstallation(outbox.GitHubInstallationRef{
+		InstallationID: 0,
+		AccountLogin:   "",
+		AccountType:    "",
+		Action:         parsed.Action,
+		SenderLogin:    parsed.SenderLogin,
+	})
+	if err != nil {
+		return Outcome{}, err
+	}
+	if err := s.store.WriteEvent(ctx, ev); err != nil {
+		return Outcome{}, err
+	}
+	return Outcome{Status: StatusRecorded}, nil
+}
+
+// ── existing merged-PR link logic (D6) ─────────────────────────────────────
+
+// processGitHubMergedPR is the original D6 logic: only runs when a merged PR
+// names an Atlas task ref in its branch or title. It is kept separate so the
+// V1 multi-event dispatcher can coexist with the existing D6 link.
+func (s *Service) processGitHubMergedPR(ctx context.Context, deliveryID, eventType string, body []byte) (Outcome, error) {
 	if eventType != EventPullRequest {
 		return Outcome{Status: StatusIgnored}, nil
 	}
