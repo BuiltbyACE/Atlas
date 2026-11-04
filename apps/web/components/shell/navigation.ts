@@ -118,6 +118,13 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Intel", href: "/intel", icon: "pie", section: "Platform", keywords: "decisions risks briefs metric snapshots", roles: ["ceo_internal", "ceo_commercial"] },
     ],
   },
+  {
+    title: "Communicate",
+    links: [
+      { label: "Inbox", href: "/email/inbox", icon: "document", section: "Communicate", keywords: "email messages inbox messages", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
+      { label: "Compose", href: "/email/compose", icon: "plus", section: "Communicate", keywords: "send email write message", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
+    ],
+  },
 ];
 
 /** Modules on the roadmap, shown dimmed with a "Soon" tag. */
@@ -172,5 +179,6 @@ export function breadcrumbFor(
   else if (pathname.startsWith("/crm/followups/")) trail.push({ label: "Follow-up" });
   else if (pathname.startsWith("/crm/proposals/")) trail.push({ label: "Proposal" });
   else if (pathname.startsWith("/contracts/")) trail.push({ label: "Contract" });
+  else if (pathname.startsWith("/email/threads/")) trail.push({ label: "Message" });
   return trail;
 }
