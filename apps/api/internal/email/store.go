@@ -438,7 +438,7 @@ func (s *PGStore) ListAddresses(ctx context.Context, userID uuid.UUID) ([]Addres
 	}
 	defer rows.Close()
 
-	var addresses []Address
+	var addresses = make([]Address, 0)
 	for rows.Next() {
 		var a Address
 		if err := rows.Scan(&a.ID, &a.UserID, &a.Address, &a.Verified, &a.IsPrimary, &a.CreatedAt); err != nil {
