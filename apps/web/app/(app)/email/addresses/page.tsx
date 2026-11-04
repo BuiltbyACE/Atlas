@@ -171,7 +171,7 @@ export default function AddressesPage() {
           <div className="px-[22px] pb-[22px]">
             <div className="flex flex-col gap-4">
               <h3 className="mb-[16px] text-[15px] font-semibold text-night">Your addresses</h3>
-              {addresses.length === 0 ? (
+              {addresses?.length === 0 ? (
                 <div className="px-[22px] text-[12.5px] text-muted">
                   No addresses yet. Add one above to send emails from your own address.
                 </div>
@@ -186,7 +186,7 @@ export default function AddressesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {addresses.map((addr) => (
+                    {addresses?.map((addr) => (
                       <tr key={addr.id}>
                         <Td className="font-medium text-night">{addr.address}</Td>
                         <Td className="tabular text-right text-muted">{addr.verified ? "Yes" : "No"}</Td>
