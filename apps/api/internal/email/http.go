@@ -42,6 +42,10 @@ func (h *Handler) Routes(reg *routing.Registry) {
 		"List email threads (inbox)", h.ListThreads)
 	reg.Authenticated(http.MethodGet, "/api/v1/email/threads/{id}",
 		"Get an email thread with messages", h.GetThread)
+	reg.Authenticated(http.MethodGet, "/api/v1/email/addresses",
+		"List the caller's verified send-as addresses", h.ListAddresses)
+	reg.Authenticated(http.MethodPost, "/api/v1/email/addresses",
+		"Register a send-as email address", h.RegisterAddress)
 	reg.Public(http.MethodPost, "/internal/v1/email/inbound",
 		"Inbound email webhook from Resend", h.ReceiveInbound)
 }
@@ -67,6 +71,18 @@ type composeResponse struct {
 	ThreadID  string `json:"thread_id"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
+}
+
+type registerAddressRequest struct {
+	Address   string `json:"address"`
+	IsPrimary bool   `json:"is_primary,omitempty"`
+}
+
+type registerAddressResponse struct {
+	ID        string `json:"id"`
+	Address   string `json:"address"`
+	Verified  bool   `json:"verified"`
+	IsPrimary bool   `json:"is_primary"`
 }
 
 // ── handlers ─────────────────────────────────────────────────
@@ -203,5 +219,42 @@ func (h *Handler) ReceiveInbound(w http.ResponseWriter, r *http.Request) {
 		"id":        msg.ID.String(),
 		"thread_id": msg.ThreadID.String(),
 		"status":    string(msg.Status),
+		})
+}
+
+// ListAddresses handles GET /api/v1/email/addresses.
+func (h *Handler) ListAddresses(w http.ResponseWriter, r *http.Request) {
+	addresses, err := h.service.ListAddresses(r.Context(), uuid.Nil)
+	if err != nil {
+		h.logger.Error("email: list addresses failed", slog.String("error", err.Error()))
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, addresses)
+}
+
+// RegisterAddress handles POST /api/v1/email/addresses.
+func (h *Handler) RegisterAddress(w http.ResponseWriter, r *http.Request) {
+	var req registerAddressRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+
+	addr, err := h.service.RegisterAddress(r.Context(), SendAddressOptions{
+		UserID:    uuid.Nil,
+		Address:   req.Address,
+		IsPrimary: req.IsPrimary,
+	})
+	if err != nil {
+		h.logger.Error("email: register address failed", slog.String("error", err.Error()))
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, registerAddressResponse{
+		ID:        addr.ID.String(),
+		Address:   addr.Address,
+		Verified:  addr.Verified,
+		IsPrimary: addr.IsPrimary,
 	})
 }
