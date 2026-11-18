@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { ButtonLink } from "@/components/form";
+import { AccessDenied } from "@/components/access-denied";
 import { Icon } from "@/components/icons";
 import {
   Card,
@@ -39,14 +40,15 @@ export default async function ChatPage() {
     return (
       <div className="space-y-6">
         <PageHeader title="Messages" description="Your conversations, newest first." />
-        <ProblemNotice
-          error={error}
-          title={
-            error.status === 403
-              ? "You do not have permission to view messages"
-              : "Your conversations could not be loaded"
-          }
-        />
+        {error.status === 403 ? (
+          <AccessDenied
+            error={error}
+            title="You do not have permission to view messages"
+            message="Direct messages are limited to people whose role includes the chat read permission."
+          />
+        ) : (
+          <ProblemNotice error={error} title="Your conversations could not be loaded" />
+        )}
       </div>
     );
   }

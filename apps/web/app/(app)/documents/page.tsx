@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { ButtonLink } from "@/components/form";
+import { AccessDenied } from "@/components/access-denied";
 import { Icon } from "@/components/icons";
 import {
   Badge,
@@ -37,14 +38,15 @@ export default async function DocumentsPage() {
     return (
       <div className="space-y-6">
         <PageHeader title="Documents" description="Document library." />
-        <ProblemNotice
-          error={error}
-          title={
-            error.status === 403
-              ? "You do not have permission to view documents"
-              : "Documents could not be loaded"
-          }
-        />
+        {error.status === 403 ? (
+          <AccessDenied
+            error={error}
+            title="You do not have permission to view documents"
+            message="The document library is limited to people whose role includes a document read permission."
+          />
+        ) : (
+          <ProblemNotice error={error} title="Documents could not be loaded" />
+        )}
       </div>
     );
   }

@@ -19,16 +19,17 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/chat"
 	"github.com/safaristack/atlas/apps/api/internal/contracts"
 	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
-	"github.com/safaristack/atlas/apps/api/internal/chat"
 	"github.com/safaristack/atlas/apps/api/internal/documents"
 	"github.com/safaristack/atlas/apps/api/internal/email"
 	"github.com/safaristack/atlas/apps/api/internal/files"
 	"github.com/safaristack/atlas/apps/api/internal/finance"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
 	"github.com/safaristack/atlas/apps/api/internal/intel"
+	"github.com/safaristack/atlas/apps/api/internal/navigation"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/people"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
@@ -138,6 +139,7 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 		}, d.Logger)
 		registerAuth(reg, handler)
 		registerRoles(reg, handler)
+		registerMe(reg, navigation.NewHandler(nil, d.Logger))
 		gate = auth.NewGate(d.Auth, d.Cfg.SessionCookieName, d.Logger)
 	}
 
@@ -273,6 +275,15 @@ func registerRoles(reg *routing.Registry, h *auth.Handler) {
 		"List the roles a grant may reference", h.ListRoles)
 }
 
+// registerMe declares the caller's own view of the workspace. The navigation map
+// is derived from the caller's effective permissions inside Go (§6.2), so it is
+// authenticated rather than gated: every signed-in person gets the (possibly
+// small) map they may use, and no one can ask for another person's.
+func registerMe(reg *routing.Registry, h *navigation.Handler) {
+	reg.Authenticated(http.MethodGet, "/api/v1/me/navigation",
+		"The workspace map and actions the caller's permissions unlock", h.Get)
+}
+
 // registerNotifications declares the notification surface (§6.4). The user
 // routes are authenticated (you only ever see your own); the internal command is
 // service-to-service and gated by a catalogue permission.
@@ -296,8 +307,13 @@ func registerNotifications(reg *routing.Registry, h *notifications.Handler) {
 
 func registerApprovals(reg *routing.Registry, h *approvals.Handler) {
 	reg.Authenticated(http.MethodPost, "/api/v1/approvals", "Request an approval", h.RequestApproval)
-	reg.Authenticated(http.MethodGet, "/api/v1/approvals/{id}", "Get an approval", h.Get)
-	reg.Authenticated(http.MethodGet, "/api/v1/approvals/pending", "List pending approvals for a role", h.PendingForRole)
+	// Reading the queue and one approval by id is gated by core.approval.read:
+	// a request carries another person's claim and the amounts on it. The
+	// caller's own requests stay authenticated because /mine is self-scoped.
+	reg.Gated("core.approval.read", http.MethodGet, "/api/v1/approvals/{id}",
+		"Get an approval", h.Get)
+	reg.Gated("core.approval.read", http.MethodGet, "/api/v1/approvals/pending",
+		"List pending approvals for a role", h.PendingForRole)
 	reg.Authenticated(http.MethodGet, "/api/v1/approvals/mine", "List approvals requested by you", h.MyRequested)
 	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/approve", "Approve an approval", h.Approve)
 	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/decline", "Decline an approval", h.Decline)

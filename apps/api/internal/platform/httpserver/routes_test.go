@@ -9,13 +9,27 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/safaristack/atlas/apps/api/internal/approvals"
+	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/chat"
+	"github.com/safaristack/atlas/apps/api/internal/contracts"
+	"github.com/safaristack/atlas/apps/api/internal/crm"
+	"github.com/safaristack/atlas/apps/api/internal/dashboard"
+	"github.com/safaristack/atlas/apps/api/internal/documents"
+	"github.com/safaristack/atlas/apps/api/internal/email"
+	"github.com/safaristack/atlas/apps/api/internal/finance"
+	"github.com/safaristack/atlas/apps/api/internal/integrations"
+	"github.com/safaristack/atlas/apps/api/internal/intel"
 	"github.com/safaristack/atlas/apps/api/internal/people"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/ed25519jwt"
 	"github.com/safaristack/atlas/apps/api/internal/platform/routing"
+	"github.com/safaristack/atlas/apps/api/internal/scorecard"
 	"github.com/safaristack/atlas/apps/api/internal/seed"
+	"github.com/safaristack/atlas/apps/api/internal/settings"
 	"github.com/safaristack/atlas/apps/api/internal/systems"
+	"github.com/safaristack/atlas/apps/api/internal/units"
 	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
@@ -53,6 +67,7 @@ func testService(t *testing.T) *auth.Service {
 func testDeps(t *testing.T) Deps {
 	t.Helper()
 	logger := discardLogger()
+	auditStore := audit.NewPGStore(nil)
 	return Deps{
 		Cfg: &config.Config{
 			Env:               config.EnvLocal,
@@ -65,9 +80,36 @@ func testDeps(t *testing.T) Deps {
 		Logger:  logger,
 		Version: "test",
 		Auth:    testService(t),
-		// Mounting work and people ensures their routes are covered by the
-		// registry and permission-catalogue checks above. The stores are never
-		// called here (there is no database).
+		// Mount every module so the registry and permission-catalogue checks
+		// cover the full API surface, not just the modules a previous test
+		// happened to build. The stores are never called here (there is no
+		// database); these handlers only contribute route declarations.
+		Approvals: approvals.NewHandler(
+			approvals.NewService(approvals.NewPGStore(nil), nil, nil, logger), logger),
+		Settings: settings.NewHandler(
+			settings.NewService(settings.NewPGStore(nil), nil, logger), logger),
+		Audit: audit.NewHandler(audit.NewService(auditStore, logger), logger),
+		Dashboard: dashboard.NewHandler(
+			dashboard.NewService(dashboard.NewPGStore(nil), auditStore, logger), logger),
+		Scorecard: scorecard.NewHandler(
+			scorecard.NewService(scorecard.NewPGStore(nil), logger), logger),
+		Email: email.NewHandler(
+			email.NewService(email.NewPGStore(nil), logger), logger),
+		Chat: chat.NewHandler(chat.NewService(chat.NewPGStore(nil), logger), logger),
+		Documents: documents.NewHandler(
+			documents.NewService(documents.NewPGStore(nil), nil, logger), logger),
+		Integrations: integrations.NewHandler(
+			integrations.NewService(nil, nil, logger), "", "", "", logger),
+		CRM: crm.NewHandler(
+			crm.NewService(crm.NewPGStore(nil), nil, logger), "", logger),
+		Contracts: contracts.NewHandler(
+			contracts.NewService(contracts.NewPGStore(nil), nil, logger), logger),
+		Finance: finance.NewHandler(
+			finance.NewService(finance.NewPGStore(nil), logger), logger),
+		Units: units.NewHandler(
+			units.NewService(units.NewPGStore(nil), logger), logger),
+		Intel: intel.NewHandler(
+			intel.NewService(intel.NewPGStore(nil), logger), logger),
 		Work:    work.NewHandler(work.NewService(work.NewPGStore(nil), nil, nil, logger, nil), logger),
 		People:  people.NewHandler(people.NewService(people.NewPGStore(nil), nil, logger, 0), logger),
 		Systems: systems.NewHandler(systems.NewService(systems.NewPGStore(nil), logger), logger),

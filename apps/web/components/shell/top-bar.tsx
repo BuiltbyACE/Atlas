@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { BlobButton } from "@/components/blob-button";
@@ -12,60 +12,99 @@ import { SignalRefresh } from "@/components/signal-refresh";
 import { cx } from "@/components/ui";
 import { userTopic } from "@/lib/realtime/topics";
 
-import { ALL_LINKS, breadcrumbFor, filterLinksByRoles } from "./navigation";
+import { breadcrumbFor, type NavModel } from "./navigation";
 import { NotificationsBell } from "./notifications-bell";
-import { Sidebar } from "./sidebar";
 
-/** Things to create, shared by the "New" menu and the quick-jump list. */
-const CREATE_ACTIONS: Array<{ label: string; href: string; icon: IconName; hint: string }> = [
-  { label: "New task", href: "/work/tasks?new=task", icon: "board", hint: "On the task board" },
-  { label: "New project", href: "/work?new=project", icon: "folder", hint: "Owner, target and type" },
-  { label: "File a daily report", href: "/daily-reports", icon: "clipboard", hint: "What moved today" },
-  { label: "Request leave", href: "/people?new=leave", icon: "calendarPlus", hint: "Goes to an approver" },
+interface CreateAction {
+  label: string;
+  href: string;
+  icon: IconName;
+  hint: string;
+  /** Exact catalogue permission the destination's mutation requires. */
+  permission: string;
+}
+
+/**
+ * Things to create. Each entry names the exact Go permission behind the action;
+ * the menu renders only those Go reports as held, so an unavailable write is
+ * never offered. The endpoint still enforces the permission on its own.
+ */
+const CREATE_ACTIONS: CreateAction[] = [
+  {
+    label: "New task",
+    href: "/work/tasks?new=task",
+    icon: "board",
+    hint: "On the task board",
+    permission: "work.task.write",
+  },
+  {
+    label: "New project",
+    href: "/work?new=project",
+    icon: "folder",
+    hint: "Owner, target and type",
+    permission: "work.project.manage",
+  },
+  {
+    label: "File a daily report",
+    href: "/daily-reports",
+    icon: "clipboard",
+    hint: "What moved today",
+    permission: "people.daily_report.submit",
+  },
+  {
+    label: "Request leave",
+    href: "/people?new=leave",
+    icon: "calendarPlus",
+    hint: "Goes to an approver",
+    permission: "people.leave.request",
+  },
 ];
+
+function permittedActions(actions: Record<string, boolean>): CreateAction[] {
+  return CREATE_ACTIONS.filter((action) => actions[action.permission] === true);
+}
 
 /**
  * The sticky workspace bar (prototype `.ax-top`): breadcrumb, quick jump,
- * live indicator, notifications and the "New" menu. Below `lg` it also owns
- * the menu button that opens the sidebar as a drawer.
+ * live indicator, notifications and the "New" menu. Below `lg` it owns the
+ * menu button that opens the sidebar drawer.
  */
 export function TopBar({
+  model,
   userId,
-  userName,
-  userEmail,
-  userRoles,
+  actions,
   escalations,
+  onOpenMenu,
+  onOpenSearch,
 }: {
+  model: NavModel;
   userId: string;
-  userName: string;
-  userEmail: string;
-  /** Roles of the current user, used to gate navigation links. */
-  userRoles: string[];
+  /** Go's answer for every action key the visible destinations declare. */
+  actions: Record<string, boolean>;
   escalations?: string;
+  onOpenMenu: () => void;
+  onOpenSearch: () => void;
 }) {
   const pathname = usePathname();
-  const trail = breadcrumbFor(pathname);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [jumpOpen, setJumpOpen] = useState(false);
+  const trail = breadcrumbFor(model, pathname);
+  const creatable = permittedActions(actions);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setJumpOpen(true);
+        onOpenSearch();
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, []);
-
-  useEffect(() => setMenuOpen(false), [pathname]);
+  }, [onOpenSearch]);
 
   return (
     <header className="sticky top-0 z-20 flex min-h-[68px] flex-wrap items-center gap-x-3.5 gap-y-2.5 border-b border-line bg-canvas/90 px-4 py-2.5 backdrop-blur-md sm:px-8 lg:flex-nowrap lg:py-0">
       <button
         type="button"
-        onClick={() => setMenuOpen(true)}
+        onClick={onOpenMenu}
         aria-label="Open navigation"
         className="grid h-11 w-11 flex-none place-items-center rounded-control border border-line-strong bg-white text-night lg:hidden"
       >
@@ -96,7 +135,7 @@ export function TopBar({
 
       <button
         type="button"
-        onClick={() => setJumpOpen(true)}
+        onClick={onOpenSearch}
         className="order-last flex h-[42px] w-full items-center gap-2.5 rounded-control border border-line-strong bg-white pl-3.5 pr-2.5 text-left text-[14.5px] text-[#7A879C] transition hover:border-[#B8C3D6] lg:order-none lg:ml-auto lg:w-auto lg:flex-[0_1_420px]"
       >
         <Icon name="search" className="text-muted" />
@@ -112,26 +151,15 @@ export function TopBar({
         </span>
         <NotificationsBell userId={userId} />
         <ConnectGitHubButton />
-        <NewMenu />
+        {creatable.length > 0 && <NewMenu actions={creatable} />}
       </div>
 
-      {menuOpen && (
-        <MobileNav onClose={() => setMenuOpen(false)}>
-          <Sidebar
-            userName={userName}
-            userEmail={userEmail}
-            userRoles={userRoles}
-            escalations={escalations}
-            onNavigate={() => setMenuOpen(false)}
-          />
-        </MobileNav>
-      )}
-      {jumpOpen && <QuickJump onClose={() => setJumpOpen(false)} userRoles={userRoles} />}
+      {escalations && <span className="sr-only">{escalations} open escalations</span>}
     </header>
   );
 }
 
-function NewMenu() {
+function NewMenu({ actions }: { actions: CreateAction[] }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
@@ -167,7 +195,7 @@ function NewMenu() {
           role="menu"
           className="absolute right-0 top-[calc(100%+8px)] z-30 w-[260px] animate-fade-in rounded-[14px] border border-line bg-white p-1.5 shadow-pop"
         >
-          {CREATE_ACTIONS.map((action) => (
+          {actions.map((action) => (
             <Link
               key={action.href}
               role="menuitem"
@@ -190,36 +218,6 @@ function NewMenu() {
   );
 }
 
-function MobileNav({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previous;
-    };
-  }, [onClose]);
-
-  return createPortal(
-    <div className="app-shell font-sans lg:hidden">
-      <button
-        type="button"
-        aria-label="Close navigation"
-        onClick={onClose}
-        className="fixed inset-0 z-40 animate-fade-in bg-[rgba(0,20,48,.38)]"
-      />
-      <div className="fixed inset-y-0 left-0 z-[41] w-[min(290px,86vw)] animate-fade-in shadow-drawer">
-        {children}
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
 interface JumpItem {
   label: string;
   href: string;
@@ -228,22 +226,30 @@ interface JumpItem {
   keywords: string;
 }
 
-/** Ctrl/⌘ K: jump to any workspace page or start a common action. */
-function QuickJump({ onClose, userRoles }: { onClose: () => void; userRoles: string[] }) {
+/** Ctrl/⌘ K: jump to any workspace page Go says the caller may open. */
+export function QuickJump({
+  model,
+  actions,
+  onClose,
+}: {
+  model: NavModel;
+  actions: Record<string, boolean>;
+  onClose: () => void;
+}) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
 
   const items = useMemo<JumpItem[]>(() => {
-    const pages = filterLinksByRoles(ALL_LINKS, userRoles).map((link) => ({
-      label: link.label,
-      href: link.href,
-      icon: link.icon,
-      group: link.section ?? "Workspace",
-      keywords: `${link.section ?? ""} ${link.keywords ?? ""}`,
+    const pages = model.items.map((item) => ({
+      label: item.label,
+      href: item.href,
+      icon: item.icon,
+      group: item.section ?? "Workspace",
+      keywords: `${item.section ?? ""} ${item.keywords ?? ""}`,
     }));
-    const actions = CREATE_ACTIONS.map((action) => ({
+    const creates = permittedActions(actions).map((action) => ({
       label: action.label,
       href: action.href,
       icon: action.icon,
@@ -251,10 +257,10 @@ function QuickJump({ onClose, userRoles }: { onClose: () => void; userRoles: str
       keywords: action.hint,
     }));
     const q = query.trim().toLowerCase();
-    return [...pages, ...actions].filter(
+    return [...pages, ...creates].filter(
       (item) => !q || `${item.label} ${item.group} ${item.keywords}`.toLowerCase().includes(q),
     );
-  }, [query, userRoles]);
+  }, [actions, model, query]);
 
   useEffect(() => {
     input.current?.focus();

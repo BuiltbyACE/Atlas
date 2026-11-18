@@ -38,15 +38,20 @@ export const dynamic = "force-dynamic";
 
 export default async function ApprovalsPage() {
   const user = await requireUser();
-  const me = user.person_id!;
 
-  const [pending, requested, policies] = await Promise.all([
-    listPendingApprovals(user.roles[0] ? { role: user.roles[0] } : {}).then(
-      (p) => p.items,
-    ),
-    listMyRequestedApprovals().then((p) => p.items),
+  // Reading the queue needs core.approval.read; a direct visit by someone
+  // without it must still show their own requests, not a 500. Each read is
+  // settled independently for that reason.
+  const [pendingResult, requestedResult, policiesResult] = await Promise.allSettled([
+    listPendingApprovals(user.roles[0] ? { role: user.roles[0] } : {}),
+    listMyRequestedApprovals(),
     listApprovalPolicies(),
   ]);
+
+  const canReadQueue = pendingResult.status === "fulfilled";
+  const pending = canReadQueue ? pendingResult.value.items : [];
+  const requested = requestedResult.status === "fulfilled" ? requestedResult.value.items : [];
+  const policies = policiesResult.status === "fulfilled" ? policiesResult.value : [];
 
   return (
     <div className="space-y-6">
@@ -71,10 +76,11 @@ export default async function ApprovalsPage() {
       </div>
 
       <ApprovalsClient
-        me={me}
+        me={user.person_id ?? ""}
         pending={pending}
         requested={requested}
         policies={policies}
+        canReadQueue={canReadQueue}
       />
     </div>
   );

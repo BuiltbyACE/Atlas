@@ -35,11 +35,14 @@ export function ApprovalsClient({
   pending,
   requested,
   policies,
+  canReadQueue,
 }: {
   me: string;
   pending: Approval[];
   requested: Approval[];
   policies: ApprovalPolicy[];
+  /** False when Go refused the queue read because core.approval.read is absent. */
+  canReadQueue: boolean;
 }) {
   const notify = useToast();
   const { busy, problem, run, reset } = useMutation();
@@ -100,7 +103,15 @@ export function ApprovalsClient({
         <ProblemNotice error={problem} title="An error occurred" />
       )}
 
-      {items.length === 0 ? (
+      {activeTab === "pending" && !canReadQueue ? (
+        <Card title="Approval queue unavailable">
+          <p className="text-sm text-muted">
+            Reading the pending queue requires the <code>core.approval.read</code>{" "}
+            permission. You can still request approvals and follow your own under
+            “Your requests”.
+          </p>
+        </Card>
+      ) : items.length === 0 ? (
         <EmptyState
           icon="check"
           iconTone="success"

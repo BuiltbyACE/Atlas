@@ -20,7 +20,7 @@ import type { PersonOption } from "@/lib/directory";
 import { dateInput, formatMinorInput, humanise, parseMinor, today } from "@/lib/format";
 import { useMutation } from "@/lib/use-mutation";
 
-import type { FinanceCapability } from "./permissions";
+import type { FinanceAction } from "./permissions";
 
 /**
  * Recurring costs (`/api/v1/finance/recurring-costs`, §8.4). Hosting, domains
@@ -177,7 +177,7 @@ function RecurringCostFields({
 
 /**
  * "New recurring cost" (`POST /api/v1/finance/recurring-costs`,
- * `finance.recurring_cost.create`): a button that opens the form in a drawer.
+ * `finance.recurring_cost.manage`): a button that opens the form in a drawer.
  */
 export function NewRecurringCostButton({
   people,
@@ -189,7 +189,7 @@ export function NewRecurringCostButton({
   people: PersonOption[];
   me?: string;
   currency: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
   variant?: "primary" | "secondary";
 }) {
   const router = useRouter();
@@ -197,7 +197,7 @@ export function NewRecurringCostButton({
   const { busy, problem, run, reset } = useMutation();
   const [open, setOpen] = useState(false);
 
-  if (!capabilities.includes("finance.recurring_cost.create")) return null;
+  if (!capabilities.includes("finance.recurring_cost.manage")) return null;
 
   function close() {
     setOpen(false);
@@ -250,7 +250,7 @@ export function NewRecurringCostButton({
 /**
  * The actions for one recurring-cost row: change the amount, cycle or renewal,
  * or retire/reactivate it. All of it is `PUT /api/v1/finance/recurring-costs/{id}`
- * under `finance.recurring_cost.update`, guarded by `If-Match`.
+ * under `finance.recurring_cost.manage`, guarded by `If-Match`.
  */
 export function RecurringCostActions({
   cost,
@@ -263,14 +263,14 @@ export function RecurringCostActions({
   people: PersonOption[];
   me?: string;
   currency: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
 }) {
   const router = useRouter();
   const notify = useToast();
   const { busy, problem, run, reset } = useMutation();
   const [open, setOpen] = useState(false);
 
-  const canManage = capabilities.includes("finance.recurring_cost.update");
+  const canManage = capabilities.includes("finance.recurring_cost.manage");
   if (!canManage) return null;
 
   // The toggle rewrites the whole record, so it needs the amount on screen; a

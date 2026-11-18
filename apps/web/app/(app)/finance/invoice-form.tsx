@@ -23,7 +23,7 @@ import {
 import { dateInput, formatMinor, humanise, parseMinor, today } from "@/lib/format";
 import { useMutation } from "@/lib/use-mutation";
 
-import type { FinanceCapability } from "./permissions";
+import type { FinanceAction } from "./permissions";
 
 /**
  * Invoices (`/api/v1/finance/invoices`, §8.4). The finance team raises one from
@@ -71,7 +71,7 @@ function lineTax(line: LineDraft, subtotal: number): number {
 }
 
 /**
- * "New invoice" (`POST /api/v1/finance/invoices`, `finance.invoice.create`).
+ * "New invoice" (`POST /api/v1/finance/invoices`, `finance.invoice.write`).
  * The line editor keeps a live pre-tax subtotal per line and a total, so the
  * raiser sees the figure before Go does.
  */
@@ -85,7 +85,7 @@ export function NewInvoiceButton({
   organizations: { id: string; name: string }[];
   contracts: { id: string; label: string }[];
   currency: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
   variant?: "primary" | "secondary";
 }) {
   const router = useRouter();
@@ -117,7 +117,7 @@ export function NewInvoiceButton({
     };
   }, [contractId]);
 
-  if (!capabilities.includes("finance.invoice.create")) return null;
+  if (!capabilities.includes("finance.invoice.write")) return null;
 
   function close() {
     setOpen(false);
@@ -396,7 +396,7 @@ export function InvoiceActions({
   capabilities,
 }: {
   invoice: FinanceInvoice;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
 }) {
   const router = useRouter();
   const notify = useToast();
@@ -465,11 +465,11 @@ export function InvoiceActions({
   }
 
   const canApprove =
-    capabilities.includes("finance.invoice.approve") &&
+    capabilities.includes("finance.invoice.write") &&
     (invoice.status === "scheduled" || invoice.status === "draft");
   const canIssue = capabilities.includes("finance.invoice.issue") && invoice.status === "approved";
   const openForDecision = OPEN_FOR_DECISION.has(invoice.status);
-  const canDispute = capabilities.includes("finance.invoice.dispute") && openForDecision;
+  const canDispute = capabilities.includes("finance.invoice.write") && openForDecision;
   // A write-off rides on `finance.invoice.issue`: it closes the same lifecycle,
   // and the audit row naming the actor is what guards it (§8.4).
   const canWriteOff = capabilities.includes("finance.invoice.issue") && openForDecision;

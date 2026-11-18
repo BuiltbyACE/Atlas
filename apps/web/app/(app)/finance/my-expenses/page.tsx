@@ -21,6 +21,7 @@ import { useToast } from "@/components/toast";
 import {
   createExpense,
   getExpense,
+  getNavigation,
   listExpenseCategories,
   listExpenses,
   submitExpense,
@@ -31,6 +32,8 @@ import { ApiError } from "@/lib/api/client";
 import { MutationProblem } from "@/lib/use-mutation";
 import { formatDay, formatMinor, humanise } from "@/lib/format";
 import { useMutation } from "@/lib/use-mutation";
+
+import { financeCapabilities } from "../permissions";
 
 /**
  * My Expenses (§8.4). Employee-facing expense claims: list your own expenses,
@@ -47,8 +50,29 @@ export default function MyExpensesPage() {
   const [error, setError] = useState<ApiError | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // Go reports whether this person may write expenses in the navigation
+  // response; until it answers, no write control is offered. The endpoint
+  // enforces the permission either way, so this only keeps the UI honest.
+  const [canWrite, setCanWrite] = useState(false);
 
   const statusFilter = searchParams.get("status") ?? "";
+
+  useEffect(() => {
+    let alive = true;
+    getNavigation().then(
+      (navigation) => {
+        if (alive) {
+          setCanWrite(financeCapabilities(navigation).includes("finance.expense.write"));
+        }
+      },
+      () => {
+        if (alive) setCanWrite(false);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     const query: Record<string, string> = { limit: "200" };
@@ -103,7 +127,7 @@ export default function MyExpensesPage() {
         description="Your expense claims: draft, submit, and track reimbursement."
         actions={
           <>
-            {creating ? null : (
+            {!creating && canWrite ? (
               <Button
                 type="button"
                 variant="primary"
@@ -113,7 +137,7 @@ export default function MyExpensesPage() {
                 <Icon name="plus" className="h-4 w-4" />
                 New expense
               </Button>
-            )}
+            ) : null}
           </>
         }
       />
@@ -203,7 +227,9 @@ export default function MyExpensesPage() {
                 className="min-h-[220px]"
                 title="No expenses yet"
               >
-                Create your first expense claim to get started.
+                {canWrite
+                  ? "Create your first expense claim to get started."
+                  : "Expense claims filed for you will appear here."}
               </EmptyState>
             </div>
           ) : (
@@ -253,7 +279,7 @@ export default function MyExpensesPage() {
                       </Badge>
                     </Td>
                     <Td className="tabular text-right">
-                      {e.status === "draft" ? (
+                      {e.status === "draft" && canWrite ? (
                         <>
                           <Button
                             type="button"
@@ -279,7 +305,7 @@ export default function MyExpensesPage() {
                           size="sm"
                           disabled
                         >
-                          View
+                          {e.status === "draft" ? "Read only" : "View"}
                         </Button>
                       )}
                     </Td>

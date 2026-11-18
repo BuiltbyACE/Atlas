@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { ButtonLink } from "@/components/form";
 import { Icon } from "@/components/icons";
+import { AccessDenied } from "@/components/access-denied";
 import { SignalRefresh } from "@/components/signal-refresh";
 import {
   Badge,
@@ -28,6 +29,7 @@ import {
   INVOICE_STATUSES,
   getCashPosition,
   getFinanceOverview,
+  getNavigation,
   getReceivables,
   listBudgets,
   listContracts,
@@ -68,7 +70,7 @@ import { BudgetActions, NewBudgetButton } from "./budget-form";
 import { ExpenseActions, NewExpenseButton } from "./expense-form";
 import { InvoiceActions, NewInvoiceButton } from "./invoice-form";
 import { PaymentActions, RecordPaymentButton, type OpenInvoice } from "./payment-form";
-import { financeCapabilities, type FinanceCapability } from "./permissions";
+import { financeCapabilities, type FinanceAction } from "./permissions";
 import { NewRecurringCostButton, RecurringCostActions } from "./recurring-cost-form";
 
 /**
@@ -290,14 +292,18 @@ export default async function FinancePage({
           title="Finance"
           description="Cash, what is owed, what each project earns, and where spend is going."
         />
-        <ProblemNotice
-          error={problem}
-          title={
-            overview.error?.status === 403
-              ? "You do not have permission to view finance"
-              : "Finance could not be loaded"
-          }
-        />
+        {overview.error?.status === 403 ? (
+          // Go refused the module read: explain it the same way every page does.
+          <AccessDenied
+            error={problem}
+            title="You do not have permission to view finance"
+            message="Finance is limited to people whose role includes a finance read permission. Expenses you filed yourself are still under My expenses."
+            backHref="/finance/my-expenses"
+            backLabel="Go to my expenses"
+          />
+        ) : (
+          <ProblemNotice error={problem} title="Finance could not be loaded" />
+        )}
       </div>
     );
   }
@@ -327,7 +333,10 @@ export default async function FinancePage({
 
   const names = await personDirectory();
   const people = rosterOf(names);
-  const capabilities = financeCapabilities(user.permissions);
+  // Go reports each finance action's availability in the navigation response;
+  // a failed navigation read offers no finance write controls at all.
+  const navigation = await getNavigation().catch(() => null);
+  const capabilities = financeCapabilities(navigation);
   const me = user.person_id;
 
   // Invoices a payment can still be spread over; a restricted outstanding is
@@ -1186,7 +1195,7 @@ function ExpenseRow({
   claimant: string;
   me?: string;
   accounts: FinanceAccount[];
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
 }) {
   return (
     <tr>
@@ -1229,7 +1238,7 @@ function InvoiceRow({
 }: {
   invoice: FinanceInvoice;
   currency: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
 }) {
   const overdue = isInvoiceOverdue(invoice);
   return (
@@ -1282,7 +1291,7 @@ function BudgetRow({
   people: PersonOption[];
   projects: { id: string; name: string }[];
   me?: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
 }) {
   return (
     <tr>

@@ -1,3 +1,4 @@
+import { AccessDenied } from "@/components/access-denied";
 import { DayPicker } from "@/components/day-picker";
 import { Icon } from "@/components/icons";
 import {
@@ -79,9 +80,10 @@ export default async function ActivityPage({
     return (
       <div className="space-y-6">
         <PageHeader title="Activity" description="Who is signed in now, and how long each person was active." />
-        <ProblemNotice
+        <AccessDenied
           error={(presenceError ?? sessionsError)!}
           title="Sign-in activity isn’t visible to you"
+          message="Presence and session history are limited to people whose role includes the People read and session permissions."
         />
       </div>
     );

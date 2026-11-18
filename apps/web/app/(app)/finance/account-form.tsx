@@ -18,7 +18,7 @@ import {
 import { formatMinorInput, humanise, parseMinor } from "@/lib/format";
 import { useMutation } from "@/lib/use-mutation";
 
-import type { FinanceCapability } from "./permissions";
+import type { FinanceAction } from "./permissions";
 
 /**
  * Accounts (`/api/v1/finance/accounts`, §8.4). A cash, bank, M-Pesa or card
@@ -122,7 +122,7 @@ function AccountFields({
 }
 
 /**
- * "New account" (`POST /api/v1/finance/accounts`, `finance.account.create`): a
+ * "New account" (`POST /api/v1/finance/accounts`, `finance.account.manage`): a
  * button that opens the account form in a drawer.
  */
 export function NewAccountButton({
@@ -131,7 +131,7 @@ export function NewAccountButton({
   variant = "primary",
 }: {
   currency: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
   variant?: "primary" | "secondary";
 }) {
   const router = useRouter();
@@ -139,7 +139,7 @@ export function NewAccountButton({
   const { busy, problem, run, reset } = useMutation();
   const [open, setOpen] = useState(false);
 
-  if (!capabilities.includes("finance.account.create")) return null;
+  if (!capabilities.includes("finance.account.manage")) return null;
 
   function close() {
     setOpen(false);
@@ -201,7 +201,7 @@ export function AccountActions({
 }: {
   account: FinanceAccount;
   currency: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
 }) {
   const router = useRouter();
   const notify = useToast();

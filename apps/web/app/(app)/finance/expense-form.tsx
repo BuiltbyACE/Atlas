@@ -27,14 +27,14 @@ import type { PersonOption } from "@/lib/directory";
 import { humanise, parseMinor, today } from "@/lib/format";
 import { useMutation } from "@/lib/use-mutation";
 
-import type { FinanceCapability } from "./permissions";
+import type { FinanceAction } from "./permissions";
 
 /**
  * Expenses (`/api/v1/finance/expenses`, §8.4). Recording a claim takes
- * `finance.expense.create`; approving takes `finance.expense.approve` and is one
+ * `finance.expense.write`; approving takes `finance.expense.approve` and is one
  * audited decision — whoever may approve may approve any claim, including their
  * own, and the audit row names them (§6.6). These components only offer the
- * steps the status and the viewer's role allow.
+ * steps the status and the viewer's permissions allow.
  */
 
 /** A text field, trimmed; `""` when the field is absent. */
@@ -91,7 +91,7 @@ function expenseBody(data: FormData, currency: string, receiptFileId?: string): 
 }
 
 /**
- * "New expense" (`POST /api/v1/finance/expenses`, `finance.expense.create`): a
+ * "New expense" (`POST /api/v1/finance/expenses`, `finance.expense.write`): a
  * button that opens the claim form in a drawer. The claimant defaults to the
  * signed-in person, who is usually the one claiming.
  */
@@ -109,7 +109,7 @@ export function NewExpenseButton({
   categories: FinanceExpenseCategory[];
   projects: { id: string; name: string }[];
   currency: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
   variant?: "primary" | "secondary";
 }) {
   const router = useRouter();
@@ -117,7 +117,7 @@ export function NewExpenseButton({
   const { busy, problem, run, reset } = useMutation();
   const [open, setOpen] = useState(false);
 
-  if (!capabilities.includes("finance.expense.create")) return null;
+  if (!capabilities.includes("finance.expense.write")) return null;
 
   function close() {
     setOpen(false);
@@ -284,7 +284,7 @@ export function ExpenseActions({
   me?: string;
   accounts: FinanceAccount[];
   currency: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
 }) {
   const router = useRouter();
   const notify = useToast();
@@ -347,7 +347,7 @@ export function ExpenseActions({
   }
 
   const canSubmit =
-    capabilities.includes("finance.expense.submit") &&
+    capabilities.includes("finance.expense.write") &&
     (expense.status === "draft" || expense.status === "rejected");
   // Who decides is a matter of permission, not of distance from the claim: the
   // footprint on the audit row is the control (§6.6). `me` only defaults the
@@ -355,9 +355,9 @@ export function ExpenseActions({
   const canDecide =
     capabilities.includes("finance.expense.approve") && expense.status === "submitted";
   const canSettle =
-    capabilities.includes("finance.expense.settle") && expense.status === "approved";
+    capabilities.includes("finance.payment.record") && expense.status === "approved";
   const canReconcile =
-    capabilities.includes("finance.expense.reconcile") &&
+    capabilities.includes("finance.payment.record") &&
     (expense.status === "paid" || expense.status === "reimbursed");
 
   const nothing = !canSubmit && !canDecide && !canSettle && !canReconcile;

@@ -46,6 +46,48 @@ export function heartbeat(): Promise<void> {
   return apiFetch<void>("/api/v1/auth/heartbeat", { method: "POST" });
 }
 
+// ── navigation (§4, §6.2) ───────────────────────────────────────────────────
+
+/**
+ * One destination from `GET /api/v1/me/navigation`, already filtered by Go to
+ * the destinations the caller's effective permissions unlock. `actions` is
+ * keyed by the exact catalogue permission each control needs, with Go's answer
+ * as the value, so the web app never keeps its own permission list.
+ */
+export interface NavigationItem {
+  key: string;
+  label: string;
+  href: string;
+  /** Icon name from the web icon set; Go does not interpret it. */
+  icon: string;
+  section?: string;
+  keywords?: string;
+  /** Permission-scoped indicator name (for example `escalations`). */
+  badge?: string;
+  actions: Record<string, boolean>;
+}
+
+export interface NavigationSection {
+  key: string;
+  title?: string;
+  items: NavigationItem[];
+}
+
+/** The workspace map Go computed for the signed-in person. */
+export interface Navigation {
+  sections: NavigationSection[];
+  /** The caller's effective permission set, sorted by Go. */
+  permissions: string[];
+}
+
+/**
+ * Read the caller's workspace map. Go decides which destinations and actions
+ * appear; this wrapper only forwards the session cookie.
+ */
+export function getNavigation(): Promise<Navigation> {
+  return apiFetch<Navigation>("/api/v1/me/navigation", { cache: "no-store" });
+}
+
 // ── auth write wrappers (§6.1) ──────────────────────────────────────────────
 
 /** A role grant on an invite or a personnel record. */

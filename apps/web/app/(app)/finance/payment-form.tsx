@@ -21,7 +21,7 @@ import {
 import { formatMinor, humanise, parseMinor, today } from "@/lib/format";
 import { useMutation } from "@/lib/use-mutation";
 
-import type { FinanceCapability } from "./permissions";
+import type { FinanceAction } from "./permissions";
 
 /**
  * Payments (`/api/v1/finance/payments`, §8.4). A payment is recorded against an
@@ -131,7 +131,7 @@ function AllocationGrid({
 }
 
 /**
- * "Record payment" (`POST /api/v1/finance/payments`, `finance.payment.create`).
+ * "Record payment" (`POST /api/v1/finance/payments`, `finance.payment.record`).
  * The amount is in major units and converted to minor units by `parseMinor`;
  * any allocation made here is capped by what the invoice still owes.
  */
@@ -145,7 +145,7 @@ export function RecordPaymentButton({
   accounts: FinanceAccount[];
   openInvoices: OpenInvoice[];
   currency: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
   variant?: "primary" | "secondary";
 }) {
   const router = useRouter();
@@ -155,7 +155,7 @@ export function RecordPaymentButton({
   const [amount, setAmount] = useState("");
   const [allocations, setAllocations] = useState<Record<string, string>>({});
 
-  if (!capabilities.includes("finance.payment.create")) return null;
+  if (!capabilities.includes("finance.payment.record")) return null;
 
   function close() {
     setOpen(false);
@@ -315,7 +315,7 @@ export function PaymentActions({
   payment: FinancePayment;
   openInvoices: OpenInvoice[];
   currency: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
 }) {
   const router = useRouter();
   const notify = useToast();
@@ -357,8 +357,8 @@ export function PaymentActions({
     }
   }
 
-  const canAllocate = capabilities.includes("finance.payment.allocate");
-  const canReconcile = capabilities.includes("finance.payment.reconcile");
+  const canAllocate = capabilities.includes("finance.payment.record");
+  const canReconcile = capabilities.includes("finance.payment.record");
   const nothing = !canAllocate && !canReconcile;
 
   return (

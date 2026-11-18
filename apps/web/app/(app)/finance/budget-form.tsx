@@ -23,7 +23,7 @@ import type { PersonOption } from "@/lib/directory";
 import { dateInput, formatMinorInput, humanise, parseMinor, today } from "@/lib/format";
 import { useMutation } from "@/lib/use-mutation";
 
-import type { FinanceCapability } from "./permissions";
+import type { FinanceAction } from "./permissions";
 
 /**
  * Budgets (`/api/v1/finance/budgets`, §8.4). A ceiling for a scope and period;
@@ -189,7 +189,7 @@ function BudgetFields({
 }
 
 /**
- * "New budget" (`POST /api/v1/finance/budgets`, `finance.budget.create`): a
+ * "New budget" (`POST /api/v1/finance/budgets`, `finance.budget.manage`): a
  * button that opens the budget form in a drawer.
  */
 export function NewBudgetButton({
@@ -206,7 +206,7 @@ export function NewBudgetButton({
   projects: { id: string; name: string }[];
   me?: string;
   currency: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
   variant?: "primary" | "secondary";
 }) {
   const router = useRouter();
@@ -214,7 +214,7 @@ export function NewBudgetButton({
   const { busy, problem, run, reset } = useMutation();
   const [open, setOpen] = useState(false);
 
-  if (!capabilities.includes("finance.budget.create")) return null;
+  if (!capabilities.includes("finance.budget.manage")) return null;
 
   function close() {
     setOpen(false);
@@ -273,7 +273,7 @@ export function NewBudgetButton({
 /**
  * The actions for one budget row: approve it, correct a draft, or close it when
  * the period ends. Approve and close are their own routes; the edit is `PUT`
- * under `finance.budget.update`, all guarded by `If-Match`.
+ * under `finance.budget.manage`, all guarded by `If-Match`.
  */
 export function BudgetActions({
   budget,
@@ -290,7 +290,7 @@ export function BudgetActions({
   projects: { id: string; name: string }[];
   me?: string;
   currency: string;
-  capabilities: FinanceCapability[];
+  capabilities: FinanceAction[];
 }) {
   const router = useRouter();
   const notify = useToast();
@@ -327,10 +327,10 @@ export function BudgetActions({
   }
 
   const canApprove =
-    capabilities.includes("finance.budget.approve") && budget.status === "draft";
+    capabilities.includes("finance.budget.manage") && budget.status === "draft";
   // Only a draft is still open to correction; once approved it is a commitment.
-  const canEdit = capabilities.includes("finance.budget.update") && budget.status === "draft";
-  const canClose = capabilities.includes("finance.budget.close") && budget.status === "approved";
+  const canEdit = capabilities.includes("finance.budget.manage") && budget.status === "draft";
+  const canClose = capabilities.includes("finance.budget.manage") && budget.status === "approved";
 
   const nothing = !canApprove && !canEdit && !canClose;
 

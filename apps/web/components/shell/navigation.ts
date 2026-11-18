@@ -1,176 +1,173 @@
 /**
- * Atlas web - the workspace map: sidebar sections, breadcrumbs and the
- * quick-jump list all read from here, so a page is named the same everywhere.
+ * Atlas web - the workspace map the shell renders.
  *
- * Modules from blueprint §4 (capability map). Phase 2 built out Work and People,
- * Phase 3 added CRM, Contracts and Finance; the modules still on the roadmap are
- * listed under "Coming next" as muted labels rather than links to a 404, so the
- * shell never promises a page that does not exist.
+ * Go is the authority (`GET /api/v1/me/navigation`): it decides which
+ * destinations appear and which actions each destination offers, from the
+ * caller's effective permissions. This module only translates the wire shape
+ * into what the shell needs: a typed icon name, a flat list for search, and
+ * breadcrumbs. It never decides access, and it never maps a role to a menu.
+ *
+ * `FALLBACK_NAVIGATION` is deliberately tiny. When the navigation endpoint
+ * fails, the shell shows only destinations that every signed-in person may open
+ * (the dashboard and their own settings). It never guesses at module access, so
+ * a degraded response can hide a control but never offer an unauthorised one.
  */
 
 import type { IconName } from "@/components/icons";
+import {
+  getNavigation,
+  type Navigation,
+  type NavigationItem,
+  type NavigationSection,
+} from "@/lib/api/atlas";
 
-export interface NavLink {
-  label: string;
-  href: string;
+/** A destination with its icon resolved to the local icon set. */
+export interface NavItem extends Omit<NavigationItem, "icon"> {
   icon: IconName;
-  /** Section shown in the breadcrumb before the page name. */
-  section?: string;
-  /** Extra words the quick-jump matches on. */
-  keywords?: string;
-  /** Show the open-escalations count beside it. */
-  badge?: "escalations";
-  /** Role keys allowed to see this link. Absent = visible to all authenticated users. */
-  roles?: string[];
 }
 
-/** Role groups used for navigation gating. */
-export const ROLE_GROUPS = {
-  ceo_internal: ["ceo_internal"],
-  ceo_commercial: ["ceo_commercial"],
-  finance_officer: ["finance_officer"],
-  sales_rep: ["sales_rep"],
-  project_lead: ["project_lead"],
-  engineer: ["engineer"],
-  staff: ["staff"],
-  unit_manager: ["unit_manager"],
-  auditor: ["auditor"],
-  system_admin: ["system_admin"],
-} as const;
-
-/** Returns true when the user holds at least one of the required roles.
- * When `required` is empty or undefined, the link is visible to everyone. */
-export function hasAnyRole(userRoles: string[], required?: string[]): boolean {
-  if (!required || required.length === 0) return true;
-  return required.some((r) => userRoles.includes(r));
+export interface NavSection extends Omit<NavigationSection, "items"> {
+  items: NavItem[];
 }
 
-/** Filters nav links to those the user is allowed to see. */
-export function filterLinksByRoles(links: NavLink[], userRoles: string[]): NavLink[] {
-  return links.filter((link) => hasAnyRole(userRoles, link.roles));
+export interface NavModel {
+  sections: NavSection[];
+  /** Every visible destination, in sidebar order. */
+  items: NavItem[];
+  /** The caller's effective permissions, as Go reported them. */
+  permissions: string[];
 }
 
-/** Returns only the sections whose links are visible to the user. */
-export function filterSectionsByRoles(
-  sections: NavSection[],
-  userRoles: string[],
-): NavSection[] {
-  return sections
-    .map((section) => ({
-      ...section,
-      links: filterLinksByRoles(section.links, userRoles),
-    }))
-    .filter((section) => section.links.length > 0);
-}
-
-export interface NavSection {
-  title?: string;
-  links: NavLink[];
-}
-
-export const NAV_SECTIONS: NavSection[] = [
-  {
-    links: [{ label: "Dashboard", href: "/dashboard", icon: "dashboard", keywords: "home overview" }],
-  },
-  {
-    title: "Work",
-    links: [
-      { label: "Approvals", href: "/approvals", icon: "shieldCheck", section: "Work", keywords: "approve decline escalate", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-      { label: "Projects", href: "/work", icon: "folder", section: "Work", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-      { label: "Task board", href: "/work/tasks", icon: "board", section: "Work", keywords: "kanban tasks", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-      { label: "Workload", href: "/work/workload", icon: "bars", section: "Work", keywords: "capacity deadlines", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-      { label: "Escalations", href: "/work/escalations", icon: "alert", section: "Work", badge: "escalations", keywords: "overdue", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-      { label: "Time entries", href: "/work/time-entries", icon: "clock", section: "Work", keywords: "timesheet hours logged tasks", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-      { label: "My Work", href: "/dashboard/my-work", icon: "dashboard", section: "Work", keywords: "my tasks my reports my leave my time", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-    ],
-  },
-  {
-    title: "People",
-    links: [
-      { label: "Availability & leave", href: "/people", icon: "calendar", section: "People", keywords: "roster holiday absence", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-      { label: "Activity", href: "/people/activity", icon: "pulse", section: "People", keywords: "sessions online sign-in", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-      { label: "Daily reports", href: "/daily-reports", icon: "clipboard", section: "People", keywords: "report standup", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-      { label: "Departments", href: "/people/departments", icon: "building", section: "People", keywords: "departments units teams", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-      { label: "Onboard new person", href: "/people/onboard", icon: "plus", section: "People", keywords: "invite new hire register", roles: ["ceo_internal", "ceo_commercial", "system_admin", "finance_officer"] },
-      { label: "Reviews", href: "/people/reviews", icon: "clipboard", section: "People", keywords: "performance review rating feedback", roles: ["ceo_internal"] },
-    ],
-  },
-  {
-    title: "Revenue",
-    links: [
-      { label: "Commercial dashboard", href: "/dashboard/commercial", icon: "pie", section: "Revenue", keywords: "pipeline receivables cash leads", roles: ["ceo_internal", "ceo_commercial"] },
-      { label: "Daily Brief", href: "/dashboard/daily", icon: "clipboard", section: "Revenue", keywords: "yesterday today attention decisions", roles: ["ceo_internal", "ceo_commercial"] },
-      { label: "Scorecard", href: "/dashboard/scorecard", icon: "dashboard", section: "Revenue", keywords: "financial operational commercial systems people health", roles: ["ceo_internal", "ceo_commercial"] },
-      { label: "CRM", href: "/crm", icon: "people", section: "Revenue", keywords: "leads pipeline sales opportunities contacts clients", roles: ["ceo_commercial", "ceo_internal", "sales_rep"] },
-      { label: "Interactions", href: "/crm/interactions", icon: "clipboard", section: "Revenue", keywords: "calls emails meetings notes logged", roles: ["ceo_commercial", "ceo_internal", "sales_rep"] },
-      { label: "Follow-ups", href: "/crm/followups", icon: "clock", section: "Revenue", keywords: "scheduled next touch follow up", roles: ["ceo_commercial", "ceo_internal", "sales_rep"] },
-      { label: "Proposals", href: "/crm/proposals", icon: "document", section: "Revenue", keywords: "priced offers accepted declined", roles: ["ceo_commercial", "ceo_internal", "sales_rep"] },
-      { label: "Contracts", href: "/contracts", icon: "document", section: "Revenue", keywords: "agreements signing milestones renewals obligations", roles: ["ceo_commercial", "ceo_internal"] },
-      { label: "Finance", href: "/finance", icon: "card", section: "Revenue", keywords: "cash receivables expenses invoices budgets payments profitability recurring", roles: ["ceo_internal", "ceo_commercial", "finance_officer"] },
-      { label: "My Expenses", href: "/finance/my-expenses", icon: "card", section: "Revenue", keywords: "expense claim reimbursement receipts", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-    ],
-  },
-  {
-    title: "Platform",
-    links: [
-      { label: "Systems", href: "/systems", icon: "server", section: "Platform", keywords: "monitoring uptime incidents checks domains certificates credentials health", roles: ["ceo_internal", "system_admin"] },
-      { label: "Units", href: "/units", icon: "building", section: "Platform", keywords: "business units integrations indicators", roles: ["ceo_internal", "ceo_commercial", "unit_manager"] },
-      { label: "Intel", href: "/intel", icon: "pie", section: "Platform", keywords: "decisions risks briefs metric snapshots", roles: ["ceo_internal", "ceo_commercial"] },
-      { label: "GitHub", href: "/integrations/github", icon: "github", section: "Platform", keywords: "connect repository code activity", roles: ["ceo_internal", "ceo_commercial", "engineer", "staff"] },
-    ],
-  },
-  {
-    title: "Communicate",
-    links: [
-      { label: "Inbox", href: "/email/inbox", icon: "document", section: "Communicate", keywords: "email messages inbox messages", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-      { label: "Compose", href: "/email/compose", icon: "plus", section: "Communicate", keywords: "send email write message", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-      { label: "Addresses", href: "/email/addresses", icon: "card", section: "Communicate", keywords: "send as addresses email identity", roles: ["ceo_internal", "ceo_commercial", "finance_officer", "sales_rep", "project_lead", "engineer", "staff"] },
-    ],
-  },
-];
-
-/** Modules on the roadmap, shown dimmed with a "Soon" tag. */
-export interface ComingNextItem {
-  label: string;
-  icon: IconName;
-  roles?: string[];
-}
-
-export const COMING_NEXT: ComingNextItem[] = [];
-
-export const SETTINGS_LINK: NavLink = {
-  label: "Settings",
-  href: "/settings",
-  icon: "sliders",
-  keywords: "sessions devices account",
-  roles: ["ceo_internal", "ceo_commercial", "system_admin", "finance_officer"],
+/**
+ * Go emits icon names as plain strings; this map is the only place the web app
+ * binds them to the icon set. An unknown name falls back to the dashboard mark
+ * rather than throwing, so a new Go destination never breaks the shell.
+ */
+const ICONS: Record<string, IconName> = {
+  dashboard: "dashboard",
+  folder: "folder",
+  board: "board",
+  bars: "bars",
+  alert: "alert",
+  calendar: "calendar",
+  calendarPlus: "calendarPlus",
+  pulse: "pulse",
+  clipboard: "clipboard",
+  people: "people",
+  document: "document",
+  card: "card",
+  server: "server",
+  building: "building",
+  pie: "pie",
+  sliders: "sliders",
+  shieldCheck: "shieldCheck",
+  github: "github",
+  plus: "plus",
+  clock: "clock",
 };
 
-export const ALL_LINKS: NavLink[] = [
-  ...NAV_SECTIONS.flatMap((section) => section.links),
-  SETTINGS_LINK,
-];
+export function iconFor(name: string): IconName {
+  return ICONS[name] ?? "dashboard";
+}
 
-/** The nav link a path belongs to (longest matching prefix wins). */
-export function linkForPath(pathname: string): NavLink | undefined {
-  return ALL_LINKS.filter(
-    (link) => pathname === link.href || pathname.startsWith(`${link.href}/`),
-  ).sort((a, b) => b.href.length - a.href.length)[0];
+/** Translate the navigation response into the shell's model. */
+export function toNavModel(navigation: Navigation): NavModel {
+  const sections: NavSection[] = navigation.sections.map((section) => ({
+    key: section.key,
+    title: section.title,
+    items: section.items.map((item) => ({
+      ...item,
+      icon: iconFor(item.icon),
+    })),
+  }));
+  return {
+    sections,
+    items: sections.flatMap((section) => section.items),
+    permissions: navigation.permissions,
+  };
+}
+
+/** The model used only when the navigation endpoint cannot be read. */
+export const FALLBACK_NAVIGATION: Navigation = {
+  sections: [
+    {
+      key: "home",
+      items: [
+        {
+          key: "dashboard",
+          label: "Dashboard",
+          href: "/dashboard",
+          icon: "dashboard",
+          keywords: "home overview",
+          actions: {},
+        },
+      ],
+    },
+    {
+      key: "account",
+      items: [
+        {
+          key: "settings",
+          label: "Settings",
+          href: "/settings",
+          icon: "sliders",
+          keywords: "sessions devices account",
+          actions: {},
+        },
+      ],
+    },
+  ],
+  permissions: [],
+};
+
+/** Read a navigation response, or the safe fallback when it cannot be read. */
+export async function loadNavigation(): Promise<NavModel> {
+  try {
+    return toNavModel(await getNavigation());
+  } catch {
+    return toNavModel(FALLBACK_NAVIGATION);
+  }
+}
+
+/**
+ * Every action boolean across the visible destinations, merged. When two
+ * destinations declare the same permission they agree (Go derived both from the
+ * same principal), so the merge is a union. Used by the global create menu and
+ * quick jump, which are not tied to one page.
+ */
+export function allActions(model: NavModel): Record<string, boolean> {
+  const merged: Record<string, boolean> = {};
+  for (const item of model.items) {
+    for (const [permission, allowed] of Object.entries(item.actions)) {
+      merged[permission] = merged[permission] === true || allowed;
+    }
+  }
+  return merged;
+}
+
+/** The nav item a path belongs to (longest matching href wins). */
+export function linkForPath(model: NavModel, pathname: string): NavItem | undefined {
+  return model.items
+    .filter(
+      (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
+    )
+    .sort((a, b) => b.href.length - a.href.length)[0];
 }
 
 /** Breadcrumb trail for a path: section, page, and a detail leaf if deeper. */
 export function breadcrumbFor(
+  model: NavModel,
   pathname: string,
 ): Array<{ label: string; href?: string }> {
-  const link = linkForPath(pathname);
-  if (!link) return [];
+  const item = linkForPath(model, pathname);
+  if (!item) return [];
   const trail: Array<{ label: string; href?: string }> = [];
-  if (link.section) trail.push({ label: link.section });
-  if (pathname === link.href) {
-    trail.push({ label: link.label });
+  if (item.section) trail.push({ label: item.section });
+  if (pathname === item.href) {
+    trail.push({ label: item.label });
     return trail;
   }
-  trail.push({ label: link.label, href: link.href });
+  trail.push({ label: item.label, href: item.href });
   if (pathname.startsWith("/work/projects/")) trail.push({ label: "Project" });
   else if (pathname.startsWith("/work/tasks/")) trail.push({ label: "Task" });
   else if (pathname.startsWith("/crm/leads/")) trail.push({ label: "Lead" });

@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 
 import { GooFilter } from "@/components/blob-button";
 import { PresenceHeartbeat } from "@/components/presence-heartbeat";
-import { Sidebar } from "@/components/shell/sidebar";
-import { TopBar } from "@/components/shell/top-bar";
+import { AppShell } from "@/components/shell/app-shell";
+import { loadNavigation } from "@/components/shell/navigation";
 import { ToastProvider } from "@/components/toast";
 import { listEscalations } from "@/lib/api/atlas";
 import { requireUser } from "@/lib/auth/session";
@@ -32,38 +32,33 @@ async function openEscalationsLabel(): Promise<string | undefined> {
  * The workspace shell (prototype `.ax`): the navy sidebar on desktop, a sticky
  * top bar, and the page. Below `lg` the sidebar moves into a drawer opened from
  * the top bar.
+ *
+ * The destinations come from Go (`GET /api/v1/me/navigation`), already filtered
+ * by the caller's effective permissions. `loadNavigation` falls back to a
+ * dashboard-and-settings map if that endpoint is unavailable, so a degraded
+ * response can hide controls but never offer an unauthorised one.
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
   // The real check is enforced by Go on every request; this only decides
   // whether to render the shell or bounce to /login.
   const user = await requireUser();
-  const escalations = await openEscalationsLabel();
+  const model = await loadNavigation();
+
+  // Only fetch the count when Go put a badge-bearing destination in the map.
+  const wantsEscalations = model.items.some((item) => item.badge === "escalations");
+  const escalations = wantsEscalations ? await openEscalationsLabel() : undefined;
 
   return (
     <ToastProvider>
-      <div className="app-shell min-h-screen bg-canvas text-[15px] leading-[1.45] text-night lg:grid lg:grid-cols-[264px_minmax(0,1fr)]">
-        <PresenceHeartbeat />
-        <GooFilter />
-        <div
-          data-atlas-region="sidebar"
-          className="sticky top-0 hidden h-screen lg:block"
-        >
-          <Sidebar userName={user.name} userEmail={user.email} userRoles={user.roles} escalations={escalations} />
-        </div>
-
-        <div data-atlas-region="content" className="flex min-w-0 flex-col">
-          <TopBar
-            userId={user.id}
-            userName={user.name}
-            userEmail={user.email}
-            userRoles={user.roles}
-            escalations={escalations}
-          />
-          <main className="mx-auto w-full max-w-[1360px] px-4 pb-14 pt-5 sm:px-8 sm:pt-7">
-            {children}
-          </main>
-        </div>
-      </div>
+      <PresenceHeartbeat />
+      <GooFilter />
+      <AppShell
+        user={{ id: user.id, name: user.name, email: user.email }}
+        model={model}
+        escalations={escalations}
+      >
+        {children}
+      </AppShell>
     </ToastProvider>
   );
 }
