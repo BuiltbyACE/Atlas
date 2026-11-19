@@ -80,6 +80,8 @@ func run(args []string) error {
 		return runKeygen()
 	case "bootstrap":
 		return runBootstrap(args[1:])
+	case "e2e":
+		return runE2E(args[1:])
 	case "service":
 		return runService(args[1:])
 	case "help", "-h", "--help":
@@ -99,6 +101,7 @@ func usage() {
   seed
   keygen
   bootstrap --email <email> --name <full name> [--phone] [--role <role>] [--scope <scope>]
+  e2e provision --email <e2e@example.com> --name <full name>
   service create --id <svc:id> --permission <key> [--permission <key>]... [--description <text>]
   service token --id <svc:id>
   version
@@ -368,6 +371,84 @@ func runBootstrap(args []string) error {
 	if auth.RoleRequiresMFA(*role) {
 		fmt.Fprintln(os.Stdout, "This role is privileged: the first sign-in is a TOTP enrolment.")
 	}
+	return nil
+}
+
+// ── end-to-end test identity ────────────────────────────────
+
+// runE2E provisions the disposable Playwright identity. It is deliberately
+// separate from bootstrap and invitation: the role it creates is test-only, and
+// the guard refuses any environment other than local plus an explicit opt-in.
+func runE2E(args []string) error {
+	if len(args) == 0 {
+		return errors.New("e2e: expected provision")
+	}
+	if args[0] != "provision" {
+		return fmt.Errorf("e2e: unknown action %q", args[0])
+	}
+
+	fs := flag.NewFlagSet("e2e provision", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `atlas-cli e2e provision — create the disposable Playwright identity
+
+  --email <address>     required; must be on a reserved example domain
+  --name <full name>    required; a label for the test person
+  --password <secret>   at least 12 characters, or set ATLAS_E2E_PASSWORD
+
+Requires ATLAS_ENV=local and ATLAS_E2E_PROVISION=1. The command creates the
+test-only role "e2e_tester" with the minimum permissions the browser suite
+needs. Never run it against a real database.
+`)
+	}
+	email := fs.String("email", "", "reserved-domain email address")
+	name := fs.String("name", "", "the test person's display name")
+	password := fs.String("password", os.Getenv("ATLAS_E2E_PASSWORD"), "password (min 12); prefer the env var")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if *email == "" || *name == "" {
+		fs.Usage()
+		return errors.New("e2e provision: --email and --name are required")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	in := auth.E2EProvisionInput{
+		Env:      cfg.Env,
+		Enabled:  os.Getenv("ATLAS_E2E_PROVISION") == "1",
+		Email:    *email,
+		FullName: *name,
+		Password: *password,
+	}
+	if _, err := auth.ValidateE2EProvision(in); err != nil {
+		return err
+	}
+
+	logger := logging.New(cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	pool, err := database.Connect(ctx, cfg.DatabaseURL, logger)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	account, err := auth.ProvisionE2E(ctx, pool, in)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("E2E identity ready",
+		slog.String("email", account.Email),
+		slog.String("account_id", account.AccountID.String()),
+		slog.String("person_id", account.PersonID.String()),
+		slog.String("role", auth.E2ERoleKey),
+	)
+	fmt.Fprintln(os.Stdout, "E2E identity is ready for a disposable local database.")
 	return nil
 }
 

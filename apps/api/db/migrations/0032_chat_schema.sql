@@ -50,7 +50,9 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_sender
 CREATE TABLE IF NOT EXISTS core.chat_message_attachments (
 	id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 	message_id       uuid NOT NULL REFERENCES core.chat_messages(id) ON DELETE CASCADE,
-	document_id      uuid REFERENCES core.documents(id) ON DELETE SET NULL,
+	-- core.documents is created by migration 0033, which runs after this one, so
+	-- the foreign key is added by 0035 once both tables exist.
+	document_id      uuid,
 	filename         text NOT NULL,
 	content_type     text NOT NULL,
 	size_bytes       bigint NOT NULL DEFAULT 0,

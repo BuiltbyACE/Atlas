@@ -42,8 +42,8 @@ func (s *Service) WithOutbox(write func(ctx context.Context, e outbox.Event) err
 
 // CreateConversationOptions is input for starting a conversation.
 type CreateConversationOptions struct {
-	Type        string   // "direct" or "group"
-	Name        string   // for group conversations
+	Type        string // "direct" or "group"
+	Name        string // for group conversations
 	CreatedBy   uuid.UUID
 	Participant []uuid.UUID // other participants (creator is auto-added)
 }
@@ -116,10 +116,10 @@ type SendMessageOptions struct {
 
 // MessageAttachmentInput describes a file attached to a message.
 type MessageAttachmentInput struct {
-	DocumentID   *uuid.UUID
-	Filename     string
-	ContentType  string
-	SizeBytes    int64
+	DocumentID  *uuid.UUID
+	Filename    string
+	ContentType string
+	SizeBytes   int64
 }
 
 // SendMessage sends a message in a conversation.
@@ -166,7 +166,7 @@ func (s *Service) SendMessage(ctx context.Context, opts SendMessageOptions) (*Me
 		a := &MessageAttachment{
 			ID:          uuid.Nil,
 			MessageID:   msgID,
-			DocumentID:  *att.DocumentID,
+			DocumentID:  att.DocumentID,
 			Filename:    att.Filename,
 			ContentType: att.ContentType,
 			SizeBytes:   att.SizeBytes,

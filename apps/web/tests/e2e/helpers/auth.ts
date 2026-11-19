@@ -1,56 +1,49 @@
-import { test, expect, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 /**
- * Test credentials. Set these via environment variables or use the defaults.
- * For local development, ensure a test user exists in the database
- * (e.g. via seeding or manual creation).
+ * The disposable CI identity created by `atlas-cli e2e provision`. It is a
+ * non-privileged account (`mfa_required = false`), so sign-in is password-only
+ * exactly like any other ordinary person's. Override the values locally when
+ * pointing the suite at your own throwaway database.
  */
+const fullName = process.env.E2E_TEST_NAME || 'Atlas E2E';
+
 export const TEST_USER = {
-  email: process.env.E2E_TEST_EMAIL || 'test@example.com',
-  password: process.env.E2E_TEST_PASSWORD || 'TestPassword123!',
+  email: process.env.E2E_TEST_EMAIL || 'e2e@example.com',
+  password: process.env.E2E_TEST_PASSWORD || 'E2eTestPassword123!',
+  name: fullName,
+  firstName: fullName.trim().split(/\s+/)[0],
 };
 
+/** The dashboard greets by first name; this is the h1 the suite anchors on. */
+export const DASHBOARD_GREETING = new RegExp(
+  `^(Good (morning|afternoon|evening)|Welcome back), ${TEST_USER.firstName}$`,
+);
+
 /**
- * Signs in a user via the login flow. Handles both password-only and MFA
- * protected accounts. On success, asserts the dashboard is loaded.
+ * Signs in through the real login form and waits for the dashboard. A
+ * password-only account lands on /dashboard directly; if Go ever asks this
+ * identity for a second factor, the run fails here rather than silently
+ * skipping a step.
  */
 export async function signIn(page: Page, email?: string, password?: string) {
   const emailToUse = email ?? TEST_USER.email;
   const passwordToUse = password ?? TEST_USER.password;
 
   await page.goto('/login');
+  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
 
-  // If already signed in, we should be redirected to dashboard
-  const currentUrl = page.url();
-  if (currentUrl.includes('/dashboard')) {
-    return;
-  }
+  await page.getByLabel('Email or phone number').fill(emailToUse);
+  await page.getByLabel('Password', { exact: true }).fill(passwordToUse);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 
-  // Fill in the sign-in form (input ids: atl-identifier, atl-password)
-  await page.fill('input[id="atl-identifier"]', emailToUse);
-  await page.fill('input[id="atl-password"]', passwordToUse);
-  await page.click('button:has-text("Sign in")');
-
-  // Wait for either dashboard redirect or MFA challenge
-  await page.waitForURL(/(\/dashboard|\/auth\/mfa)/, { timeout: 10000 });
-
-  // If MFA is required, handle it
-  if (page.url().includes('/auth/mfa')) {
-    await page.fill('input[id="atl-code"]', process.env.E2E_TEST_MFA_CODE || '123456');
-    await page.click('button:has-text("Verify")');
-    await page.waitForURL('/dashboard', { timeout: 10000 });
-  }
-
-  // Verify we're on the dashboard
-  await expect(page).toHaveURL('/dashboard');
-  await expect(page.locator('h1')).toContainText('Dashboard');
+  await page.waitForURL('**/dashboard', { timeout: 15000 });
+  await expect(page.locator('h1')).toHaveText(DASHBOARD_GREETING);
 }
 
-/**
- * Signs out the current user via the sign-out button in the sidebar.
- */
+/** Signs out with the sidebar's compact control and waits for /login. */
 export async function signOut(page: Page) {
-  // Click the sign out button in the sidebar
-  await page.click('button:has-text("Sign out")');
-  await page.waitForURL('/login', { timeout: 10000 });
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.waitForURL('**/login', { timeout: 10000 });
+  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
 }

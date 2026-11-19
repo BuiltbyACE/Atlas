@@ -238,17 +238,20 @@ func TestStoreFilters(t *testing.T) {
 }
 
 // TestStoreModuleFilter exercises the module-prefix predicate that feeds a
-// module's activity screen: every `finance.*` entity type and no others.
+// module's activity screen: every event under the module prefix and no others.
+// The prefix is unique per run so audit rows left by other tests (or an earlier
+// run) cannot change the expected count.
 func TestStoreModuleFilter(t *testing.T) {
 	ctx := context.Background()
 	w, store, pool := newTestStore(t)
 	entityID := uuid.New()
 	t.Cleanup(cleanupEntity(t, pool, entityID))
 	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	module := "auditfilter" + strings.ReplaceAll(uuid.NewString(), "-", "")
 
 	events := []Event{
-		{OccurredAt: base, ActorType: "user", ActorID: "a", Action: "finance.invoice.issued", EntityType: "finance.invoice", EntityID: &entityID},
-		{OccurredAt: base.Add(time.Minute), ActorType: "user", ActorID: "a", Action: "finance.expense.approved", EntityType: "finance.expense", EntityID: &entityID},
+		{OccurredAt: base, ActorType: "user", ActorID: "a", Action: module + ".invoice.issued", EntityType: module + ".invoice", EntityID: &entityID},
+		{OccurredAt: base.Add(time.Minute), ActorType: "user", ActorID: "a", Action: module + ".expense.approved", EntityType: module + ".expense", EntityID: &entityID},
 		{OccurredAt: base.Add(2 * time.Minute), ActorType: "user", ActorID: "a", Action: "crm.lead.created", EntityType: "crm.lead", EntityID: &entityID},
 	}
 	for i, e := range events {
@@ -257,7 +260,7 @@ func TestStoreModuleFilter(t *testing.T) {
 		}
 	}
 
-	entries, err := store.List(ctx, Query{Module: "finance"}, 10, nil)
+	entries, err := store.List(ctx, Query{Module: module}, 10, nil)
 	if err != nil {
 		t.Fatalf("module filter: %v", err)
 	}
@@ -265,7 +268,7 @@ func TestStoreModuleFilter(t *testing.T) {
 		t.Fatalf("module filter = %d entries, want 2", len(entries))
 	}
 	for _, e := range entries {
-		if !strings.HasPrefix(e.EntityType, "finance.") {
+		if !strings.HasPrefix(e.EntityType, module+".") {
 			t.Fatalf("module filter leaked %q", e.EntityType)
 		}
 	}

@@ -139,6 +139,15 @@ func nullIfEmpty(s string) any {
 	return s
 }
 
+// nullIfEmptyPtr preserves SQL NULL for optional text columns: a nil pointer or
+// an empty string is written as NULL, anything else as its value.
+func nullIfEmptyPtr(s *string) any {
+	if s == nil || *s == "" {
+		return nil
+	}
+	return *s
+}
+
 // ── organizations ───────────────────────────────────────────────────────────
 
 const organizationCols = `id, name, name_normalized, COALESCE(industry,''), COALESCE(size,''),
@@ -266,9 +275,9 @@ func (s *PGStore) CreateContact(ctx context.Context, c Contact) (Contact, error)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		RETURNING `+contactCols,
 		c.ID, c.OrganizationID, c.Name, nullIfEmpty(c.Role), c.Phones, c.Emails, nullIfEmpty(c.WhatsAppNumber),
-		c.ConsentMarketing, c.ConsentMarketingAt, nullIfEmpty(c.ConsentMarketingSource),
-		c.ConsentWhatsApp, c.ConsentWhatsAppAt, nullIfEmpty(c.ConsentWhatsAppSource),
-		c.ConsentRecording, c.ConsentRecordingAt, nullIfEmpty(c.ConsentRecordingSource),
+		c.ConsentMarketing, c.ConsentMarketingAt, nullIfEmptyPtr(c.ConsentMarketingSource),
+		c.ConsentWhatsApp, c.ConsentWhatsAppAt, nullIfEmptyPtr(c.ConsentWhatsAppSource),
+		c.ConsentRecording, c.ConsentRecordingAt, nullIfEmptyPtr(c.ConsentRecordingSource),
 		c.Version, c.CreatedAt, c.UpdatedAt))
 	if err != nil {
 		return Contact{}, fmt.Errorf("crm: create contact: %w", err)
@@ -298,9 +307,9 @@ func (s *PGStore) UpdateContact(ctx context.Context, c Contact, expectedVersion 
 		WHERE id = $1 AND version = $17
 		RETURNING `+contactCols,
 		c.ID, c.OrganizationID, c.Name, nullIfEmpty(c.Role), c.Phones, c.Emails, nullIfEmpty(c.WhatsAppNumber),
-		c.ConsentMarketing, c.ConsentMarketingAt, nullIfEmpty(c.ConsentMarketingSource),
-		c.ConsentWhatsApp, c.ConsentWhatsAppAt, nullIfEmpty(c.ConsentWhatsAppSource),
-		c.ConsentRecording, c.ConsentRecordingAt, nullIfEmpty(c.ConsentRecordingSource),
+		c.ConsentMarketing, c.ConsentMarketingAt, nullIfEmptyPtr(c.ConsentMarketingSource),
+		c.ConsentWhatsApp, c.ConsentWhatsAppAt, nullIfEmptyPtr(c.ConsentWhatsAppSource),
+		c.ConsentRecording, c.ConsentRecordingAt, nullIfEmptyPtr(c.ConsentRecordingSource),
 		expectedVersion))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Contact{}, s.versionConflict(ctx, "crm.contacts", c.ID, expectedVersion)

@@ -26,50 +26,50 @@ var (
 
 // Conversation is a chat thread (direct or group).
 type Conversation struct {
-	ID         uuid.UUID `json:"id"`
-	Type       string    `json:"type"` // "direct" or "group"
-	Name       string    `json:"name,omitempty"`
-	CreatedBy  uuid.UUID `json:"created_by"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID        uuid.UUID `json:"id"`
+	Type      string    `json:"type"` // "direct" or "group"
+	Name      string    `json:"name,omitempty"`
+	CreatedBy uuid.UUID `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Message is one chat message.
 type Message struct {
-	ID             uuid.UUID `json:"id"`
-	ConversationID uuid.UUID `json:"conversation_id"`
-	SenderID       uuid.UUID `json:"sender_id"`
-	Body           string    `json:"body"`
-	BodyType       string    `json:"body_type"` // "text", "file", "system"
+	ID             uuid.UUID  `json:"id"`
+	ConversationID uuid.UUID  `json:"conversation_id"`
+	SenderID       uuid.UUID  `json:"sender_id"`
+	Body           string     `json:"body"`
+	BodyType       string     `json:"body_type"` // "text", "file", "system"
 	ReplyToMessage *uuid.UUID `json:"reply_to_message,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 	EditedAt       *time.Time `json:"edited_at,omitempty"`
 	DeletedAt      *time.Time `json:"deleted_at,omitempty"`
 }
 
 // MessageView is a message shaped for the client, with sender info.
 type MessageView struct {
-	ID             uuid.UUID `json:"id"`
-	ConversationID uuid.UUID `json:"conversation_id"`
-	SenderID       uuid.UUID `json:"sender_id"`
-	SenderName     string    `json:"sender_name,omitempty"`
-	Body           string    `json:"body"`
-	BodyType       string    `json:"body_type"`
+	ID             uuid.UUID  `json:"id"`
+	ConversationID uuid.UUID  `json:"conversation_id"`
+	SenderID       uuid.UUID  `json:"sender_id"`
+	SenderName     string     `json:"sender_name,omitempty"`
+	Body           string     `json:"body"`
+	BodyType       string     `json:"body_type"`
 	ReplyToMessage *uuid.UUID `json:"reply_to_message,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 	EditedAt       *time.Time `json:"edited_at,omitempty"`
 }
 
 // ConversationView is a conversation with last message preview.
 type ConversationView struct {
-	ID             uuid.UUID   `json:"id"`
-	Type           string      `json:"type"`
-	Name           string      `json:"name,omitempty"`
-	CreatedBy      uuid.UUID   `json:"created_by"`
-	CreatedAt      time.Time   `json:"created_at"`
-	UpdatedAt      time.Time   `json:"updated_at"`
-	LastMessage    *MessageView `json:"last_message,omitempty"`
-	UnreadCount    int         `json:"unread_count"`
+	ID          uuid.UUID    `json:"id"`
+	Type        string       `json:"type"`
+	Name        string       `json:"name,omitempty"`
+	CreatedBy   uuid.UUID    `json:"created_by"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+	LastMessage *MessageView `json:"last_message,omitempty"`
+	UnreadCount int          `json:"unread_count"`
 }
 
 // Store is the persistence interface for chat.
@@ -98,13 +98,13 @@ type Store interface {
 
 // MessageAttachment is a file attached to a chat message.
 type MessageAttachment struct {
-	ID             uuid.UUID `json:"id"`
-	MessageID      uuid.UUID `json:"message_id"`
-	DocumentID     uuid.UUID `json:"document_id,omitempty"`
-	Filename       string    `json:"filename"`
-	ContentType    string    `json:"content_type"`
-	SizeBytes      int64     `json:"size_bytes"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID          uuid.UUID  `json:"id"`
+	MessageID   uuid.UUID  `json:"message_id"`
+	DocumentID  *uuid.UUID `json:"document_id,omitempty"`
+	Filename    string     `json:"filename"`
+	ContentType string     `json:"content_type"`
+	SizeBytes   int64      `json:"size_bytes"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // Execer is the transaction interface used by the store.
@@ -175,7 +175,7 @@ func (s *PGStore) ListConversations(ctx context.Context, userID uuid.UUID, limit
 			JOIN people.persons p ON p.id = ua.person_id
 			WHERE ua.id = lm.sender_id
 		) p ON TRUE
-		WHERE ` + where + `
+		WHERE `+where+`
 		ORDER BY c.updated_at DESC
 		LIMIT $%d`, args...)
 	if err != nil {
@@ -320,7 +320,7 @@ func (s *PGStore) ListMessages(ctx context.Context, convID uuid.UUID, limit int,
 		FROM core.chat_messages m
 		JOIN core.user_accounts ua ON ua.id = m.sender_id
 		JOIN people.persons p ON p.id = ua.person_id
-		WHERE ` + where + `
+		WHERE `+where+`
 		ORDER BY m.created_at DESC
 		LIMIT $%d`, args...)
 	if err != nil {

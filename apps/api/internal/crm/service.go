@@ -246,7 +246,7 @@ func (s *Service) CreateContact(ctx context.Context, actor uuid.UUID, in Contact
 	c.ID = id
 	now := s.now()
 	c.CreatedAt, c.UpdatedAt = now, now
-	applyConsent(c, Contact{}, in.ConsentSource, now)
+	applyConsent(&c, Contact{}, in.ConsentSource, now)
 	created, err := s.store.CreateContact(ctx, c)
 	if err != nil {
 		return Contact{}, err
@@ -286,7 +286,7 @@ func (s *Service) UpdateContact(ctx context.Context, actor uuid.UUID, id uuid.UU
 	next.ConsentMarketingAt, next.ConsentMarketingSource = cur.ConsentMarketingAt, cur.ConsentMarketingSource
 	next.ConsentWhatsAppAt, next.ConsentWhatsAppSource = cur.ConsentWhatsAppAt, cur.ConsentWhatsAppSource
 	next.ConsentRecordingAt, next.ConsentRecordingSource = cur.ConsentRecordingAt, cur.ConsentRecordingSource
-	applyConsent(next, cur, in.ConsentSource, s.now())
+	applyConsent(&next, cur, in.ConsentSource, s.now())
 	updated, err := s.store.UpdateContact(ctx, next, expectedVersion)
 	if err != nil {
 		return Contact{}, err
@@ -305,26 +305,26 @@ func (s *Service) ListContacts(ctx context.Context, organizationID *uuid.UUID, l
 
 // applyConsent stamps the timestamp and source for any consent flag that is
 // newly true, so consent is always dated and attributable (ADR-011).
-func applyConsent(next, prev Contact, source string, now time.Time) {
+func applyConsent(next *Contact, prev Contact, source string, now time.Time) {
 	source = trim(source)
 	if next.ConsentMarketing && !prev.ConsentMarketing {
-		next.ConsentMarketingAt, next.ConsentMarketingSource = &now, source
+		next.ConsentMarketingAt, next.ConsentMarketingSource = &now, &source
 	}
 	if next.ConsentWhatsApp && !prev.ConsentWhatsApp {
-		next.ConsentWhatsAppAt, next.ConsentWhatsAppSource = &now, source
+		next.ConsentWhatsAppAt, next.ConsentWhatsAppSource = &now, &source
 	}
 	if next.ConsentRecording && !prev.ConsentRecording {
-		next.ConsentRecordingAt, next.ConsentRecordingSource = &now, source
+		next.ConsentRecordingAt, next.ConsentRecordingSource = &now, &source
 	}
 	// A revoked consent drops its timestamp: consent is current, not historical.
 	if !next.ConsentMarketing {
-		next.ConsentMarketingAt, next.ConsentMarketingSource = nil, ""
+		next.ConsentMarketingAt, next.ConsentMarketingSource = nil, nil
 	}
 	if !next.ConsentWhatsApp {
-		next.ConsentWhatsAppAt, next.ConsentWhatsAppSource = nil, ""
+		next.ConsentWhatsAppAt, next.ConsentWhatsAppSource = nil, nil
 	}
 	if !next.ConsentRecording {
-		next.ConsentRecordingAt, next.ConsentRecordingSource = nil, ""
+		next.ConsentRecordingAt, next.ConsentRecordingSource = nil, nil
 	}
 }
 

@@ -60,6 +60,22 @@ func mustOrganization(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	return id
 }
 
+// mustPerson inserts a people.persons row: contract_versions.created_by and
+// the audit trail reference a person, not an arbitrary UUID.
+func mustPerson(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
+	t.Helper()
+	id := newUUID(t)
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO people.persons (id, full_name, employment_type) VALUES ($1, 'Contract Test', 'full_time')`,
+		id); err != nil {
+		t.Fatalf("insert person: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM people.persons WHERE id = $1`, id)
+	})
+	return id
+}
+
 // countEvents counts outbox rows of a type for an aggregate.
 func countEvents(t *testing.T, pool *pgxpool.Pool, aggregate uuid.UUID, eventType string) int {
 	t.Helper()
@@ -79,7 +95,7 @@ func TestContractLifecycle(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
 	svc := NewService(NewPGStore(pool), nil, nil)
-	actor := newUUID(t)
+	actor := mustPerson(t, pool)
 	org := mustOrganization(t, pool)
 
 	value := int64(1_500_000)
@@ -114,19 +130,28 @@ func TestContractLifecycle(t *testing.T) {
 		t.Fatalf("created events = %d, want 1", n)
 	}
 
-	// Lifecycle: every step bumps the version and emits a status change.
+	// A draft cannot be signed: signatures only attach to a sent contract.
+	if _, err := svc.Sign(ctx, actor, created.ID, created.Version, SignInput{Name: "Too Early"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("sign a draft: err = %v, want ErrConflict", err)
+	}
+
+	// Lifecycle (§8.3): every step bumps the version. Submit/approve/send and
+	// activate share the status-change path; signing records a signature event.
 	cur := created
 	for _, step := range []struct {
 		name string
-		fn   func(uuid.UUID, int) (Contract, error)
+		fn   func(Contract) (Contract, error)
 		want ContractStatus
 	}{
-		{"submit", func(id uuid.UUID, v int) (Contract, error) { return svc.Submit(ctx, actor, id, v) }, StatusInternalReview},
-		{"approve", func(id uuid.UUID, v int) (Contract, error) { return svc.Approve(ctx, actor, id, v) }, StatusApproved},
-		{"send", func(id uuid.UUID, v int) (Contract, error) { return svc.Send(ctx, actor, id, v) }, StatusSent},
-		{"activate", func(id uuid.UUID, v int) (Contract, error) { return svc.Activate(ctx, actor, id, v) }, StatusActive},
+		{"submit", func(c Contract) (Contract, error) { return svc.Submit(ctx, actor, c.ID, c.Version) }, StatusInternalReview},
+		{"approve", func(c Contract) (Contract, error) { return svc.Approve(ctx, actor, c.ID, c.Version) }, StatusApproved},
+		{"send", func(c Contract) (Contract, error) { return svc.Send(ctx, actor, c.ID, c.Version) }, StatusSent},
+		{"sign", func(c Contract) (Contract, error) {
+			return svc.Sign(ctx, actor, c.ID, c.Version, SignInput{Name: "Amina Otieno", Role: "Director", Method: "electronic"})
+		}, StatusSigned},
+		{"activate", func(c Contract) (Contract, error) { return svc.Activate(ctx, actor, c.ID, c.Version) }, StatusActive},
 	} {
-		next, err := step.fn(cur.ID, cur.Version)
+		next, err := step.fn(cur)
 		if err != nil {
 			t.Fatalf("%s: %v", step.name, err)
 		}
@@ -136,10 +161,21 @@ func TestContractLifecycle(t *testing.T) {
 		if next.Version != cur.Version+1 {
 			t.Fatalf("%s version = %d, want %d", step.name, next.Version, cur.Version+1)
 		}
+		// Activation is gated on an executed signature; a sent contract cannot
+		// skip straight to active.
+		if step.want == StatusSent {
+			if _, err := svc.Activate(ctx, actor, next.ID, next.Version); !errors.Is(err, ErrConflict) {
+				t.Fatalf("activate before sign: err = %v, want ErrConflict", err)
+			}
+		}
 		cur = next
 	}
-	if n := countEvents(t, pool, created.ID, "contracts.contract.status_changed.v1"); n != 3 {
-		t.Fatalf("status change events = %d, want 3", n)
+	// Signing is not a status change; the other four transitions are.
+	if n := countEvents(t, pool, created.ID, "contracts.contract.status_changed.v1"); n != 4 {
+		t.Fatalf("status change events = %d, want 4", n)
+	}
+	if n := countEvents(t, pool, created.ID, "contracts.contract.signed.v1"); n != 1 {
+		t.Fatalf("signed events = %d, want 1", n)
 	}
 
 	// Stale versions are rejected with ErrConflict.
@@ -267,7 +303,7 @@ func TestSignRecordsSignature(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
 	svc := NewService(NewPGStore(pool), nil, nil)
-	actor := newUUID(t)
+	actor := mustPerson(t, pool)
 	org := mustOrganization(t, pool)
 
 	c, err := svc.CreateContract(ctx, actor, ContractInput{OrganizationID: org, ContractType: TypeRetainer})

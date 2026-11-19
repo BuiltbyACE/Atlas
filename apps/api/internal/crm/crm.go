@@ -260,13 +260,13 @@ type Contact struct {
 	WhatsAppNumber         string
 	ConsentMarketing       bool
 	ConsentMarketingAt     *time.Time
-	ConsentMarketingSource string
+	ConsentMarketingSource *string
 	ConsentWhatsApp        bool
 	ConsentWhatsAppAt      *time.Time
-	ConsentWhatsAppSource  string
+	ConsentWhatsAppSource  *string
 	ConsentRecording       bool
 	ConsentRecordingAt     *time.Time
-	ConsentRecordingSource string
+	ConsentRecordingSource *string
 	Version                int
 	CreatedAt              time.Time
 	UpdatedAt              time.Time

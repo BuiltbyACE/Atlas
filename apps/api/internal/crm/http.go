@@ -196,6 +196,13 @@ func optRFC(t *time.Time) string {
 	return rfc(*t)
 }
 
+func strOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func idStr(id *uuid.UUID) string {
 	if id == nil {
 		return ""
@@ -219,7 +226,7 @@ func contactOf(c Contact) contactView {
 		ID: c.ID.String(), OrganizationID: idStr(c.OrganizationID), Name: c.Name, Role: c.Role,
 		Phones: c.Phones, Emails: c.Emails, WhatsAppNumber: c.WhatsAppNumber,
 		ConsentMarketing: c.ConsentMarketing, ConsentMarketingAt: optRFC(c.ConsentMarketingAt),
-		ConsentMarketingSource: c.ConsentMarketingSource,
+		ConsentMarketingSource: strOrEmpty(c.ConsentMarketingSource),
 		ConsentWhatsApp:        c.ConsentWhatsApp, ConsentWhatsAppAt: optRFC(c.ConsentWhatsAppAt),
 		ConsentRecording: c.ConsentRecording, ConsentRecordingAt: optRFC(c.ConsentRecordingAt),
 		Version: c.Version, CreatedAt: rfc(c.CreatedAt), UpdatedAt: rfc(c.UpdatedAt),

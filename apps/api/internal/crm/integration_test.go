@@ -98,12 +98,16 @@ func TestSalesLifecycle(t *testing.T) {
 	actor := mustPerson(t, pool)
 	owner := mustPerson(t, pool)
 
-	// A client company and a contact at it.
-	org, err := svc.CreateOrganization(ctx, actor, OrganizationInput{Name: "Apollo Labs"})
+	// A client company and a contact at it. The name is unique per run so a
+	// previous failed run cannot trip the duplicate-name guard, and the cleanup
+	// removes child contacts first so an orphan cannot block the organization
+	// delete.
+	org, err := svc.CreateOrganization(ctx, actor, OrganizationInput{Name: "Apollo Labs " + uuid.NewString()})
 	if err != nil {
 		t.Fatalf("CreateOrganization: %v", err)
 	}
 	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM crm.contacts WHERE organization_id = $1`, org.ID)
 		_, _ = pool.Exec(ctx, `DELETE FROM crm.organizations WHERE id = $1`, org.ID)
 	})
 	contact, err := svc.CreateContact(ctx, actor, ContactInput{OrganizationID: &org.ID, Name: "Jane Wanjiru"})
@@ -280,19 +284,15 @@ func TestSalesLifecycle(t *testing.T) {
 		t.Fatalf("opportunity won events = %d, want 1", n)
 	}
 
-	// The pipeline summary reports the won stage.
+	// The pipeline summary lists open stages only; the won stage is closed.
 	pipeline, err := svc.Pipeline(ctx)
 	if err != nil {
 		t.Fatalf("Pipeline: %v", err)
 	}
-	found := false
 	for _, row := range pipeline {
 		if row.StageKey == won.StageKey {
-			found = true
+			t.Fatalf("pipeline summary includes the closed won stage %q", won.StageKey)
 		}
-	}
-	if !found {
-		t.Fatalf("pipeline summary is missing the won stage %q", won.StageKey)
 	}
 }
 

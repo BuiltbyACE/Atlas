@@ -1,33 +1,32 @@
 import { test, expect } from '@playwright/test';
-import { signIn, signOut } from './helpers/auth';
+import { DASHBOARD_GREETING, signIn, signOut } from './helpers/auth';
 
 test.describe('Authentication', () => {
   test('sign in with valid credentials', async ({ page }) => {
     await signIn(page);
-    await expect(page.locator('h1')).toContainText('Dashboard');
+    await expect(page).toHaveURL(/\/dashboard$/);
+    await expect(page.locator('h1')).toHaveText(DASHBOARD_GREETING);
   });
 
   test('sign in and sign out', async ({ page }) => {
     await signIn(page);
     await signOut(page);
-    await expect(page).toHaveURL('/login');
-    await expect(page.locator('h1')).toContainText('Sign in');
+    await expect(page).toHaveURL(/\/login/);
+    await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
   });
 
   test('rejects invalid credentials', async ({ page }) => {
     await page.goto('/login');
-    await page.fill('input[id="atl-identifier"]', 'nonexistent@example.com');
-    await page.fill('input[id="atl-password"]', 'wrongpassword');
-    await page.click('button:has-text("Sign in")');
+    await page.getByLabel('Email or phone number').fill('nonexistent@example.com');
+    await page.getByLabel('Password', { exact: true }).fill('definitely-wrong');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 
-    // Should show an error, not redirect to dashboard
-    await expect(page).not.toHaveURL('/dashboard');
-    await expect(page.locator('[role="alert"]')).toBeVisible();
+    await expect(page.getByRole('alert').first()).toBeVisible();
+    await expect(page).toHaveURL(/\/login/);
   });
 
   test('requires authentication for dashboard', async ({ page }) => {
     await page.goto('/dashboard');
-    // Should redirect to login if not authenticated
     await expect(page).toHaveURL(/\/login/);
   });
 });
