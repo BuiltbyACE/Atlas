@@ -165,15 +165,23 @@ func (m *memStore) MarkLateReports(_ context.Context, day, deadline time.Time) (
 
 func (m *memStore) MissedCounts(_ context.Context, since time.Time, min int) ([]MissCounts, error) {
 	counts := map[uuid.UUID]int{}
+	last := map[uuid.UUID]time.Time{}
 	for _, r := range m.reports {
 		if r.Status == DailyReportMissed && !dateOnly(r.ReportDate).Before(dateOnly(since)) {
 			counts[r.ReporterID]++
+			at := r.ReportDate
+			if r.MissedAt != nil {
+				at = *r.MissedAt
+			}
+			if at.After(last[r.ReporterID]) {
+				last[r.ReporterID] = at
+			}
 		}
 	}
 	var out []MissCounts
 	for _, p := range m.persons {
 		if c := counts[p.ID]; c >= min {
-			out = append(out, MissCounts{PersonID: p.ID, Misses: c})
+			out = append(out, MissCounts{PersonID: p.ID, Misses: c, LastMissedAt: last[p.ID]})
 		}
 	}
 	return out, nil
@@ -186,6 +194,8 @@ type fakeEscalator struct {
 	open     map[uuid.UUID]bool
 	raised   []uuid.UUID
 	resolved []uuid.UUID
+	// resolvedAt records a resolution's time, as work.escalations.resolved_at.
+	resolvedAt map[uuid.UUID]time.Time
 }
 
 func newFakeEscalator(l2 *uuid.UUID) *fakeEscalator {
@@ -210,6 +220,13 @@ func (f *fakeEscalator) ResolveEscalations(_ context.Context, _ string, entityID
 	delete(f.open, entityID)
 	f.resolved = append(f.resolved, entityID)
 	return 1, nil
+}
+
+func (f *fakeEscalator) LastResolvedAt(_ context.Context, _ string, entityID uuid.UUID) (*time.Time, error) {
+	if at, ok := f.resolvedAt[entityID]; ok {
+		return &at, nil
+	}
+	return nil, nil
 }
 
 func (f *fakeEscalator) OpenEscalatedEntities(context.Context, string) ([]uuid.UUID, error) {
@@ -616,4 +633,65 @@ type errPolicy struct{}
 
 func (errPolicy) DailyReportPolicy(context.Context) (DailyReportPolicy, error) {
 	return DailyReportPolicy{}, context.DeadlineExceeded
+}
+
+// A person resolved by hand while still over the threshold is not escalated
+// again on the next pass (that produced "same reason raised 3x" duplicates);
+// only a miss after the resolution opens a new episode.
+func TestSweep_ManualResolveIsNotReRaisedUntilANewMiss(t *testing.T) {
+	reporter := uuid.New()
+	store := newMemStore(reporter)
+	now := at(2026, time.October, 16, 8, 0, eat)
+	policy := d5Policy()
+	svc, esc, _ := newSweepService(store, now, policy)
+
+	swept := policy.deadlineDays(now.UTC(), policy.Today(now.UTC()))
+	if len(swept) < 4 {
+		t.Fatalf("swept days = %d, want at least 4 for this test", len(swept))
+	}
+	for i, d := range swept {
+		status := DailyReportSubmitted
+		if i < 3 {
+			status = DailyReportMissed
+		}
+		r := store.seed(reporter, d, status, nil)
+		if status == DailyReportMissed {
+			missedAt := d
+			r.MissedAt = &missedAt
+		}
+	}
+
+	if _, err := svc.Sweep(context.Background(), 100); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if len(esc.raised) != 1 {
+		t.Fatalf("raised = %v, want one L2", esc.raised)
+	}
+
+	// Someone resolves it by hand; the misses are still in the window.
+	delete(esc.open, reporter)
+	esc.resolvedAt = map[uuid.UUID]time.Time{reporter: now}
+
+	res, err := svc.Sweep(context.Background(), 100)
+	if err != nil {
+		t.Fatalf("second Sweep: %v", err)
+	}
+	if res.Escalated != 0 || len(esc.raised) != 1 {
+		t.Fatalf("after manual resolve escalated = %d, raised = %v, want no re-raise", res.Escalated, esc.raised)
+	}
+
+	// A miss recorded after the resolution starts a new episode.
+	later := now.Add(time.Hour)
+	for _, r := range store.reports {
+		if r.Status == DailyReportMissed {
+			r.MissedAt = &later
+			break
+		}
+	}
+	if res, err = svc.Sweep(context.Background(), 100); err != nil {
+		t.Fatalf("third Sweep: %v", err)
+	}
+	if res.Escalated != 1 || len(esc.raised) != 2 {
+		t.Fatalf("after a new miss escalated = %d, raised = %v, want a new L2", res.Escalated, esc.raised)
+	}
 }

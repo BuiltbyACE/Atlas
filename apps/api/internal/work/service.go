@@ -355,6 +355,10 @@ func (s *Service) CreateTask(ctx context.Context, actor, projectID uuid.UUID, in
 	if err != nil {
 		return Task{}, err
 	}
+	if t.Status == TaskDone {
+		// A task that does not exist yet cannot have evidence attached.
+		return Task{}, fmt.Errorf("%w: a new task cannot start as done", ErrEvidenceRequired)
+	}
 	if t.MilestoneID != nil {
 		m, err := s.GetMilestone(ctx, *t.MilestoneID)
 		if err != nil {
@@ -447,6 +451,15 @@ func (s *Service) UpdateTask(ctx context.Context, actor uuid.UUID, id uuid.UUID,
 	statusChanged := next.Status != cur.Status
 	if statusChanged && !allowedTaskTransition(cur.Status, next.Status) {
 		return Task{}, fmt.Errorf("%w: cannot move a task from %s to %s", ErrConflict, cur.Status, next.Status)
+	}
+	if statusChanged && next.Status == TaskDone {
+		evidence, err := s.store.ListEvidence(ctx, ListEvidenceQuery{TaskID: &id})
+		if err != nil {
+			return Task{}, err
+		}
+		if len(evidence) == 0 {
+			return Task{}, fmt.Errorf("%w: task %s has no evidence", ErrEvidenceRequired, id)
+		}
 	}
 	assigneeChanged := !sameUUID(next.AssigneePersonID, cur.AssigneePersonID)
 

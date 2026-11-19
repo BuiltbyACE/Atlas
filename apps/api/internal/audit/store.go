@@ -21,10 +21,15 @@ type Cursor struct {
 // the whole trail, newest first.
 type Query struct {
 	EntityType string
-	EntityID   *uuid.UUID
-	ActorType  string
-	ActorID    string
-	Action     string
+	// Module matches every entity type under one module prefix: `Module:
+	// "finance"` selects `finance.invoice`, `finance.expense` and so on, which
+	// is how a module's activity feed reads its own footprint in one call
+	// (§8.4: "Recent finance activity").
+	Module    string
+	EntityID  *uuid.UUID
+	ActorType string
+	ActorID   string
+	Action    string
 	// Since is inclusive, Until exclusive, both on occurred_at.
 	Since *time.Time
 	Until *time.Time
@@ -125,6 +130,12 @@ func (s *PGStore) List(ctx context.Context, q Query, limit int, before *Cursor) 
 
 	if q.EntityType != "" {
 		add("entity_type = $%d", q.EntityType)
+	}
+	if q.Module != "" {
+		// `starts_with` rather than LIKE: entity types are literal (`finance.
+		// recurring_cost` contains no wildcard, but a LIKE pattern would still
+		// treat `_` as "any character").
+		add("starts_with(entity_type, $%d)", q.Module+".")
 	}
 	if q.EntityID != nil {
 		add("entity_id = $%d", *q.EntityID)

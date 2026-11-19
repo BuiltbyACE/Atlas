@@ -7,7 +7,8 @@ package migrations
 
 import "embed"
 
-// FS holds every *.sql migration, applied in lexical filename order by goose.
+// FS holds every *.sql migration, applied in ascending numeric version order by
+// goose (the digits before the first underscore, not lexical filename order).
 //
 //go:embed *.sql
 var FS embed.FS

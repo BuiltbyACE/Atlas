@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/hex"
+	"log/slog"
 	"net/netip"
 	"strings"
 	"testing"
@@ -21,6 +22,7 @@ type fakeStore struct {
 	services map[string]*ServiceIdentity
 	recovery map[string]bool // key: hex(recovery hash), true while unused
 	attempts []time.Time
+	roles    map[string]Role // key: role key
 
 	// principalErr, when set, is returned by LoadPrincipal (for the
 	// authorisation-check tests). permissions overrides the default set.
@@ -34,6 +36,7 @@ func newFakeStore() *fakeStore {
 		sessions: map[string]*Session{},
 		services: map[string]*ServiceIdentity{},
 		recovery: map[string]bool{},
+		roles:    map[string]Role{},
 	}
 }
 
@@ -199,6 +202,18 @@ func (f *fakeStore) AcceptInvite(ctx context.Context, in AcceptInviteInput) (*Ac
 	return nil, nil
 }
 
+func (f *fakeStore) ListRoles(ctx context.Context) ([]Role, error) {
+	roles := make([]Role, 0, len(f.roles))
+	for _, r := range f.roles {
+		roles = append(roles, r)
+	}
+	return roles, nil
+}
+
+func (f *fakeStore) InviterName(ctx context.Context, userID uuid.UUID) (string, error) {
+	return "", nil
+}
+
 // ── harness ──────────────────────────────────────────────────
 
 type harness struct {
@@ -242,7 +257,7 @@ func newHarness(t *testing.T) *harness {
 		ServiceAudience:      "atlas-internal",
 		LoginMaxFailures:     3,
 		LoginWindow:          15 * time.Minute,
-	}, nil)
+	}, slog.Default(), nil)
 	service.SetClock(func() time.Time { return now })
 
 	return &harness{service: service, store: store, sealer: sealer, now: now}

@@ -1,0 +1,23 @@
+# Build context hygiene for the web image.
+# node_modules and .next are rebuilt inside the image; sending them over the
+# wire (Railway uploads the build context) is slow and pointless.
+
+node_modules
+.next
+out
+build
+coverage
+
+test-results
+playwright-report
+blob-report
+
+*.tsbuildinfo
+npm-debug.log*
+
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore

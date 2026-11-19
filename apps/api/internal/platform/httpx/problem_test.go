@@ -33,7 +33,7 @@ func TestWriteProblem(t *testing.T) {
 	if p.Status != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", p.Status, http.StatusNotFound)
 	}
-	if want := "https://atlas.safaristack.co.ke/problems/not_found"; p.Type != want {
+	if want := "https://atlas.safaristacksolutions.co.ke/problems/not_found"; p.Type != want {
 		t.Errorf("type = %q, want %q", p.Type, want)
 	}
 	if p.Instance != "/api/v1/things/123" {

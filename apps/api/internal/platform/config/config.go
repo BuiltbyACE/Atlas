@@ -123,6 +123,19 @@ type Config struct {
 	// is mounted but answers 503: an unconfigured receipt is never trusted.
 	GitHubWebhookSecret string
 
+	// GitHub App (Engineering Intelligence). The App is installed on employee
+	// personal accounts; its private key mints short-lived installation access
+	// tokens for outbound GitHub API calls (reconciliation, backfill).
+	GitHubAppID          int64
+	GitHubAppSlug        string
+	GitHubAppPrivateKey  string // PEM-encoded RSA private key
+
+	// WebsiteFormWebhookSecret is the shared secret the public website sends in
+	// X-Atlas-Webhook-Secret when it posts an enquiry to
+	// /webhooks/website-forms (§8.1). When it is empty the route answers 404: an
+	// unconfigured inbound receipt is never trusted.
+	WebsiteFormWebhookSecret string
+
 	// ── Files / object storage (§6.5) ────────────────────────────
 	// Evidence and documents live in an S3-compatible bucket (Cloudflare R2 in
 	// staging and production; SeaweedFS or R2 locally). Go issues pre-signed
@@ -193,6 +206,12 @@ func Load() (*Config, error) {
 		DailyReportSweepBatch:    integer("ATLAS_DAILY_REPORT_SWEEP_BATCH", 500),
 
 		GitHubWebhookSecret: get("ATLAS_GITHUB_WEBHOOK_SECRET", ""),
+
+		GitHubAppID:       int64(integer("ATLAS_GITHUB_APP_ID", 0)),
+		GitHubAppSlug:     get("ATLAS_GITHUB_APP_SLUG", ""),
+		GitHubAppPrivateKey: get("ATLAS_GITHUB_APP_PRIVATE_KEY", ""),
+
+		WebsiteFormWebhookSecret: get("ATLAS_WEBSITE_FORM_WEBHOOK_SECRET", ""),
 
 		S3Endpoint:      get("S3_ENDPOINT", ""),
 		S3Region:        get("S3_REGION", "auto"),
@@ -284,6 +303,10 @@ func (c *Config) Validate() error {
 	}
 	if c.DailyReportSweepBatch <= 0 {
 		return fmt.Errorf("ATLAS_DAILY_REPORT_SWEEP_BATCH must be positive")
+	}
+
+	if c.GitHubAppID != 0 && strings.TrimSpace(c.GitHubAppPrivateKey) == "" {
+		return fmt.Errorf("ATLAS_GITHUB_APP_PRIVATE_KEY is required when ATLAS_GITHUB_APP_ID is set")
 	}
 
 	if c.FileUploadTTL <= 0 {

@@ -19,16 +19,27 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/chat"
+	"github.com/safaristack/atlas/apps/api/internal/contracts"
+	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
+	"github.com/safaristack/atlas/apps/api/internal/documents"
+	"github.com/safaristack/atlas/apps/api/internal/email"
 	"github.com/safaristack/atlas/apps/api/internal/files"
+	"github.com/safaristack/atlas/apps/api/internal/finance"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
+	"github.com/safaristack/atlas/apps/api/internal/intel"
+	"github.com/safaristack/atlas/apps/api/internal/navigation"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/people"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
 	"github.com/safaristack/atlas/apps/api/internal/platform/health"
 	"github.com/safaristack/atlas/apps/api/internal/platform/httpx"
 	"github.com/safaristack/atlas/apps/api/internal/platform/routing"
+	"github.com/safaristack/atlas/apps/api/internal/scorecard"
 	"github.com/safaristack/atlas/apps/api/internal/settings"
+	"github.com/safaristack/atlas/apps/api/internal/systems"
+	"github.com/safaristack/atlas/apps/api/internal/units"
 	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
@@ -51,6 +62,10 @@ type Deps struct {
 	Audit *audit.Handler
 	// Dashboard is the executive dashboard read model (§8.8); mounted when present.
 	Dashboard *dashboard.Handler
+	// Scorecard is the company health roll-up (§8.9); mounted when present.
+	Scorecard *scorecard.Handler
+	// Email is the Phase 6 two-way email surface; mounted when present.
+	Email *email.Handler
 	// Files is optional, and only mounted when object storage is configured
 	// (local development may run without a bucket).
 	Files *files.Handler
@@ -64,6 +79,31 @@ type Deps struct {
 	// mounted when present. Its route is public: the provider authenticates
 	// with an HMAC signature, not a principal.
 	Integrations *integrations.Handler
+	// CRM is the Phase 3 client-acquisition surface (organizations, contacts,
+	// leads, opportunities, interactions, follow-ups, proposals) plus the
+	// public website-form webhook; mounted when present.
+	CRM *crm.Handler
+	// Contracts is the Phase 3 contracts surface (contracts, milestones,
+	// deliverables, obligations, SLA terms, change requests); mounted when
+	// present.
+	Contracts *contracts.Handler
+	// Finance is the Phase 4 finance & commercial-control read surface (cash,
+	// receivables, project profitability, budgets and spending); mounted when
+	// present.
+	Finance *finance.Handler
+	// Systems is the Phase 5 systems observability surface (the register, the
+	// checks watching it, incidents, and what expires); mounted when present.
+	Systems *systems.Handler
+	// Units is the Phase 5 business-unit oversight surface (§8.7): units,
+	// integrations, indicator definitions and snapshots; mounted when present.
+	Units *units.Handler
+	// Intel is the Phase 6 executive intelligence surface (§8.8): decisions,
+	// risks, briefs and metric snapshots; mounted when present.
+	Intel *intel.Handler
+	// Chat is the Phase 6 messaging surface; mounted when present.
+	Chat *chat.Handler
+	// Documents is the Phase 6 document storage surface; mounted when present.
+	Documents *documents.Handler
 }
 
 // NewRouter builds the root http.Handler for atlas-api.
@@ -98,6 +138,8 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 			SecureCookies: d.Cfg.Env != config.EnvLocal,
 		}, d.Logger)
 		registerAuth(reg, handler)
+		registerRoles(reg, handler)
+		registerMe(reg, navigation.NewHandler(nil, d.Logger))
 		gate = auth.NewGate(d.Auth, d.Cfg.SessionCookieName, d.Logger)
 	}
 
@@ -121,6 +163,22 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 		registerDashboard(reg, d.Dashboard)
 	}
 
+	if d.Scorecard != nil {
+		registerScorecard(reg, d.Scorecard)
+	}
+
+	if d.Email != nil {
+		registerEmail(reg, d.Email)
+	}
+
+	if d.Chat != nil {
+		registerChat(reg, d.Chat)
+	}
+
+	if d.Documents != nil {
+		registerDocuments(reg, d.Documents)
+	}
+
 	if d.Files != nil {
 		registerFiles(reg, d.Files)
 	}
@@ -131,6 +189,34 @@ func build(d Deps) (http.Handler, *routing.Registry) {
 
 	if d.People != nil {
 		registerPeople(reg, d.People)
+	}
+
+	if d.Integrations != nil {
+		registerIntegrations(reg, d.Integrations)
+	}
+
+	if d.CRM != nil {
+		registerCRM(reg, d.CRM)
+	}
+
+	if d.Contracts != nil {
+		registerContracts(reg, d.Contracts)
+	}
+
+	if d.Finance != nil {
+		registerFinance(reg, d.Finance)
+	}
+
+	if d.Systems != nil {
+		registerSystems(reg, d.Systems)
+	}
+
+	if d.Units != nil {
+		registerUnits(reg, d.Units)
+	}
+
+	if d.Intel != nil {
+		registerIntel(reg, d.Intel)
 	}
 
 	if d.Integrations != nil {
@@ -181,6 +267,23 @@ func registerAuth(reg *routing.Registry, h *auth.Handler) {
 		"Check whether a user may join a realtime topic (service-to-service)", h.Check)
 }
 
+// registerRoles declares the role catalogue (§3.2). It is separate from the
+// identity routes because it describes configuration, not the caller: an
+// administrator reads it to pick a role when inviting a person.
+func registerRoles(reg *routing.Registry, h *auth.Handler) {
+	reg.Gated("core.role.read", http.MethodGet, "/api/v1/roles",
+		"List the roles a grant may reference", h.ListRoles)
+}
+
+// registerMe declares the caller's own view of the workspace. The navigation map
+// is derived from the caller's effective permissions inside Go (§6.2), so it is
+// authenticated rather than gated: every signed-in person gets the (possibly
+// small) map they may use, and no one can ask for another person's.
+func registerMe(reg *routing.Registry, h *navigation.Handler) {
+	reg.Authenticated(http.MethodGet, "/api/v1/me/navigation",
+		"The workspace map and actions the caller's permissions unlock", h.Get)
+}
+
 // registerNotifications declares the notification surface (§6.4). The user
 // routes are authenticated (you only ever see your own); the internal command is
 // service-to-service and gated by a catalogue permission.
@@ -204,8 +307,13 @@ func registerNotifications(reg *routing.Registry, h *notifications.Handler) {
 
 func registerApprovals(reg *routing.Registry, h *approvals.Handler) {
 	reg.Authenticated(http.MethodPost, "/api/v1/approvals", "Request an approval", h.RequestApproval)
-	reg.Authenticated(http.MethodGet, "/api/v1/approvals/{id}", "Get an approval", h.Get)
-	reg.Authenticated(http.MethodGet, "/api/v1/approvals/pending", "List pending approvals for a role", h.PendingForRole)
+	// Reading the queue and one approval by id is gated by core.approval.read:
+	// a request carries another person's claim and the amounts on it. The
+	// caller's own requests stay authenticated because /mine is self-scoped.
+	reg.Gated("core.approval.read", http.MethodGet, "/api/v1/approvals/{id}",
+		"Get an approval", h.Get)
+	reg.Gated("core.approval.read", http.MethodGet, "/api/v1/approvals/pending",
+		"List pending approvals for a role", h.PendingForRole)
 	reg.Authenticated(http.MethodGet, "/api/v1/approvals/mine", "List approvals requested by you", h.MyRequested)
 	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/approve", "Approve an approval", h.Approve)
 	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/decline", "Decline an approval", h.Decline)
@@ -264,12 +372,378 @@ func registerAudit(reg *routing.Registry, h *audit.Handler) {
 func registerDashboard(reg *routing.Registry, h *dashboard.Handler) {
 	reg.Gated("intel.dashboard.read", http.MethodGet, "/api/v1/dashboard/executive",
 		"Executive dashboard tiles", h.Summary)
+	reg.Gated("intel.dashboard.read", http.MethodGet, "/api/v1/dashboard/executive/daily",
+		"Daily executive brief", h.DailyBrief)
+}
+
+// registerScorecard declares the company scorecard (§8.9). It aggregates
+// financial, operational, commercial, systems and people metrics, so the
+// single read route is gated by intel.dashboard.read, held by both CEOs.
+func registerScorecard(reg *routing.Registry, h *scorecard.Handler) {
+	reg.Gated("intel.dashboard.read", http.MethodGet, "/api/v1/dashboard/scorecard",
+		"Company scorecard", h.Scorecard)
+}
+
+// registerEmail declares the Phase 6 two-way email surface. Sending is gated
+// by core.email.send; reading inbox threads is authenticated.
+func registerEmail(reg *routing.Registry, h *email.Handler) {
+	h.Routes(reg)
+}
+
+// registerChat declares the Phase 6 messaging surface.
+func registerChat(reg *routing.Registry, h *chat.Handler) {
+	h.Routes(reg)
+}
+
+// registerDocuments declares the Phase 6 document storage surface.
+func registerDocuments(reg *routing.Registry, h *documents.Handler) {
+	h.Routes(reg)
 }
 
 // registerWork declares the Phase 2 work-orchestration surface. Reads need
 // work.project.read / work.task.read / work.blocker.read; writes need the
 // matching manage/write permission. Every write carries the version it read in
 // If-Match (§6.6).
+// registerCRM declares the client-acquisition surface (§8.1). The website-form
+// webhook is public: the website authenticates with a shared secret, not a
+// principal.
+func registerCRM(reg *routing.Registry, h *crm.Handler) {
+	// Organizations.
+	reg.Gated("crm.organization.read", http.MethodGet, "/api/v1/crm/organizations",
+		"List organizations", h.ListOrganizations)
+	reg.Gated("crm.organization.read", http.MethodGet, "/api/v1/crm/organizations/{id}",
+		"Get an organization", h.GetOrganization)
+	reg.Gated("crm.organization.write", http.MethodPost, "/api/v1/crm/organizations",
+		"Create an organization", h.CreateOrganization)
+	reg.Gated("crm.organization.write", http.MethodPut, "/api/v1/crm/organizations/{id}",
+		"Update an organization", h.UpdateOrganization)
+
+	// Contacts.
+	reg.Gated("crm.contact.read", http.MethodGet, "/api/v1/crm/contacts",
+		"List contacts", h.ListContacts)
+	reg.Gated("crm.contact.read", http.MethodGet, "/api/v1/crm/contacts/{id}",
+		"Get a contact", h.GetContact)
+	reg.Gated("crm.contact.write", http.MethodPost, "/api/v1/crm/contacts",
+		"Create a contact", h.CreateContact)
+	reg.Gated("crm.contact.write", http.MethodPut, "/api/v1/crm/contacts/{id}",
+		"Update a contact", h.UpdateContact)
+
+	// Config.
+	reg.Gated("crm.lead.read", http.MethodGet, "/api/v1/crm/lead-sources",
+		"List lead sources", h.ListLeadSources)
+	reg.Gated("crm.pipeline.read", http.MethodGet, "/api/v1/crm/pipeline-stages",
+		"List pipeline stages", h.ListPipelineStages)
+
+	// Leads.
+	reg.Gated("crm.lead.read", http.MethodGet, "/api/v1/crm/leads",
+		"List leads", h.ListLeads)
+	reg.Gated("crm.lead.read", http.MethodGet, "/api/v1/crm/leads/{id}",
+		"Get a lead", h.GetLead)
+	reg.Gated("crm.lead.write", http.MethodPost, "/api/v1/crm/leads",
+		"Create a lead", h.CreateLead)
+	reg.Gated("crm.lead.write", http.MethodPut, "/api/v1/crm/leads/{id}",
+		"Update a lead", h.UpdateLead)
+	reg.Gated("crm.lead.assign", http.MethodPost, "/api/v1/crm/leads/{id}/assign",
+		"Assign a lead to an owner", h.AssignLead)
+	reg.Gated("crm.lead.write", http.MethodPost, "/api/v1/crm/leads/{id}/status",
+		"Change a lead's status", h.SetLeadStatus)
+	reg.Gated("crm.lead.write", http.MethodPost, "/api/v1/crm/leads/{id}/convert",
+		"Convert a qualified lead to an opportunity", h.ConvertLead)
+
+	// Opportunities.
+	reg.Gated("crm.opportunity.read", http.MethodGet, "/api/v1/crm/opportunities",
+		"List opportunities", h.ListOpportunities)
+	reg.Gated("crm.opportunity.read", http.MethodGet, "/api/v1/crm/opportunities/{id}",
+		"Get an opportunity", h.GetOpportunity)
+	reg.Gated("crm.opportunity.write", http.MethodPost, "/api/v1/crm/opportunities/{id}/stage",
+		"Move an opportunity to another stage", h.MoveOpportunityStage)
+	reg.Gated("crm.opportunity.write", http.MethodPost, "/api/v1/crm/opportunities/{id}/win",
+		"Win an opportunity", h.WinOpportunity)
+	reg.Gated("crm.opportunity.write", http.MethodPost, "/api/v1/crm/opportunities/{id}/lose",
+		"Lose an opportunity", h.LoseOpportunity)
+
+	// Interactions.
+	reg.Gated("crm.interaction.read", http.MethodGet, "/api/v1/crm/interactions",
+		"List interactions", h.ListInteractions)
+	reg.Gated("crm.interaction.read", http.MethodGet, "/api/v1/crm/interactions/{id}",
+		"Get an interaction", h.GetInteraction)
+	reg.Gated("crm.interaction.write", http.MethodPost, "/api/v1/crm/interactions",
+		"Record a call, message, email, meeting or note", h.CreateInteraction)
+
+	// Follow-ups.
+	reg.Gated("crm.lead.read", http.MethodGet, "/api/v1/crm/followups",
+		"List follow-ups", h.ListFollowups)
+	reg.Gated("crm.lead.read", http.MethodGet, "/api/v1/crm/followups/{id}",
+		"Get a follow-up", h.GetFollowup)
+	reg.Gated("crm.lead.write", http.MethodPost, "/api/v1/crm/followups",
+		"Schedule a follow-up", h.CreateFollowup)
+	reg.Gated("crm.lead.write", http.MethodPost, "/api/v1/crm/followups/{id}/complete",
+		"Complete a follow-up", h.CompleteFollowup)
+	reg.Gated("crm.lead.write", http.MethodPost, "/api/v1/crm/followups/{id}/cancel",
+		"Cancel a follow-up", h.CancelFollowup)
+
+	// Proposals.
+	reg.Gated("crm.proposal.read", http.MethodGet, "/api/v1/crm/opportunities/{id}/proposals",
+		"List an opportunity's proposals", h.ListProposals)
+	reg.Gated("crm.proposal.read", http.MethodGet, "/api/v1/crm/proposals/{id}",
+		"Get a proposal", h.GetProposal)
+	reg.Gated("crm.proposal.write", http.MethodPost, "/api/v1/crm/opportunities/{id}/proposals",
+		"Create a proposal", h.CreateProposal)
+	reg.Gated("crm.proposal.write", http.MethodPost, "/api/v1/crm/proposals/{id}/send",
+		"Send a proposal", h.SendProposal)
+
+	// Pipeline.
+	reg.Gated("crm.pipeline.read", http.MethodGet, "/api/v1/crm/pipeline",
+		"Commercial pipeline summary", h.Pipeline)
+
+	// Public website-form webhook (shared secret, not a principal).
+	reg.Public(http.MethodPost, "/webhooks/website-forms",
+		"Inbound website enquiry that creates a lead", h.WebsiteForm)
+}
+
+// registerContracts declares the contracts surface (§8.3).
+func registerContracts(reg *routing.Registry, h *contracts.Handler) {
+	reg.Gated("contracts.contract.read", http.MethodGet, "/api/v1/contracts",
+		"List contracts", h.List)
+	reg.Gated("contracts.contract.read", http.MethodGet, "/api/v1/contracts/{id}",
+		"Get a contract", h.Get)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts",
+		"Create a contract", h.Create)
+	reg.Gated("contracts.contract.write", http.MethodPut, "/api/v1/contracts/{id}",
+		"Update a contract", h.Update)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/submit",
+		"Submit a contract for internal review", h.Submit)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/approve",
+		"Approve a contract internally", h.Approve)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/send",
+		"Send an approved contract to the client", h.Send)
+	reg.Gated("contracts.contract.sign", http.MethodPost, "/api/v1/contracts/{id}/sign",
+		"Record a signature on a contract", h.Sign)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/activate",
+		"Activate a signed contract", h.Activate)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/terminate",
+		"Terminate a contract", h.Terminate)
+
+	// Milestones.
+	reg.Gated("contracts.milestone.read", http.MethodGet, "/api/v1/contracts/{id}/milestones",
+		"List contract milestones", h.ListMilestones)
+	reg.Gated("contracts.milestone.manage", http.MethodPost, "/api/v1/contracts/{id}/milestones",
+		"Create a contract milestone", h.CreateMilestone)
+
+	// Deliverables.
+	reg.Gated("contracts.deliverable.read", http.MethodGet, "/api/v1/contracts/{id}/deliverables",
+		"List contract deliverables", h.ListDeliverables)
+	reg.Gated("contracts.deliverable.manage", http.MethodPost, "/api/v1/contracts/{id}/deliverables",
+		"Create a contract deliverable", h.CreateDeliverable)
+
+	// Obligations and SLA terms (contract read/write).
+	reg.Gated("contracts.contract.read", http.MethodGet, "/api/v1/contracts/{id}/obligations",
+		"List contract obligations", h.ListObligations)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/obligations",
+		"Create a contract obligation", h.CreateObligation)
+	reg.Gated("contracts.contract.read", http.MethodGet, "/api/v1/contracts/{id}/sla-terms",
+		"List contract SLA terms", h.ListSLATerms)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/sla-terms",
+		"Create a contract SLA term", h.CreateSLATerm)
+
+	// Change requests.
+	reg.Gated("contracts.change_request.read", http.MethodGet, "/api/v1/contracts/{id}/change-requests",
+		"List a contract's change requests", h.ListChangeRequests)
+	reg.Gated("contracts.contract.write", http.MethodPost, "/api/v1/contracts/{id}/change-requests",
+		"Raise a change request", h.CreateChangeRequest)
+	reg.Gated("contracts.change_request.approve", http.MethodPost, "/api/v1/change-requests/{id}/approve",
+		"Approve a change request", h.ApproveChangeRequest)
+	reg.Gated("contracts.change_request.approve", http.MethodPost, "/api/v1/change-requests/{id}/reject",
+		"Reject a change request", h.RejectChangeRequest)
+}
+
+// registerFinance declares the finance & commercial-control surface (§8.4):
+// the reporting reads, and the write lifecycle that moves an expense through
+// approval to settlement, an invoice from draft to issued and paid, a payment
+// onto the invoices it settles, and a budget through approval to close.
+//
+// Each write declares the permission it needs. The money-bearing reads are
+// gated by the module's read permissions, with amount visibility decided
+// separately per request by finance.amount.sensitive.read.
+func registerFinance(reg *routing.Registry, h *finance.Handler) {
+	// Headline, cash, receivables and profitability are all financial reports.
+	reg.Gated("finance.report.read", http.MethodGet, "/api/v1/finance/overview",
+		"Finance headline: cash, receivables and spending at a glance", h.Overview)
+	reg.Gated("finance.report.read", http.MethodGet, "/api/v1/finance/accounts",
+		"List cash accounts with their derived balances", h.ListAccounts)
+	reg.Gated("finance.report.read", http.MethodGet, "/api/v1/finance/cash-position",
+		"Cash position across accounts with 30-day flows", h.CashPosition)
+	reg.Gated("finance.report.read", http.MethodGet, "/api/v1/finance/receivables",
+		"Receivables ageing by days past due", h.Receivables)
+	reg.Gated("finance.report.read", http.MethodGet, "/api/v1/finance/recurring-costs",
+		"List standing vendor costs by next renewal", h.RecurringCosts)
+	reg.Gated("finance.report.read", http.MethodGet, "/api/v1/finance/projects/{id}/profitability",
+		"A project's revenue, cost and margin", h.ProjectProfitability)
+
+	// Expenses.
+	reg.Gated("finance.expense.read", http.MethodGet, "/api/v1/finance/expense-categories",
+		"List configured expense categories", h.ListExpenseCategories)
+	reg.Gated("finance.expense.read", http.MethodGet, "/api/v1/finance/expenses",
+		"List expenses", h.ListExpenses)
+	reg.Gated("finance.expense.read", http.MethodGet, "/api/v1/finance/expenses/{id}",
+		"Get an expense", h.GetExpense)
+	reg.Gated("finance.expense.write", http.MethodPost, "/api/v1/finance/expenses",
+		"Record an expense claim", h.CreateExpense)
+	reg.Gated("finance.expense.write", http.MethodPut, "/api/v1/finance/expenses/{id}",
+		"Edit a draft expense claim", h.UpdateExpense)
+	reg.Gated("finance.expense.write", http.MethodPost, "/api/v1/finance/expenses/{id}/submit",
+		"Submit an expense claim for approval", h.SubmitExpense)
+	reg.Gated("finance.expense.approve", http.MethodPost, "/api/v1/finance/expenses/{id}/decide",
+		"Approve or reject a submitted expense claim", h.DecideExpense)
+	reg.Gated("finance.payment.record", http.MethodPost, "/api/v1/finance/expenses/{id}/settle",
+		"Mark an approved expense paid or reimbursed", h.SettleExpense)
+	reg.Gated("finance.payment.record", http.MethodPost, "/api/v1/finance/expenses/{id}/reconcile",
+		"Reconcile a settled expense against the statement", h.ReconcileExpense)
+
+	// Invoices.
+	reg.Gated("finance.invoice.read", http.MethodGet, "/api/v1/finance/invoices",
+		"List invoices", h.ListInvoices)
+	reg.Gated("finance.invoice.read", http.MethodGet, "/api/v1/finance/invoices/{id}",
+		"Get an invoice with its lines", h.GetInvoice)
+	reg.Gated("finance.invoice.write", http.MethodPost, "/api/v1/finance/invoices",
+		"Create a draft invoice", h.CreateInvoice)
+	reg.Gated("finance.invoice.write", http.MethodPut, "/api/v1/finance/invoices/{id}",
+		"Edit a draft invoice and its lines", h.UpdateInvoice)
+	reg.Gated("finance.invoice.write", http.MethodPost, "/api/v1/finance/invoices/{id}/approve",
+		"Approve an invoice before issue", h.ApproveInvoice)
+	reg.Gated("finance.invoice.issue", http.MethodPost, "/api/v1/finance/invoices/{id}/issue",
+		"Issue an invoice to its client", h.IssueInvoice)
+	reg.Gated("finance.invoice.write", http.MethodPost, "/api/v1/finance/invoices/{id}/dispute",
+		"Flag an issued invoice as disputed", h.DisputeInvoice)
+	reg.Gated("finance.invoice.issue", http.MethodPost, "/api/v1/finance/invoices/{id}/write-off",
+		"Write off an uncollectable invoice", h.WriteOffInvoice)
+
+	// Payments.
+	reg.Gated("finance.payment.read", http.MethodGet, "/api/v1/finance/payments",
+		"List payments", h.ListPayments)
+	reg.Gated("finance.payment.record", http.MethodPost, "/api/v1/finance/payments",
+		"Record money received and optionally allocate it", h.CreatePayment)
+	reg.Gated("finance.payment.record", http.MethodPost, "/api/v1/finance/payments/{id}/allocate",
+		"Allocate a payment onto invoices", h.AllocatePayment)
+	reg.Gated("finance.payment.record", http.MethodPost, "/api/v1/finance/payments/{id}/reconcile",
+		"Mark a payment reconciled against the statement", h.ReconcilePayment)
+
+	// Budgets.
+	reg.Gated("finance.budget.read", http.MethodGet, "/api/v1/finance/budgets",
+		"List budgets with their actuals", h.ListBudgets)
+	reg.Gated("finance.budget.read", http.MethodGet, "/api/v1/finance/budgets/{id}",
+		"Get a budget", h.GetBudget)
+	reg.Gated("finance.budget.manage", http.MethodPost, "/api/v1/finance/budgets",
+		"Draft a budget ceiling", h.CreateBudget)
+	reg.Gated("finance.budget.manage", http.MethodPut, "/api/v1/finance/budgets/{id}",
+		"Edit a draft budget", h.UpdateBudget)
+	reg.Gated("finance.budget.manage", http.MethodPost, "/api/v1/finance/budgets/{id}/approve",
+		"Approve a budget ceiling", h.ApproveBudget)
+	reg.Gated("finance.budget.manage", http.MethodPost, "/api/v1/finance/budgets/{id}/close",
+		"Close a budget at the end of its period", h.CloseBudget)
+
+	// Cash accounts and standing costs.
+	reg.Gated("finance.account.manage", http.MethodPost, "/api/v1/finance/accounts",
+		"Open a cash account", h.CreateAccount)
+	reg.Gated("finance.account.manage", http.MethodPut, "/api/v1/finance/accounts/{id}",
+		"Edit a cash account", h.UpdateAccount)
+	reg.Gated("finance.recurring_cost.manage", http.MethodPost, "/api/v1/finance/recurring-costs",
+		"Record a standing vendor cost", h.CreateRecurringCost)
+	reg.Gated("finance.recurring_cost.manage", http.MethodPut, "/api/v1/finance/recurring-costs/{id}",
+		"Edit a standing vendor cost", h.UpdateRecurringCost)
+}
+
+// registerSystems declares the Phase 5 systems observability surface (§8.6):
+// what we run, the checks watching it, incidents, and what expires. The read
+// routes carry the read permissions; every write carries the manage permission
+// for the record it changes, so Go authorises each one on its own.
+//
+// Static segments are declared before /{id} so chi matches them first: /systems
+// /overview, /checks, /incidents, /domains, /certificates, /credentials and
+// /expiring are collections, not ids.
+func registerSystems(reg *routing.Registry, h *systems.Handler) {
+	// The headline, the register and what expires are all things you need
+	// systems.system.read to see.
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/overview",
+		"Systems headline: what is up, what is down, how fast we respond", h.Overview)
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/expiring",
+		"Domains, certificates and credential rotations about to lapse", h.Expiring)
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems",
+		"List registered systems with their derived health", h.ListSystems)
+	reg.Gated("systems.system.manage", http.MethodPost, "/api/v1/systems",
+		"Register a system", h.CreateSystem)
+
+	// Checks and their results.
+	reg.Gated("systems.system.manage", http.MethodPost, "/api/v1/systems/checks",
+		"Add a health check", h.CreateCheck)
+	reg.Gated("systems.check.read", http.MethodGet, "/api/v1/systems/checks",
+		"List health checks with their latest result", h.ListChecks)
+	reg.Gated("systems.system.manage", http.MethodPut, "/api/v1/systems/checks/{id}",
+		"Update a health check", h.UpdateCheck)
+	reg.Gated("systems.system.manage", http.MethodPost, "/api/v1/systems/checks/{id}/pause",
+		"Pause a health check", h.PauseCheck)
+	reg.Gated("systems.system.manage", http.MethodPost, "/api/v1/systems/checks/{id}/resume",
+		"Resume a health check", h.ResumeCheck)
+	reg.Gated("systems.check.read", http.MethodGet, "/api/v1/systems/checks/{id}/results",
+		"Recent results for a check", h.ListCheckResults)
+
+	// Incidents.
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents",
+		"Open an incident", h.OpenIncident)
+	reg.Gated("systems.incident.read", http.MethodGet, "/api/v1/systems/incidents",
+		"List incidents", h.ListIncidents)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/acknowledge",
+		"Acknowledge an incident", h.AcknowledgeIncident)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/mitigate",
+		"Record that an incident's impact is contained", h.MitigateIncident)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/resolve",
+		"Resolve an incident", h.ResolveIncident)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/close",
+		"Close a resolved incident", h.CloseIncident)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/review",
+		"Record the post-incident review", h.ReviewIncident)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/notes",
+		"Add a timeline note to an incident", h.AddIncidentNote)
+	reg.Gated("systems.incident.manage", http.MethodPost, "/api/v1/systems/incidents/{id}/actions",
+		"Add a follow-up action to an incident", h.CreateIncidentAction)
+	reg.Gated("systems.incident.manage", http.MethodPut, "/api/v1/systems/incidents/{id}/actions/{actionId}",
+		"Update a follow-up action", h.UpdateIncidentAction)
+	reg.Gated("systems.incident.read", http.MethodGet, "/api/v1/systems/incidents/{id}",
+		"Get an incident with its systems, timeline and follow-up actions", h.GetIncident)
+
+	// Domains and certificates: what we own and when it lapses.
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/domains",
+		"List domain registrations", h.ListDomains)
+	reg.Gated("systems.domain.manage", http.MethodPost, "/api/v1/systems/domains",
+		"Record a domain registration", h.CreateDomain)
+	reg.Gated("systems.domain.manage", http.MethodPut, "/api/v1/systems/domains/{id}",
+		"Update a domain registration", h.UpdateDomain)
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/certificates",
+		"List TLS certificates", h.ListCertificates)
+	reg.Gated("systems.domain.manage", http.MethodPost, "/api/v1/systems/certificates",
+		"Record a TLS certificate", h.CreateCertificate)
+	reg.Gated("systems.domain.manage", http.MethodPut, "/api/v1/systems/certificates/{id}",
+		"Update a TLS certificate", h.UpdateCertificate)
+
+	// Credential records: the pointer, never the secret.
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/credentials",
+		"List credential records (locations, never secrets)", h.ListCredentials)
+	reg.Gated("systems.system.manage", http.MethodPost, "/api/v1/systems/credentials",
+		"Record that a credential exists and where it is stored", h.CreateCredential)
+	reg.Gated("systems.system.manage", http.MethodPut, "/api/v1/systems/credentials/{id}",
+		"Update a credential record", h.UpdateCredential)
+
+	// A system and its credential records. Last, so it does not shadow the
+	// static collection routes above.
+	reg.Gated("systems.system.read", http.MethodGet, "/api/v1/systems/{id}",
+		"Get a system with its credential records (locations, never secrets)", h.GetSystem)
+	reg.Gated("systems.system.manage", http.MethodPut, "/api/v1/systems/{id}",
+		"Update a system", h.UpdateSystem)
+	reg.Gated("systems.system.manage", http.MethodPost, "/api/v1/systems/{id}/retire",
+		"Retire a system", h.RetireSystem)
+}
+
+// registerWork declares the Phase 2 work-orchestration surface (§8.2).
 func registerWork(reg *routing.Registry, h *work.Handler) {
 	// Projects.
 	reg.Gated("work.project.read", http.MethodGet, "/api/v1/work/projects",
@@ -392,6 +866,30 @@ func registerPeople(reg *routing.Registry, h *people.Handler) {
 	reg.Gated("people.person.manage", http.MethodPost, "/api/v1/people/{id}/offboard",
 		"Offboard a person and revoke their access", h.OffboardPerson)
 
+	// Departments (§8.5): business units that people belong to.
+	reg.Gated("people.person.read", http.MethodGet, "/api/v1/people/departments",
+		"List departments", h.ListDepartments)
+	reg.Gated("people.person.read", http.MethodGet, "/api/v1/people/departments/{id}",
+		"Get a department", h.GetDepartment)
+	reg.Gated("people.person.manage", http.MethodPost, "/api/v1/people/departments",
+		"Create a department", h.CreateDepartment)
+	reg.Gated("people.person.manage", http.MethodPut, "/api/v1/people/departments/{id}",
+		"Update a department", h.UpdateDepartment)
+	reg.Gated("people.person.manage", http.MethodDelete, "/api/v1/people/departments/{id}",
+		"Archive a department", h.ArchiveDepartment)
+
+	// Performance reviews (§8.5, decision D8).
+	reg.Gated("people.review.read", http.MethodGet, "/api/v1/people/reviews",
+		"List performance reviews", h.ListReviews)
+	reg.Gated("people.review.read", http.MethodGet, "/api/v1/people/reviews/{id}",
+		"Get a performance review", h.GetReview)
+	reg.Gated("people.review.manage", http.MethodPost, "/api/v1/people/reviews",
+		"Create a performance review", h.CreateReview)
+	reg.Gated("people.review.manage", http.MethodPut, "/api/v1/people/reviews/{id}",
+		"Update a performance review", h.UpdateReview)
+	reg.Gated("people.review.manage", http.MethodDelete, "/api/v1/people/reviews/{id}",
+		"Delete a performance review", h.DeleteReview)
+
 	// Session activity: who is signed in now, and how long they have been. This
 	// is derived read-only from the auth session rows (§8.5).
 	reg.Gated("people.session.read", http.MethodGet, "/api/v1/people/presence",
@@ -400,11 +898,142 @@ func registerPeople(reg *routing.Registry, h *people.Handler) {
 		"List sign-in sessions and logged activity", h.ListSessions)
 }
 
-// registerIntegrations declares the inbound provider webhook surface (section
-// 11, section 12). The GitHub route is deliberately NOT under /api/v1: it is
-// GitHub's endpoint, not Atlas's API, and it is unauthenticated by principal.
-// The HMAC signature in the body is the gate, so it is a Public route.
+// registerIntegrations declares the integration registry surface (§8.9) and the
+// inbound provider webhook surface (§11, §12). Reads need
+// integrations.registry.read; writes need integrations.registry.manage. The
+// GitHub webhook route is deliberately NOT under /api/v1: it is GitHub's
+// endpoint, not Atlas's API, and it is unauthenticated by principal. The HMAC
+// signature in the body is the gate, so it is a Public route.
 func registerIntegrations(reg *routing.Registry, h *integrations.Handler) {
+	// Integrations registry: what we connect to and how (§8.9).
+	reg.Gated("integrations.registry.read", http.MethodGet, "/api/v1/integrations",
+		"List integration registrations", h.ListIntegrations)
+	reg.Gated("integrations.registry.read", http.MethodGet, "/api/v1/integrations/{id}",
+		"Get an integration registration", h.GetIntegration)
+	reg.Gated("integrations.registry.manage", http.MethodPost, "/api/v1/integrations",
+		"Create an integration registration", h.CreateIntegration)
+	reg.Gated("integrations.registry.manage", http.MethodPut, "/api/v1/integrations/{id}",
+		"Update an integration registration", h.UpdateIntegration)
+
+	// Webhook inbox: raw inbound provider payloads (§11).
+	reg.Gated("integrations.registry.read", http.MethodGet, "/api/v1/integrations/webhook-inbox",
+		"List inbound webhook payloads", h.ListWebhookInbox)
+	reg.Gated("integrations.registry.read", http.MethodGet, "/api/v1/integrations/webhook-inbox/{id}",
+		"Get an inbound webhook payload", h.GetWebhookInbox)
+
+	// Outbound log: outbound call attempts (§8.9).
+	reg.Gated("integrations.registry.read", http.MethodGet, "/api/v1/integrations/outbound-log",
+		"List outbound call attempts", h.ListOutboundLog)
+	reg.Gated("integrations.registry.read", http.MethodGet, "/api/v1/integrations/outbound-log/{id}",
+		"Get an outbound call attempt", h.GetOutboundLog)
+
+	// GitHub webhook: public, HMAC-signed, de-duplicated by delivery id (§11).
 	reg.Public(http.MethodPost, "/webhooks/github",
 		"Receive GitHub webhook deliveries (signed, de-duplicated)", h.ReceiveGitHub)
+
+	// GitHub installation management (§8.9 Engineering Intelligence).
+	// The install route is public: it redirects to GitHub for authorization.
+	reg.Public(http.MethodGet, "/api/v1/integrations/github/install",
+		"Redirect to GitHub App installation page", h.InstallGitHub)
+	reg.Public(http.MethodGet, "/api/v1/integrations/github/callback",
+		"GitHub OAuth callback after App installation", h.GitHubInstallCallback)
+	reg.Authenticated(http.MethodGet, "/api/v1/integrations/github/status",
+		"GitHub connection status for the signed-in person", h.GetGitHubStatus)
+}
+
+// registerUnits declares the Phase 5 business-unit oversight surface (§8.7):
+// units, integrations, indicator definitions and snapshots. Reads need
+// units.unit.read / units.indicator.read; writes need units.unit.manage.
+// Every write carries the version it read in If-Match (§6.6).
+func registerUnits(reg *routing.Registry, h *units.Handler) {
+	// Business units.
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units",
+		"List business units", h.ListUnits)
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/{id}",
+		"Get a business unit", h.GetUnit)
+	reg.Gated("units.unit.manage", http.MethodPost, "/api/v1/units",
+		"Create a business unit", h.CreateUnit)
+	reg.Gated("units.unit.manage", http.MethodPut, "/api/v1/units/{id}",
+		"Update a business unit", h.UpdateUnit)
+
+	// Integrations: how Atlas connects to a unit's system of record.
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/integrations",
+		"List unit integrations", h.ListIntegrations)
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/integrations/{id}",
+		"Get a unit integration", h.GetIntegration)
+	reg.Gated("units.unit.manage", http.MethodPost, "/api/v1/units/integrations",
+		"Create a unit integration", h.CreateIntegration)
+	reg.Gated("units.unit.manage", http.MethodPut, "/api/v1/units/integrations/{id}",
+		"Update a unit integration", h.UpdateIntegration)
+
+	// Indicator definitions: what we measure for each unit.
+	reg.Gated("units.indicator.read", http.MethodGet, "/api/v1/units/indicator-definitions",
+		"List unit indicator definitions", h.ListIndicatorDefinitions)
+	reg.Gated("units.indicator.read", http.MethodGet, "/api/v1/units/indicator-definitions/{id}",
+		"Get a unit indicator definition", h.GetIndicatorDefinition)
+	reg.Gated("units.unit.manage", http.MethodPost, "/api/v1/units/indicator-definitions",
+		"Create a unit indicator definition", h.CreateIndicatorDefinition)
+	reg.Gated("units.unit.manage", http.MethodPut, "/api/v1/units/indicator-definitions/{id}",
+		"Update a unit indicator definition", h.UpdateIndicatorDefinition)
+
+	// Snapshots: a dated indicator set for a unit.
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/snapshots",
+		"List unit snapshots", h.ListSnapshots)
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/snapshots/{id}",
+		"Get a unit snapshot", h.GetSnapshot)
+
+	// Finance summaries: period roll-up of income, expenses, receivables.
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/finance-summaries",
+		"List unit finance summaries", h.ListFinanceSummaries)
+	reg.Gated("units.unit.read", http.MethodGet, "/api/v1/units/finance-summaries/{id}",
+		"Get a unit finance summary", h.GetFinanceSummary)
+}
+
+// registerIntel declares the Phase 6 executive intelligence surface (§8.8):
+// decisions, risks, briefs and metric snapshots. Reads need
+// intel.decision.read / intel.risk.read / intel.brief.read / intel.metric.read;
+// writes need the matching manage permission. Every write carries the version
+// it read in If-Match (§6.6).
+func registerIntel(reg *routing.Registry, h *intel.Handler) {
+	// Decisions.
+	reg.Gated("intel.decision.read", http.MethodGet, "/api/v1/intel/decisions",
+		"List decisions", h.ListDecisions)
+	reg.Gated("intel.decision.read", http.MethodGet, "/api/v1/intel/decisions/{id}",
+		"Get a decision", h.GetDecision)
+	reg.Gated("intel.decision.manage", http.MethodPost, "/api/v1/intel/decisions",
+		"Create a decision", h.CreateDecision)
+	reg.Gated("intel.decision.manage", http.MethodPut, "/api/v1/intel/decisions/{id}",
+		"Update a decision", h.UpdateDecision)
+	reg.Gated("intel.decision.manage", http.MethodPost, "/api/v1/intel/decisions/{id}/decide",
+		"Decide a decision", h.DecideDecision)
+
+	// Risks.
+	reg.Gated("intel.risk.read", http.MethodGet, "/api/v1/intel/risks",
+		"List risks", h.ListRisks)
+	reg.Gated("intel.risk.read", http.MethodGet, "/api/v1/intel/risks/{id}",
+		"Get a risk", h.GetRisk)
+	reg.Gated("intel.risk.manage", http.MethodPost, "/api/v1/intel/risks",
+		"Create a risk", h.CreateRisk)
+	reg.Gated("intel.risk.manage", http.MethodPut, "/api/v1/intel/risks/{id}",
+		"Update a risk", h.UpdateRisk)
+
+	// Briefs: daily executive brief.
+	reg.Gated("intel.brief.read", http.MethodGet, "/api/v1/intel/briefs",
+		"List briefs", h.ListBriefs)
+	reg.Gated("intel.brief.read", http.MethodGet, "/api/v1/intel/briefs/{id}",
+		"Get a brief", h.GetBrief)
+	reg.Gated("intel.brief.manage", http.MethodPost, "/api/v1/intel/briefs",
+		"Create a brief", h.CreateBrief)
+	reg.Gated("intel.brief.manage", http.MethodPut, "/api/v1/intel/briefs/{id}",
+		"Update a brief", h.UpdateBrief)
+	reg.Gated("intel.brief.manage", http.MethodPost, "/api/v1/intel/briefs/{id}/deliver",
+		"Deliver a brief", h.DeliverBrief)
+
+	// Metric snapshots.
+	reg.Gated("intel.metric.read", http.MethodGet, "/api/v1/intel/metric-snapshots",
+		"List metric snapshots", h.ListMetricSnapshots)
+	reg.Gated("intel.metric.read", http.MethodGet, "/api/v1/intel/metric-snapshots/{id}",
+		"Get a metric snapshot", h.GetMetricSnapshot)
+	reg.Gated("intel.metric.manage", http.MethodPost, "/api/v1/intel/metric-snapshots",
+		"Create a metric snapshot", h.CreateMetricSnapshot)
 }

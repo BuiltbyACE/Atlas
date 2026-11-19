@@ -20,7 +20,7 @@
  * take the version and set the header for you; a stale version is a 412.
  */
 
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, type QueryValue } from "@/lib/api/client";
 
 // ── pagination envelope (§11) ───────────────────────────────────────────────
 
@@ -44,6 +44,98 @@ export interface Page<T> {
  */
 export function heartbeat(): Promise<void> {
   return apiFetch<void>("/api/v1/auth/heartbeat", { method: "POST" });
+}
+
+// ── navigation (§4, §6.2) ───────────────────────────────────────────────────
+
+/**
+ * One destination from `GET /api/v1/me/navigation`, already filtered by Go to
+ * the destinations the caller's effective permissions unlock. `actions` is
+ * keyed by the exact catalogue permission each control needs, with Go's answer
+ * as the value, so the web app never keeps its own permission list.
+ */
+export interface NavigationItem {
+  key: string;
+  label: string;
+  href: string;
+  /** Icon name from the web icon set; Go does not interpret it. */
+  icon: string;
+  section?: string;
+  keywords?: string;
+  /** Permission-scoped indicator name (for example `escalations`). */
+  badge?: string;
+  actions: Record<string, boolean>;
+}
+
+export interface NavigationSection {
+  key: string;
+  title?: string;
+  items: NavigationItem[];
+}
+
+/** The workspace map Go computed for the signed-in person. */
+export interface Navigation {
+  sections: NavigationSection[];
+  /** The caller's effective permission set, sorted by Go. */
+  permissions: string[];
+}
+
+/**
+ * Read the caller's workspace map. Go decides which destinations and actions
+ * appear; this wrapper only forwards the session cookie.
+ */
+export function getNavigation(): Promise<Navigation> {
+  return apiFetch<Navigation>("/api/v1/me/navigation", { cache: "no-store" });
+}
+
+// ── auth write wrappers (§6.1) ──────────────────────────────────────────────
+
+/** A role grant on an invite or a personnel record. */
+export interface RoleGrantSpec {
+  role_key: string;
+  /** Where the grant applies. Permissions are not scope-filtered yet, so the
+   * invite form grants at company scope. */
+  scope_type:
+    | "company"
+    | "business_unit"
+    | "department"
+    | "project"
+    | "own";
+  scope_id?: string;
+}
+
+/** Body for inviting a person (`POST /api/v1/auth/invites`). */
+export interface CreateInviteBody {
+  email: string;
+  full_name: string;
+  employment_type?: string;
+  role_grants?: RoleGrantSpec[];
+  ttl_hours?: number;
+}
+
+/** A row of the role catalogue (`GET /api/v1/roles`, `core.role.read`). */
+export interface Role {
+  key: string;
+  name: string;
+  description?: string;
+}
+
+/** List the roles a grant may reference. */
+export function listRoles(): Promise<{ roles: Role[] }> {
+  return apiFetch<{ roles: Role[] }>("/api/v1/roles", { cache: "no-store" });
+}
+
+/** Invite a person to join Atlas (`POST /api/v1/auth/invites`, gated by
+ * `core.user.manage`). Returns the invite token and expiry. */
+export function createInvite(body: CreateInviteBody): Promise<{
+  token: string;
+  expires_at: string;
+  email: string;
+}> {
+  return apiFetch<{ token: string; expires_at: string; email: string }>(
+    "/api/v1/auth/invites",
+    { method: "POST", body },
+  );
 }
 
 // ── work: enums ─────────────────────────────────────────────────────────────
@@ -104,6 +196,8 @@ export const PRIORITIES: Priority[] = ["low", "medium", "high", "urgent"];
 
 export interface Project {
   id: string;
+  /** Human reference allocated by Go, e.g. `PRJ-2026-007` (D6). */
+  ref?: string;
   name: string;
   description?: string;
   project_type?: string;
@@ -113,6 +207,8 @@ export interface Project {
   started_at?: string;
   due_at?: string;
   completed_at?: string;
+  /** D7: true when this project's type requires timesheets (advisory). */
+  timesheet_required?: boolean;
   version: number;
   created_at: string;
   updated_at: string;
@@ -134,6 +230,8 @@ export interface Milestone {
 
 export interface Task {
   id: string;
+  /** Human reference allocated by Go, e.g. `PRJ-2026-007/T-0142` (D6). */
+  ref?: string;
   project_id: string;
   milestone_id?: string;
   parent_id?: string;
@@ -241,11 +339,31 @@ export interface TaskBody {
   actual_hours?: number | null;
 }
 
+/**
+ * Attach evidence. A `file` (the default type) names an uploaded `file_id`;
+ * every other §6.5 type carries an external `reference` instead (a PR URL, a
+ * commit sha, a test-run link). Go validates the pairing.
+ */
 export interface EvidenceBody {
-  file_id: string;
+  evidence_type?: EvidenceType;
+  file_id?: string;
+  reference?: string;
   kind?: string;
   description?: string;
 }
+
+/** The §6.5 evidence types, in the order the UI offers them. */
+export const EVIDENCE_TYPES = [
+  "pull_request",
+  "url",
+  "test_run",
+  "client_approval",
+  "git_commit",
+  "payment_reference",
+  "file",
+] as const;
+
+export type EvidenceType = (typeof EVIDENCE_TYPES)[number];
 
 // ── work: queries ───────────────────────────────────────────────────────────
 
@@ -393,6 +511,46 @@ export function createTask(projectId: string, body: TaskBody): Promise<Task> {
   });
 }
 
+/**
+ * The full replacement body for `PUT /api/v1/work/tasks/{id}` from a task as
+ * read, with `patch` applied. PUT replaces the record, so a field left out is
+ * cleared; this keeps every field a quick edit (a status move, a new owner)
+ * does not mean to touch.
+ */
+export function taskBody(task: Task, patch: Partial<TaskBody> = {}): TaskBody {
+  return {
+    title: task.title,
+    description: task.description ?? "",
+    milestone_id: task.milestone_id ?? null,
+    parent_id: task.parent_id ?? null,
+    assignee_person_id: task.assignee_person_id ?? null,
+    status: task.status,
+    priority: task.priority,
+    due_at: task.due_at ?? null,
+    estimate_hours: task.estimate_hours ?? null,
+    actual_hours: task.actual_hours ?? null,
+    ...patch,
+  };
+}
+
+/** The same for `PUT /api/v1/work/projects/{id}`. */
+export function projectBody(
+  project: Project,
+  patch: Partial<ProjectBody> = {},
+): ProjectBody {
+  return {
+    name: project.name,
+    description: project.description ?? "",
+    project_type: project.project_type ?? "",
+    status: project.status,
+    owner_person_id: project.owner_person_id ?? null,
+    department_id: project.department_id ?? null,
+    started_at: project.started_at ?? null,
+    due_at: project.due_at ?? null,
+    ...patch,
+  };
+}
+
 export function updateTask(
   id: string,
   body: TaskBody,
@@ -469,6 +627,78 @@ export function addProjectEvidence(
 export function verifyEvidence(id: string): Promise<Evidence> {
   return apiFetch<Evidence>(`/api/v1/work/evidence/${id}/verify`, {
     method: "POST",
+  });
+}
+
+// ── work: time entries ──────────────────────────────────────────────────────
+
+export interface TimeEntry {
+  id: string;
+  person_id: string;
+  task_id: string;
+  project_id: string;
+  entry_date: string;
+  minutes: number;
+  note?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TimeEntryBody {
+  task_id: string;
+  entry_date: string;
+  minutes: number;
+  note?: string;
+}
+
+export interface TimeEntryListQuery {
+  limit?: number;
+  cursor?: string;
+  person_id?: string;
+  task_id?: string;
+  project_id?: string;
+  from?: string;
+  to?: string;
+  [key: string]: QueryValue;
+}
+
+export function listTimeEntries(query: TimeEntryListQuery = {}): Promise<Page<TimeEntry>> {
+  return apiFetch<Page<TimeEntry>>("/api/v1/work/time-entries", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getTimeEntry(id: string): Promise<TimeEntry> {
+  return apiFetch<TimeEntry>(`/api/v1/work/time-entries/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function createTimeEntry(body: TimeEntryBody): Promise<TimeEntry> {
+  return apiFetch<TimeEntry>("/api/v1/work/time-entries", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateTimeEntry(
+  id: string,
+  version: number,
+  body: TimeEntryBody,
+): Promise<TimeEntry> {
+  return apiFetch<TimeEntry>(`/api/v1/work/time-entries/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function deleteTimeEntry(id: string, version: number): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(`/api/v1/work/time-entries/${id}`, {
+    method: "DELETE",
+    headers: ifMatch(version),
   });
 }
 
@@ -732,6 +962,1973 @@ export function listSessions(
   });
 }
 
+// ── CRM (§8.1) ──────────────────────────────────────────────────────────────
+
+/**
+ * Lead lifecycle state (§8.1). `openLead` on the Go side decides which of these
+ * count as still-open; the UI just offers them as filters.
+ */
+export const LEAD_STATUSES = [
+  "new",
+  "assigned",
+  "contacted",
+  "qualified",
+  "nurture",
+  "disqualified",
+  "converted",
+] as const;
+
+export type LeadStatus = (typeof LEAD_STATUSES)[number];
+
+/** Lead triage priority (§8.1) - note `normal`, not work's `medium`. */
+export const CRM_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+
+export type CrmPriority = (typeof CRM_PRIORITIES)[number];
+
+/** A configured origin for leads (`crm.lead_sources`, §8.1 [CONFIG]). */
+export interface LeadSource {
+  key: string;
+  label: string;
+}
+
+/** A configured opportunity stage (`crm.pipeline_stages`, §8.1 [CONFIG]). */
+export interface PipelineStage {
+  key: string;
+  label: string;
+  is_won: boolean;
+  is_lost: boolean;
+}
+
+export interface CrmOrganization {
+  id: string;
+  name: string;
+  industry?: string;
+  size?: string;
+  location?: string;
+  kra_pin?: string;
+  status: string;
+  owner_person_id?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CrmContact {
+  id: string;
+  organization_id?: string;
+  name: string;
+  role?: string;
+  phones: string[];
+  emails: string[];
+  whatsapp_number?: string;
+  consent_marketing: boolean;
+  consent_marketing_at?: string;
+  consent_marketing_source?: string;
+  consent_whatsapp: boolean;
+  consent_whatsapp_at?: string;
+  consent_call_recording: boolean;
+  consent_call_recording_at?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Lead {
+  id: string;
+  /** Human reference allocated by Go, e.g. `LEAD-2026-0042` (D6). */
+  ref: string;
+  source_key: string;
+  source_detail?: string;
+  organization_id?: string;
+  contact_id?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  need_summary?: string;
+  /** Minor units with `currency` (ADR-010). */
+  estimated_value_minor?: number;
+  currency: string;
+  priority: CrmPriority | string;
+  owner_person_id?: string;
+  status: LeadStatus | string;
+  next_action?: string;
+  next_action_due_at?: string;
+  qualification_notes?: string;
+  lost_reason?: string;
+  converted_opportunity_id?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Opportunity {
+  id: string;
+  /** Human reference allocated by Go, e.g. `OPP-2026-0011`. */
+  ref: string;
+  organization_id?: string;
+  title: string;
+  /** Minor units with `currency` (ADR-010). */
+  value_minor?: number;
+  currency: string;
+  probability?: number;
+  stage_key: string;
+  expected_close_at?: string;
+  owner_person_id?: string;
+  lost_reason?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CrmInteraction {
+  id: string;
+  interaction_type: string;
+  direction: string;
+  contact_id?: string;
+  lead_id?: string;
+  opportunity_id?: string;
+  occurred_at: string;
+  duration_minutes?: number;
+  outcome: string;
+  summary?: string;
+  next_action?: string;
+  next_action_due_at?: string;
+  recording_file_id?: string;
+  recorded_by: string;
+  version: number;
+  created_at: string;
+}
+
+export interface Followup {
+  id: string;
+  lead_id?: string;
+  opportunity_id?: string;
+  owner_person_id: string;
+  due_at: string;
+  channel: string;
+  reason: string;
+  status: string;
+  outcome?: string;
+  completed_at?: string;
+  version: number;
+  created_at: string;
+}
+
+/** One pipeline stage's open-deal roll-up (`GET /api/v1/crm/pipeline`). */
+export interface PipelineStageTotal {
+  stage_key: string;
+  label: string;
+  count: number;
+  /** Minor units. */
+  value_minor: number;
+}
+
+export interface PipelineSummary {
+  stages: PipelineStageTotal[];
+  /** Sum of the stages' open value, minor units. */
+  open_value_minor: number;
+  open_opportunities: number;
+}
+
+export type LeadListQuery = {
+  status?: string;
+  source_key?: string;
+  owner_person_id?: string;
+  organization_id?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type OpportunityListQuery = {
+  stage_key?: string;
+  owner_person_id?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type OrganizationListQuery = {
+  /** Free-text name search handled by Go. */
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type ContactListQuery = {
+  organization_id?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type FollowupListQuery = {
+  status?: string;
+  owner_person_id?: string;
+  lead_id?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type InteractionListQuery = {
+  lead_id?: string;
+  opportunity_id?: string;
+  contact_id?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export function listLeadSources(): Promise<LeadSource[]> {
+  return apiFetch<{ items: LeadSource[] }>("/api/v1/crm/lead-sources", {
+    cache: "no-store",
+  }).then((body) => body.items);
+}
+
+export function listPipelineStages(): Promise<PipelineStage[]> {
+  return apiFetch<{ items: PipelineStage[] }>("/api/v1/crm/pipeline-stages", {
+    cache: "no-store",
+  }).then((body) => body.items);
+}
+
+export function getPipeline(): Promise<PipelineSummary> {
+  return apiFetch<PipelineSummary>("/api/v1/crm/pipeline", { cache: "no-store" });
+}
+
+export function listLeads(query: LeadListQuery = {}): Promise<Page<Lead>> {
+  return apiFetch<Page<Lead>>("/api/v1/crm/leads", { query, cache: "no-store" });
+}
+
+export function getLead(id: string): Promise<Lead> {
+  return apiFetch<Lead>(`/api/v1/crm/leads/${id}`, { cache: "no-store" });
+}
+
+export function listOpportunities(
+  query: OpportunityListQuery = {},
+): Promise<Page<Opportunity>> {
+  return apiFetch<Page<Opportunity>>("/api/v1/crm/opportunities", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getOpportunity(id: string): Promise<Opportunity> {
+  return apiFetch<Opportunity>(`/api/v1/crm/opportunities/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listOrganizations(
+  query: OrganizationListQuery = {},
+): Promise<Page<CrmOrganization>> {
+  return apiFetch<Page<CrmOrganization>>("/api/v1/crm/organizations", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getOrganization(id: string): Promise<CrmOrganization> {
+  return apiFetch<CrmOrganization>(`/api/v1/crm/organizations/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listContacts(query: ContactListQuery = {}): Promise<Page<CrmContact>> {
+  return apiFetch<Page<CrmContact>>("/api/v1/crm/contacts", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getContact(id: string): Promise<CrmContact> {
+  return apiFetch<CrmContact>(`/api/v1/crm/contacts/${id}`, { cache: "no-store" });
+}
+
+export function listFollowups(query: FollowupListQuery = {}): Promise<Page<Followup>> {
+  return apiFetch<Page<Followup>>("/api/v1/crm/followups", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getFollowup(id: string): Promise<Followup> {
+  return apiFetch<Followup>(`/api/v1/crm/followups/${id}`, { cache: "no-store" });
+}
+
+export function listInteractions(
+  query: InteractionListQuery = {},
+): Promise<Page<CrmInteraction>> {
+  return apiFetch<Page<CrmInteraction>>("/api/v1/crm/interactions", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getInteraction(id: string): Promise<CrmInteraction> {
+  return apiFetch<CrmInteraction>(`/api/v1/crm/interactions/${id}`, {
+    cache: "no-store",
+  });
+}
+
+// ── CRM write wrappers (§8.1) ───────────────────────────────────────────────
+
+/** Body for creating a lead (`POST /api/v1/crm/leads`, `crm.lead.create`). */
+export interface CreateLeadBody {
+  source_key: string;
+  source_detail?: string;
+  organization_id?: string;
+  contact_id?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  need_summary?: string;
+  estimated_value_minor?: number;
+  currency?: string;
+  priority?: CrmPriority;
+  owner_person_id?: string;
+  status?: LeadStatus;
+  next_action?: string;
+  next_action_due_at?: string;
+  qualification_notes?: string;
+  lost_reason?: string;
+}
+
+export function createLead(body: CreateLeadBody): Promise<Lead> {
+  return apiFetch<Lead>("/api/v1/crm/leads", { method: "POST", body });
+}
+
+export function updateLead(
+  id: string,
+  version: number,
+  body: CreateLeadBody,
+): Promise<Lead> {
+  return apiFetch<Lead>(`/api/v1/crm/leads/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function assignLead(
+  id: string,
+  version: number,
+  body: { owner_person_id: string; next_action: string; next_action_due_at: string },
+): Promise<Lead> {
+  return apiFetch<Lead>(`/api/v1/crm/leads/${id}/assign`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function setLeadStatus(
+  id: string,
+  version: number,
+  body: { status: LeadStatus; lost_reason?: string },
+): Promise<Lead> {
+  return apiFetch<Lead>(`/api/v1/crm/leads/${id}/status`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function convertLead(
+  id: string,
+  version: number,
+  body: {
+    title: string;
+    organization_id?: string;
+    value_minor?: number;
+    currency?: string;
+    stage_key?: string;
+    probability?: number;
+    expected_close_at?: string;
+    owner_person_id?: string;
+  },
+): Promise<{ opportunity: Opportunity; lead: Lead }> {
+  return apiFetch<{ opportunity: Opportunity; lead: Lead }>(
+    `/api/v1/crm/leads/${id}/convert`,
+    { method: "POST", body, headers: ifMatch(version) },
+  );
+}
+
+/** Body for moving an opportunity stage (`POST /api/v1/crm/opportunities/{id}/stage`). */
+export interface MoveOpportunityStageBody {
+  stage_key: string;
+}
+
+export function moveOpportunityStage(
+  id: string,
+  version: number,
+  body: MoveOpportunityStageBody,
+): Promise<Opportunity> {
+  return apiFetch<Opportunity>(`/api/v1/crm/opportunities/${id}/stage`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Win an opportunity (`POST /api/v1/crm/opportunities/{id}/win`). */
+export function winOpportunity(id: string, version: number): Promise<Opportunity> {
+  return apiFetch<Opportunity>(`/api/v1/crm/opportunities/${id}/win`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+/** Lose an opportunity (`POST /api/v1/crm/opportunities/{id}/lose`). */
+export function loseOpportunity(
+  id: string,
+  version: number,
+  body: { lost_reason: string },
+): Promise<Opportunity> {
+  return apiFetch<Opportunity>(`/api/v1/crm/opportunities/${id}/lose`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Body for recording an interaction (`POST /api/v1/crm/interactions`). */
+export interface CreateInteractionBody {
+  interaction_type: string;
+  direction: string;
+  contact_id?: string;
+  lead_id?: string;
+  opportunity_id?: string;
+  occurred_at?: string;
+  duration_minutes?: number;
+  outcome: string;
+  summary?: string;
+  next_action?: string;
+  next_action_due_at?: string;
+  recording_file_id?: string;
+}
+
+export function createInteraction(
+  body: CreateInteractionBody,
+): Promise<CrmInteraction> {
+  return apiFetch<CrmInteraction>("/api/v1/crm/interactions", {
+    method: "POST",
+    body,
+  });
+}
+
+/** Body for scheduling a follow-up (`POST /api/v1/crm/followups`). */
+export interface CreateFollowupBody {
+  lead_id?: string;
+  opportunity_id?: string;
+  owner_person_id?: string;
+  due_at: string;
+  channel: string;
+  reason: string;
+}
+
+export function createFollowup(
+  body: CreateFollowupBody,
+): Promise<Followup> {
+  return apiFetch<Followup>("/api/v1/crm/followups", { method: "POST", body });
+}
+
+export function completeFollowup(
+  id: string,
+  version: number,
+  outcome: string,
+): Promise<Followup> {
+  return apiFetch<Followup>(`/api/v1/crm/followups/${id}/complete`, {
+    method: "POST",
+    body: { outcome },
+    headers: ifMatch(version),
+  });
+}
+
+export function cancelFollowup(
+  id: string,
+  version: number,
+  outcome: string,
+): Promise<Followup> {
+  return apiFetch<Followup>(`/api/v1/crm/followups/${id}/cancel`, {
+    method: "POST",
+    body: { outcome },
+    headers: ifMatch(version),
+  });
+}
+
+/** Body for creating an organization (`POST /api/v1/crm/organizations`). */
+export interface CreateOrganizationBody {
+  name: string;
+  industry?: string;
+  size?: string;
+  location?: string;
+  kra_pin?: string;
+  status?: string;
+  owner_person_id?: string;
+}
+
+export function createOrganization(
+  body: CreateOrganizationBody,
+): Promise<CrmOrganization> {
+  return apiFetch<CrmOrganization>("/api/v1/crm/organizations", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateOrganization(
+  id: string,
+  version: number,
+  body: CreateOrganizationBody,
+): Promise<CrmOrganization> {
+  return apiFetch<CrmOrganization>(`/api/v1/crm/organizations/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Body for creating a contact (`POST /api/v1/crm/contacts`). */
+export interface CreateContactBody {
+  organization_id?: string;
+  name: string;
+  role?: string;
+  phones?: string[];
+  emails?: string[];
+  whatsapp_number?: string;
+  consent_marketing?: boolean;
+  consent_whatsapp?: boolean;
+  consent_call_recording?: boolean;
+  consent_source?: string;
+}
+
+export function createContact(
+  body: CreateContactBody,
+): Promise<CrmContact> {
+  return apiFetch<CrmContact>("/api/v1/crm/contacts", { method: "POST", body });
+}
+
+export function updateContact(
+  id: string,
+  version: number,
+  body: CreateContactBody,
+): Promise<CrmContact> {
+  return apiFetch<CrmContact>(`/api/v1/crm/contacts/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Body for creating a proposal (`POST /api/v1/crm/opportunities/{id}/proposals`). */
+export interface CreateProposalBody {
+  scope_summary?: string;
+  line_items?: unknown;
+  price_minor: number;
+  currency: string;
+  discount_minor?: number;
+  valid_until?: string;
+  document_file_id?: string;
+}
+
+/** A priced offer against an opportunity (§8.1). */
+export interface Proposal {
+  id: string;
+  ref: string;
+  opportunity_id: string;
+  version_no: number;
+  scope_summary?: string;
+  line_items?: unknown;
+  price_minor: number;
+  currency: string;
+  discount_minor?: number;
+  valid_until?: string;
+  document_file_id?: string;
+  status: ProposalStatus | string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
+
+export const PROPOSAL_STATUSES = [
+  "draft",
+  "sent",
+  "accepted",
+  "declined",
+  "expired",
+] as const;
+
+export function getProposal(id: string): Promise<Proposal> {
+  return apiFetch<Proposal>(`/api/v1/crm/proposals/${id}`, {
+    cache: "no-store",
+  });
+}
+
+/** `GET /api/v1/crm/opportunities/{id}/proposals`: an opportunity's offers,
+ * newest version first (`crm.proposal.read`). There is no global list route,
+ * so the index page fans out over the opportunity list. */
+export function listProposals(
+  opportunityId: string,
+): Promise<{ items: Proposal[] }> {
+  return apiFetch<{ items: Proposal[] }>(
+    `/api/v1/crm/opportunities/${opportunityId}/proposals`,
+    { cache: "no-store" },
+  );
+}
+
+export function createProposal(
+  opportunityId: string,
+  body: CreateProposalBody,
+): Promise<{ opportunity: Opportunity; lead: Lead }> {
+  return apiFetch<{ opportunity: Opportunity; lead: Lead }>(
+    `/api/v1/crm/opportunities/${opportunityId}/proposals`,
+    { method: "POST", body },
+  );
+}
+
+// ── contracts (§8.3) ────────────────────────────────────────────────────────
+
+/** Contract lifecycle state (§8.3), in the order the UI offers as filters. */
+export const CONTRACT_STATUSES = [
+  "draft",
+  "internal_review",
+  "approved",
+  "sent",
+  "signed",
+  "active",
+  "renewal_due",
+  "renewed",
+  "completed",
+  "terminated",
+] as const;
+
+export type ContractStatus = (typeof CONTRACT_STATUSES)[number];
+
+/** The commercial shape of an agreement (§8.3). */
+export const CONTRACT_TYPES = [
+  "fixed_price_project",
+  "retainer",
+  "support_sla",
+  "licence",
+  "hosting",
+] as const;
+
+export type ContractType = (typeof CONTRACT_TYPES)[number];
+
+export interface Contract {
+  id: string;
+  /** Human reference allocated by Go, e.g. `CTR-2026-007`. */
+  ref: string;
+  organization_id: string;
+  opportunity_id?: string;
+  contract_type: ContractType | string;
+  status: ContractStatus | string;
+  /**
+   * Minor units with `currency`. Omitted entirely when the viewer lacks
+   * `contracts.contract_value.sensitive.read`; `undefined` is not zero.
+   */
+  value_minor?: number;
+  currency: string;
+  start_at?: string;
+  end_at?: string;
+  payment_terms?: string;
+  renewal_terms?: string;
+  governing_docs: unknown;
+  signatories: unknown;
+  signed_at?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContractMilestone {
+  id: string;
+  contract_id: string;
+  title: string;
+  due_at?: string;
+  amount_minor?: number;
+  currency: string;
+  project_milestone_id?: string;
+  version: number;
+}
+
+export interface ContractObligation {
+  id: string;
+  contract_id: string;
+  party: string;
+  description: string;
+  due_at?: string;
+  recurrence?: string;
+  status: string;
+  owner_person_id?: string;
+  version: number;
+}
+
+/** A deliverable promised under a contract (§8.3). */
+export interface ContractDeliverable {
+  id: string;
+  contract_id: string;
+  description: string;
+  acceptance_criteria?: string;
+  milestone_id?: string;
+  version: number;
+}
+
+/** A change request to a signed contract (§8.3). */
+export interface ContractChangeRequest {
+  id: string;
+  ref: string;
+  contract_id: string;
+  title?: string;
+  description: string;
+  status: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ContractListQuery = {
+  status?: string;
+  organization_id?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export function listContracts(query: ContractListQuery = {}): Promise<Page<Contract>> {
+  return apiFetch<Page<Contract>>("/api/v1/contracts", { query, cache: "no-store" });
+}
+
+export function getContract(id: string): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}`, { cache: "no-store" });
+}
+
+export function listContractMilestones(id: string): Promise<ContractMilestone[]> {
+  return apiFetch<{ items: ContractMilestone[] }>(
+    `/api/v1/contracts/${id}/milestones`,
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+export function listContractObligations(id: string): Promise<ContractObligation[]> {
+  return apiFetch<{ items: ContractObligation[] }>(
+    `/api/v1/contracts/${id}/obligations`,
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+export function listContractDeliverables(id: string): Promise<ContractDeliverable[]> {
+  return apiFetch<{ items: ContractDeliverable[] }>(
+    `/api/v1/contracts/${id}/deliverables`,
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+// ── contracts write wrappers (§8.3) ─────────────────────────────────────────
+
+export interface CreateContractBody {
+  organization_id: string;
+  opportunity_id?: string;
+  contract_type: ContractType | string;
+  value_minor?: number;
+  currency?: string;
+  start_at?: string;
+  end_at?: string;
+  payment_terms?: string;
+  renewal_terms?: string;
+}
+
+export function createContract(body: CreateContractBody): Promise<Contract> {
+  return apiFetch<Contract>("/api/v1/contracts", { method: "POST", body });
+}
+
+export function updateContract(
+  id: string,
+  version: number,
+  body: CreateContractBody,
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function setContractStatus(
+  id: string,
+  version: number,
+  body: { status: ContractStatus },
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/status`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function signContract(
+  id: string,
+  version: number,
+  body: { name: string; role: string; method: string },
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/sign`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export interface CreateContractMilestoneBody {
+  title: string;
+  due_at?: string;
+  amount_minor?: number;
+  currency?: string;
+  project_milestone_id?: string;
+}
+
+export function createContractMilestone(
+  contractId: string,
+  body: CreateContractMilestoneBody,
+): Promise<ContractMilestone> {
+  return apiFetch<ContractMilestone>(
+    `/api/v1/contracts/${contractId}/milestones`,
+    { method: "POST", body },
+  );
+}
+
+export interface CreateDeliverableBody {
+  description: string;
+  acceptance_criteria?: string;
+  milestone_id?: string;
+}
+
+export function createDeliverable(
+  contractId: string,
+  body: CreateDeliverableBody,
+): Promise<ContractDeliverable> {
+  return apiFetch<ContractDeliverable>(
+    `/api/v1/contracts/${contractId}/deliverables`,
+    { method: "POST", body },
+  );
+}
+
+export interface CreateObligationBody {
+  party: string;
+  description: string;
+  due_at?: string;
+  recurrence?: string;
+  owner_person_id?: string;
+}
+
+export function createObligation(
+  contractId: string,
+  body: CreateObligationBody,
+): Promise<ContractObligation> {
+  return apiFetch<ContractObligation>(
+    `/api/v1/contracts/${contractId}/obligations`,
+    { method: "POST", body },
+  );
+}
+
+export interface CreateChangeRequestBody {
+  requested_by: string;
+  description: string;
+  effort_impact: string;
+  price_impact_minor?: number;
+  currency?: string;
+  deadline_impact_days?: number;
+}
+
+export function createChangeRequest(
+  body: CreateChangeRequestBody,
+): Promise<ContractChangeRequest> {
+  return apiFetch<ContractChangeRequest>(
+    "/api/v1/contracts/change-requests",
+    { method: "POST", body },
+  );
+}
+
+/** A service level agreement term (§8.3). */
+export interface ContractSLATerm {
+  id: string;
+  contract_id: string;
+  metric: string;
+  target: string;
+  measurement_window: string;
+  system_ids: string[];
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export function listContractSLATerms(
+  contractId: string,
+): Promise<ContractSLATerm[]> {
+  return apiFetch<{ items: ContractSLATerm[] }>(
+    `/api/v1/contracts/${contractId}/sla-terms`,
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+export function createContractSLATerm(
+  contractId: string,
+  body: { metric: string; target: string; measurement_window?: string; system_ids?: string[] },
+): Promise<ContractSLATerm> {
+  return apiFetch<ContractSLATerm>(
+    `/api/v1/contracts/${contractId}/sla-terms`,
+    { method: "POST", body },
+  );
+}
+
+export function listContractChangeRequests(
+  contractId: string,
+): Promise<ContractChangeRequest[]> {
+  return apiFetch<{ items: ContractChangeRequest[] }>(
+    `/api/v1/contracts/${contractId}/change-requests`,
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+export function approveContractChangeRequest(
+  id: string,
+  reason?: string,
+): Promise<ContractChangeRequest> {
+  return apiFetch<ContractChangeRequest>(
+    `/api/v1/change-requests/${id}/approve`,
+    { method: "POST", body: { reason } },
+  );
+}
+
+export function rejectContractChangeRequest(
+  id: string,
+  reason?: string,
+): Promise<ContractChangeRequest> {
+  return apiFetch<ContractChangeRequest>(
+    `/api/v1/change-requests/${id}/reject`,
+    { method: "POST", body: { reason } },
+  );
+}
+
+/** Contract lifecycle transitions (§8.3). */
+export function submitContract(
+  id: string,
+  version: number,
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/submit`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function approveContract(
+  id: string,
+  version: number,
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/approve`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function sendContract(
+  id: string,
+  version: number,
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/send`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function activateContract(
+  id: string,
+  version: number,
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/activate`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function terminateContract(
+  id: string,
+  version: number,
+): Promise<Contract> {
+  return apiFetch<Contract>(`/api/v1/contracts/${id}/terminate`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+// ── finance (§8.4) ──────────────────────────────────────────────────────────
+
+/** The kind of account cash sits in (`finance.account`, §8.4). */
+export const FINANCE_ACCOUNT_TYPES = [
+  "bank",
+  "cash",
+  "mpesa_till",
+  "mpesa_paybill",
+  "card",
+] as const;
+
+export type FinanceAccountType = (typeof FINANCE_ACCOUNT_TYPES)[number];
+
+/**
+ * Expense lifecycle state (§8.4), in the order the UI offers as filters:
+ * draft → submitted → approved → paid / reimbursed → reconciled, or rejected.
+ */
+export const EXPENSE_STATUSES = [
+  "draft",
+  "submitted",
+  "approved",
+  "rejected",
+  "paid",
+  "reimbursed",
+  "reconciled",
+] as const;
+
+export type ExpenseStatus = (typeof EXPENSE_STATUSES)[number];
+
+/** Invoice lifecycle state (§8.4); `overdue` is computed by Go. */
+export const INVOICE_STATUSES = [
+  "scheduled",
+  "draft",
+  "approved",
+  "issued",
+  "partially_paid",
+  "paid",
+  "overdue",
+  "disputed",
+  "written_off",
+] as const;
+
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+/** How a payment was received (§8.4). */
+export const PAYMENT_METHODS = ["bank", "mpesa", "card", "cash"] as const;
+
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/** How often a recurring cost renews (§8.4). */
+export const RECURRING_CYCLES = ["monthly", "quarterly", "annual"] as const;
+
+export type RecurringCycle = (typeof RECURRING_CYCLES)[number];
+
+/** What a budget is drawn against (§8.4). */
+export const BUDGET_SCOPES = ["company_period", "department", "project", "unit"] as const;
+
+export type BudgetScope = (typeof BUDGET_SCOPES)[number];
+
+/** Budget lifecycle state (§8.4). */
+export const BUDGET_STATUSES = ["draft", "approved", "closed"] as const;
+
+export type BudgetStatus = (typeof BUDGET_STATUSES)[number];
+
+/**
+ * The finance headline (`GET /api/v1/finance/overview`, §8.4). Every `*_minor`
+ * field is minor units with `currency` and is **omitted entirely** when the
+ * viewer lacks `finance.amount.sensitive.read`; `undefined` is not zero, so the
+ * UI shows those as restricted. The counts are not sensitive and always present.
+ */
+export interface FinanceOverview {
+  as_of: string;
+  currency: string;
+  cash_minor?: number;
+  receivables_outstanding_minor?: number;
+  receivables_overdue_minor?: number;
+  invoiced_90d_minor?: number;
+  collected_90d_minor?: number;
+  expenses_30d_minor?: number;
+  pending_expenses: number;
+  overdue_invoice_count: number;
+  upcoming_renewals_30d: number;
+  active_budget_count: number;
+  budgets_over_threshold: number;
+}
+
+/** A cash/bank/M-Pesa account (`finance.account`, §8.4). */
+export interface FinanceAccount {
+  id: string;
+  name: string;
+  account_type: FinanceAccountType | string;
+  currency: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  opening_balance_minor?: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  balance_minor?: number;
+  active: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** The cash position across accounts (`GET /api/v1/finance/cash-position`). */
+export interface CashPosition {
+  as_of: string;
+  currency: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  total_minor?: number;
+  by_account: {
+    account_id: string;
+    name: string;
+    account_type: string;
+    /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+    balance_minor?: number;
+  }[];
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  inflow_30d_minor?: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  outflow_30d_minor?: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  net_30d_minor?: number;
+}
+
+/** Receivables ageing (`GET /api/v1/finance/receivables`, §8.4). */
+export interface ReceivablesAgeing {
+  as_of: string;
+  currency: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  total_outstanding_minor?: number;
+  buckets: {
+    key: string;
+    label: string;
+    count: number;
+    /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+    amount_minor?: number;
+  }[];
+  invoices: FinanceInvoice[];
+}
+
+/** An expense claim (`finance.expense`, §8.4). */
+export interface FinanceExpense {
+  id: string;
+  /** Human reference allocated by Go, e.g. `EXP-2026-0142`. */
+  ref: string;
+  claimant_person_id: string;
+  category_key: string;
+  project_id?: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  amount_minor?: number;
+  currency: string;
+  spent_on: string;
+  vendor?: string;
+  payment_method?: string;
+  account_id?: string;
+  status: ExpenseStatus | string;
+  submitted_at?: string;
+  decided_by?: string;
+  decided_at?: string;
+  decision_reason?: string;
+  notes?: string;
+  /** The receipt file backing the claim, when one was attached (§8.4). */
+  receipt_file_id?: string;
+  /** The supplier's tax-invoice reference, where one applies (e.g. KRA eTIMS). */
+  tax_invoice_ref?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  paid_on?: string;
+}
+
+/** A configured expense category (`finance.expense_category`, §8.4 [CONFIG]). */
+export interface FinanceExpenseCategory {
+  key: string;
+  label: string;
+  sort_order: number;
+  active: boolean;
+}
+
+/** One line of an invoice (`finance.invoice` line items, §8.4). */
+export interface FinanceInvoiceLine {
+  id: string;
+  description: string;
+  quantity: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  unit_price_minor?: number;
+  /** Tax rate in basis points (e.g. 1600 = 16%). */
+  tax_rate_bp: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  amount_minor?: number;
+  sort_order: number;
+}
+
+/**
+ * An invoice (§8.4). `lines` is present only on the single-record read
+ * (`GET /api/v1/finance/invoices/{id}`); every `*_minor` field is omitted when
+ * the viewer lacks `finance.amount.sensitive.read`.
+ */
+export interface FinanceInvoice {
+  id: string;
+  /** Human reference allocated by Go, e.g. `INV-2026-0031`. */
+  ref: string;
+  organization_id: string;
+  organization_name?: string;
+  contract_id?: string;
+  contract_ref?: string;
+  milestone_id?: string;
+  issue_date?: string;
+  due_date?: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  total_minor?: number;
+  currency: string;
+  status: InvoiceStatus | string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  amount_paid_minor?: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  outstanding_minor?: number;
+  issued_at?: string;
+  paid_at?: string;
+  e_invoice_ref?: string;
+  notes?: string;
+  lines?: FinanceInvoiceLine[];
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A payment received against invoices (`finance.payment`, §8.4). */
+export interface FinancePayment {
+  id: string;
+  /** Human reference allocated by Go, e.g. `PAY-2026-0088`. */
+  ref: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  amount_minor?: number;
+  currency: string;
+  method: PaymentMethod | string;
+  reference?: string;
+  received_on: string;
+  account_id?: string;
+  reconciled: boolean;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  allocated_minor?: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  unallocated_minor?: number;
+  notes?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A budget and its actuals (`finance.budget`, §8.4). */
+export interface FinanceBudget {
+  id: string;
+  scope: BudgetScope | string;
+  scope_ref?: string;
+  period_start: string;
+  period_end: string;
+  category_key?: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  amount_minor?: number;
+  currency: string;
+  status: BudgetStatus | string;
+  owner_person_id?: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  actual_minor?: number;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  variance_minor?: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A standing vendor cost (`finance.recurring_cost`, §8.4). */
+export interface FinanceRecurringCost {
+  id: string;
+  vendor: string;
+  description?: string;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  amount_minor?: number;
+  currency: string;
+  cycle: RecurringCycle | string;
+  next_renewal_on: string;
+  owner_person_id?: string;
+  active: boolean;
+  /** Minor units; omitted when the viewer lacks `finance.amount.sensitive.read`. */
+  monthly_equivalent_minor?: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * A project's P&L (`GET /api/v1/finance/projects/{id}/profitability`, §8.4).
+ * Every `*_minor` including `margin_bp` is omitted when the viewer lacks
+ * `finance.amount.sensitive.read`.
+ */
+export interface ProjectProfitability {
+  project_id: string;
+  project_name?: string;
+  currency: string;
+  revenue_invoiced_minor?: number;
+  revenue_collected_minor?: number;
+  cost_expenses_minor?: number;
+  cost_time_minor?: number;
+  margin_minor?: number;
+  /** Margin in basis points (e.g. 3150 = 31.5%). */
+  margin_bp?: number;
+}
+
+export type FinanceExpenseListQuery = {
+  status?: string;
+  category_key?: string;
+  project_id?: string;
+  claimant_person_id?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type FinanceInvoiceListQuery = {
+  status?: string;
+  organization_id?: string;
+  contract_id?: string;
+  overdue?: boolean;
+  limit?: number;
+  cursor?: string;
+};
+
+export type FinancePaymentListQuery = {
+  from?: string;
+  to?: string;
+  method?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type FinanceBudgetListQuery = {
+  scope?: string;
+  status?: string;
+  period?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export function getFinanceOverview(): Promise<FinanceOverview> {
+  return apiFetch<FinanceOverview>("/api/v1/finance/overview", {
+    cache: "no-store",
+  });
+}
+
+export function listFinanceAccounts(): Promise<FinanceAccount[]> {
+  return apiFetch<{ items: FinanceAccount[] }>("/api/v1/finance/accounts", {
+    cache: "no-store",
+  }).then((body) => body.items);
+}
+
+export function getCashPosition(): Promise<CashPosition> {
+  return apiFetch<CashPosition>("/api/v1/finance/cash-position", {
+    cache: "no-store",
+  });
+}
+
+export function getReceivables(): Promise<ReceivablesAgeing> {
+  return apiFetch<ReceivablesAgeing>("/api/v1/finance/receivables", {
+    cache: "no-store",
+  });
+}
+
+export function listRecurringCosts(): Promise<FinanceRecurringCost[]> {
+  return apiFetch<{ items: FinanceRecurringCost[] }>(
+    "/api/v1/finance/recurring-costs",
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+export function getProjectProfitability(id: string): Promise<ProjectProfitability> {
+  return apiFetch<ProjectProfitability>(
+    `/api/v1/finance/projects/${id}/profitability`,
+    { cache: "no-store" },
+  );
+}
+
+export function listExpenseCategories(): Promise<FinanceExpenseCategory[]> {
+  return apiFetch<{ items: FinanceExpenseCategory[] }>(
+    "/api/v1/finance/expense-categories",
+    { cache: "no-store" },
+  ).then((body) => body.items);
+}
+
+export function listExpenses(
+  query: FinanceExpenseListQuery = {},
+): Promise<Page<FinanceExpense>> {
+  return apiFetch<Page<FinanceExpense>>("/api/v1/finance/expenses", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getExpense(id: string): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>(`/api/v1/finance/expenses/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listInvoices(
+  query: FinanceInvoiceListQuery = {},
+): Promise<Page<FinanceInvoice>> {
+  return apiFetch<Page<FinanceInvoice>>("/api/v1/finance/invoices", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Single invoice read; unlike the list, it carries the invoice `lines`. */
+export function getInvoice(id: string): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>(`/api/v1/finance/invoices/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listPayments(
+  query: FinancePaymentListQuery = {},
+): Promise<Page<FinancePayment>> {
+  return apiFetch<Page<FinancePayment>>("/api/v1/finance/payments", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function listBudgets(
+  query: FinanceBudgetListQuery = {},
+): Promise<Page<FinanceBudget>> {
+  return apiFetch<Page<FinanceBudget>>("/api/v1/finance/budgets", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getBudget(id: string): Promise<FinanceBudget> {
+  return apiFetch<FinanceBudget>(`/api/v1/finance/budgets/${id}`, {
+    cache: "no-store",
+  });
+}
+
+// ── finance (§8.4) writes ──
+
+export interface FinanceExpenseBody {
+  claimant_person_id?: string | null;
+  category_key: string;
+  project_id?: string | null;
+  amount_minor: number;
+  currency?: string;
+  spent_on: string;
+  vendor?: string;
+  payment_method?: string;
+  account_id?: string | null;
+  receipt_file_id?: string | null;
+  tax_invoice_ref?: string;
+  notes?: string;
+}
+
+export interface FinanceInvoiceLineBody {
+  description: string;
+  quantity: number;
+  unit_price_minor: number;
+  tax_rate_bp: number;
+  sort_order?: number;
+}
+
+export interface FinanceInvoiceBody {
+  organization_id: string;
+  contract_id?: string | null;
+  milestone_id?: string | null;
+  issue_date?: string;
+  due_date?: string;
+  currency?: string;
+  notes?: string;
+  lines: FinanceInvoiceLineBody[];
+}
+
+export interface FinancePaymentAllocationBody {
+  invoice_id: string;
+  amount_minor: number;
+}
+
+export interface FinancePaymentBody {
+  amount_minor: number;
+  currency?: string;
+  method: string;
+  reference?: string;
+  received_on: string;
+  account_id?: string | null;
+  notes?: string;
+  allocations?: FinancePaymentAllocationBody[];
+}
+
+export interface FinanceBudgetBody {
+  scope: string;
+  scope_ref?: string;
+  period_start: string;
+  period_end: string;
+  category_key?: string;
+  amount_minor: number;
+  currency?: string;
+  owner_person_id?: string | null;
+}
+
+export interface FinanceAccountBody {
+  name: string;
+  account_type: string;
+  currency?: string;
+  opening_balance_minor?: number;
+  active?: boolean;
+}
+
+export interface FinanceRecurringCostBody {
+  vendor: string;
+  description?: string;
+  amount_minor: number;
+  currency?: string;
+  cycle: string;
+  next_renewal_on: string;
+  owner_person_id?: string | null;
+  active?: boolean;
+}
+
+// expense
+export function createExpense(body: FinanceExpenseBody): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>("/api/v1/finance/expenses", { method: "POST", body });
+}
+
+export function updateExpense(
+  id: string,
+  body: FinanceExpenseBody,
+  version: number,
+): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>(`/api/v1/finance/expenses/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function submitExpense(id: string, version: number): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>(`/api/v1/finance/expenses/${id}/submit`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function decideExpense(
+  id: string,
+  version: number,
+  decision: "approve" | "reject",
+  reason?: string,
+): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>(`/api/v1/finance/expenses/${id}/decide`, {
+    method: "POST",
+    body: { decision, reason },
+    headers: ifMatch(version),
+  });
+}
+
+export function settleExpense(
+  id: string,
+  version: number,
+  body: { method: "paid" | "reimbursed"; account_id?: string; paid_on?: string },
+): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>(`/api/v1/finance/expenses/${id}/settle`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function reconcileExpense(id: string, version: number): Promise<FinanceExpense> {
+  return apiFetch<FinanceExpense>(`/api/v1/finance/expenses/${id}/reconcile`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+// invoice
+export function createInvoice(body: FinanceInvoiceBody): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>("/api/v1/finance/invoices", { method: "POST", body });
+}
+
+export function updateInvoice(
+  id: string,
+  body: FinanceInvoiceBody,
+  version: number,
+): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>(`/api/v1/finance/invoices/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function approveInvoice(id: string, version: number): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>(`/api/v1/finance/invoices/${id}/approve`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function issueInvoice(
+  id: string,
+  version: number,
+  body?: { issue_date?: string; due_date?: string },
+): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>(`/api/v1/finance/invoices/${id}/issue`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function disputeInvoice(id: string, version: number, reason?: string): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>(`/api/v1/finance/invoices/${id}/dispute`, {
+    method: "POST",
+    body: { reason },
+    headers: ifMatch(version),
+  });
+}
+
+export function writeOffInvoice(id: string, version: number, reason: string): Promise<FinanceInvoice> {
+  return apiFetch<FinanceInvoice>(`/api/v1/finance/invoices/${id}/write-off`, {
+    method: "POST",
+    body: { reason },
+    headers: ifMatch(version),
+  });
+}
+
+// payment
+export function createPayment(body: FinancePaymentBody): Promise<FinancePayment> {
+  return apiFetch<FinancePayment>("/api/v1/finance/payments", { method: "POST", body });
+}
+
+export function allocatePayment(
+  id: string,
+  version: number,
+  allocations: FinancePaymentAllocationBody[],
+): Promise<FinancePayment> {
+  return apiFetch<FinancePayment>(`/api/v1/finance/payments/${id}/allocate`, {
+    method: "POST",
+    body: { allocations },
+    headers: ifMatch(version),
+  });
+}
+
+export function reconcilePayment(
+  id: string,
+  version: number,
+  reconciled: boolean,
+): Promise<FinancePayment> {
+  return apiFetch<FinancePayment>(`/api/v1/finance/payments/${id}/reconcile`, {
+    method: "POST",
+    body: { reconciled },
+    headers: ifMatch(version),
+  });
+}
+
+// budget
+export function createBudget(body: FinanceBudgetBody): Promise<FinanceBudget> {
+  return apiFetch<FinanceBudget>("/api/v1/finance/budgets", { method: "POST", body });
+}
+
+export function updateBudget(
+  id: string,
+  body: FinanceBudgetBody,
+  version: number,
+): Promise<FinanceBudget> {
+  return apiFetch<FinanceBudget>(`/api/v1/finance/budgets/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function approveBudget(id: string, version: number): Promise<FinanceBudget> {
+  return apiFetch<FinanceBudget>(`/api/v1/finance/budgets/${id}/approve`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function closeBudget(id: string, version: number): Promise<FinanceBudget> {
+  return apiFetch<FinanceBudget>(`/api/v1/finance/budgets/${id}/close`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+// account
+export function createAccount(body: FinanceAccountBody): Promise<FinanceAccount> {
+  return apiFetch<FinanceAccount>("/api/v1/finance/accounts", { method: "POST", body });
+}
+
+export function updateAccount(
+  id: string,
+  body: FinanceAccountBody,
+  version: number,
+): Promise<FinanceAccount> {
+  return apiFetch<FinanceAccount>(`/api/v1/finance/accounts/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+// recurring cost
+export function createRecurringCost(body: FinanceRecurringCostBody): Promise<FinanceRecurringCost> {
+  return apiFetch<FinanceRecurringCost>("/api/v1/finance/recurring-costs", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateRecurringCost(
+  id: string,
+  body: FinanceRecurringCostBody,
+  version: number,
+): Promise<FinanceRecurringCost> {
+  return apiFetch<FinanceRecurringCost>(`/api/v1/finance/recurring-costs/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+// ── approvals (§6.3) ────────────────────────────────────────────────────────
+
+export const APPROVAL_STATUSES = [
+  "requested",
+  "pending",
+  "approved",
+  "declined",
+  "escalated",
+  "cancelled",
+  "expired",
+] as const;
+export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
+
+export interface Approval {
+  id: string;
+  ref: string;
+  entity_type: string;
+  entity_id: string;
+  requested_by: string;
+  requested_by_name?: string;
+  amount_minor: number;
+  currency: string;
+  approver_role?: string;
+  approver_id?: string;
+  approvals_required: number;
+  status: ApprovalStatus;
+  policy_ref?: string;
+  due_at?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApprovalPolicy {
+  id: string;
+  decision_type: string;
+  min_amount_minor?: number;
+  max_amount_minor?: number;
+  currency?: string;
+  approver_rule: string;
+  effective_from: string;
+  effective_to?: string;
+}
+
+export interface ApprovalListQuery {
+  status?: string;
+  entity_type?: string;
+  entity_id?: string;
+  limit?: number;
+  cursor?: string;
+  [key: string]: QueryValue;
+}
+
+export interface CreateApprovalBody {
+  entity_type: string;
+  entity_id: string;
+  amount_minor: number;
+  currency: string;
+  approver_role: string;
+  approver_id?: string;
+  approvals_required?: number;
+  policy_ref?: string;
+  due_at?: string;
+}
+
+export interface DecideApprovalBody {
+  approve: boolean;
+  reason?: string;
+}
+
+export interface EscalateApprovalBody {
+  to_role: string;
+  to_person_id?: string;
+  reason?: string;
+}
+
+/** List approvals pending for the viewer's role. */
+export function listPendingApprovals(
+  query: ApprovalListQuery = {},
+): Promise<Page<Approval>> {
+  return apiFetch<Page<Approval>>("/api/v1/approvals/pending", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** List approvals requested by the viewer. */
+export function listMyRequestedApprovals(
+  query: ApprovalListQuery = {},
+): Promise<Page<Approval>> {
+  return apiFetch<Page<Approval>>("/api/v1/approvals/mine", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Get one approval. */
+export function getApproval(id: string): Promise<Approval> {
+  return apiFetch<Approval>(`/api/v1/approvals/${id}`, {
+    cache: "no-store",
+  });
+}
+
+/** Request a new approval. */
+export function requestApproval(body: CreateApprovalBody): Promise<Approval> {
+  return apiFetch<Approval>("/api/v1/approvals", { method: "POST", body });
+}
+
+/** Approve an approval. */
+export function approveApproval(
+  id: string,
+  version: number,
+  body: { approve: true; reason?: string },
+): Promise<Approval> {
+  return apiFetch<Approval>(`/api/v1/approvals/${id}/approve`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Decline an approval. */
+export function declineApproval(
+  id: string,
+  version: number,
+  body: { approve: false; reason?: string },
+): Promise<Approval> {
+  return apiFetch<Approval>(`/api/v1/approvals/${id}/decline`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Escalate an approval. */
+export function escalateApproval(
+  id: string,
+  version: number,
+  body: EscalateApprovalBody,
+): Promise<Approval> {
+  return apiFetch<Approval>(`/api/v1/approvals/${id}/escalate`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Cancel an approval. */
+export function cancelApproval(
+  id: string,
+  version: number,
+  body: { reason?: string },
+): Promise<Approval> {
+  return apiFetch<Approval>(`/api/v1/approvals/${id}/cancel`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** List approval policies. */
+export function listApprovalPolicies(): Promise<ApprovalPolicy[]> {
+  return apiFetch<{ items: ApprovalPolicy[] }>("/api/v1/approval-policies", {
+    cache: "no-store",
+  }).then((body) => body.items);
+}
+
+// ── settings (§6.7) ─────────────────────────────────────────────────────────
+
+/** One typed configuration value (`core.settings`, §6.7). */
+export interface Setting {
+  key: string;
+  value: unknown;
+  type?: string;
+  description?: string;
+  version: number;
+  updated_by?: string;
+  updated_at?: string;
+}
+
+/** Every setting the caller may read (`core.settings.read`). */
+export function listSettings(): Promise<Page<Setting>> {
+  return apiFetch<Page<Setting>>("/api/v1/settings", { cache: "no-store" });
+}
+
+/** A single setting's raw value by key (`GET /api/v1/settings/{key}`). */
+export function getSetting(key: string): Promise<Setting> {
+  return apiFetch<Setting>(`/api/v1/settings/${encodeURIComponent(key)}`, {
+    cache: "no-store",
+  });
+}
+
+// ── audit (§6.6) - the footprint of every write ─────────────────────────────
+
+/** One audit row (`core.audit_log`): who did what, and when. */
+export interface AuditEntry {
+  id: string;
+  occurred_at: string;
+  actor_type: string;
+  actor_id: string;
+  on_behalf_of?: string;
+  action: string;
+  entity_type: string;
+  entity_id?: string;
+  reason?: string;
+  request_id?: string;
+}
+
+export interface AuditQuery extends Record<string, string | number | boolean | null | undefined> {
+  /** Exact entity type, e.g. `finance.invoice`. */
+  entity_type?: string;
+  /** Entity-type prefix, e.g. `finance` - one feed for a whole module (§8.4). */
+  module?: string;
+  actor_type?: string;
+  actor_id?: string;
+  action?: string;
+  entity_id?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+/** The audit trail (`GET /api/v1/audit`, `core.audit.read`). */
+export function listAudit(query: AuditQuery = {}): Promise<Page<AuditEntry>> {
+  return apiFetch<Page<AuditEntry>>("/api/v1/audit", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** One record's history (`GET /api/v1/audit/{entity_type}/{entity_id}`). */
+export function auditHistory(
+  entityType: string,
+  entityId: string,
+  query: { limit?: number; cursor?: string } = {},
+): Promise<Page<AuditEntry>> {
+  return apiFetch<Page<AuditEntry>>(
+    `/api/v1/audit/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
+    { query, cache: "no-store" },
+  );
+}
+
 // ── files (§6.5) - evidence attaches a stored file ──────────────────────────
 
 export interface FileRecord {
@@ -816,6 +3013,47 @@ export async function uploadFile(
   return completeUpload(ticket.file_id);
 }
 
+// ── notifications (§6.4) ────────────────────────────────────────────────────
+
+/** One in-app notification for the caller (`GET /api/v1/notifications`). */
+export interface AtlasNotification {
+  id: string;
+  template?: string;
+  subject?: string;
+  body?: string;
+  critical: boolean;
+  status: string;
+  entity_type?: string;
+  entity_id?: string;
+  created_at: string;
+  read_at?: string;
+}
+
+export function listNotifications(
+  query: { limit?: number; cursor?: string } = {},
+): Promise<Page<AtlasNotification>> {
+  return apiFetch<Page<AtlasNotification>>("/api/v1/notifications", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function unreadNotificationCount(): Promise<number> {
+  return apiFetch<{ count: number }>("/api/v1/notifications/unread-count", {
+    cache: "no-store",
+  }).then((body) => body.count);
+}
+
+export function markNotificationRead(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/notifications/${id}/read`, { method: "POST" });
+}
+
+export function markAllNotificationsRead(): Promise<number> {
+  return apiFetch<{ marked: number }>("/api/v1/notifications/read-all", {
+    method: "POST",
+  }).then((body) => body.marked);
+}
+
 // ── dashboard (§8.8) ────────────────────────────────────────────────────────
 
 export interface PeopleSummary {
@@ -835,6 +3073,19 @@ export interface WorkSummary {
   open_escalations: number;
 }
 
+export interface UnitsSummary {
+  units: number;
+  integrations: number;
+  indicators: number;
+}
+
+export interface IntelSummary {
+  decisions: number;
+  risks: number;
+  briefs: number;
+  snapshots: number;
+}
+
 export interface AuditHighlight {
   id: string;
   occurred_at: string;
@@ -850,6 +3101,8 @@ export interface ExecutiveSummary {
   people: PeopleSummary;
   approvals: ApprovalsSummary;
   work: WorkSummary;
+  units: UnitsSummary;
+  intel: IntelSummary;
   recent_audit: AuditHighlight[];
 }
 
@@ -858,3 +3111,2178 @@ export function getExecutiveSummary(): Promise<ExecutiveSummary> {
     cache: "no-store",
   });
 }
+
+// ── daily brief (§8.8) ──────────────────────────────────────────────────────
+
+export interface DailyBrief {
+  generated_at: string;
+  for_date: string;
+  yesterday: DailyBriefYesterday;
+  needs_attention: DailyBriefNeedsAttention;
+  today: DailyBriefToday;
+  decisions: DailyBriefDecision[];
+}
+
+export interface DailyBriefYesterday {
+  deals_won: number;
+  deals_lost: number;
+  payments_received_minor: number;
+  tasks_completed: number;
+  incidents_opened: number;
+  incidents_resolved: number;
+}
+
+export interface DailyBriefNeedsAttention {
+  overdue_tasks: number;
+  overdue_invoices: number;
+  overdue_invoices_minor: number;
+  missed_daily_reports: number;
+  expiring_certificates: number;
+  expiring_domains: number;
+  open_risks: number;
+}
+
+export interface DailyBriefToday {
+  follow_ups_due: number;
+  milestones_due: number;
+  people_absent: number;
+}
+
+export interface DailyBriefDecision {
+  id: string;
+  ref: string;
+  question: string;
+  outcome: string;
+  due_on?: string;
+}
+
+export function getDailyBrief(date?: string): Promise<DailyBrief> {
+  const query = date ? `?date=${date}` : "";
+  return apiFetch<DailyBrief>(`/api/v1/dashboard/executive/daily${query}`, {
+    cache: "no-store",
+  });
+}
+
+// ── scorecard (§8.9) ────────────────────────────────────────────────────────
+
+export interface Scorecard {
+  generated_at: string;
+  financial: ScorecardFinancial;
+  operational: ScorecardOperational;
+  commercial: ScorecardCommercial;
+  systems: ScorecardSystems;
+  people: ScorecardPeople;
+}
+
+export interface ScorecardFinancial {
+  cash_minor: number;
+  receivables_outstanding_minor: number;
+  receivables_overdue_minor: number;
+  invoiced_90d_minor: number;
+  collected_90d_minor: number;
+  expenses_30d_minor: number;
+  pending_expenses: number;
+  overdue_invoice_count: number;
+  upcoming_renewals_30d: number;
+  active_budget_count: number;
+  budgets_over_threshold: number;
+}
+
+export interface ScorecardOperational {
+  active_projects: number;
+  planning_projects: number;
+  overdue_tasks: number;
+  open_escalations: number;
+  completed_tasks_30d: number;
+}
+
+export interface ScorecardCommercial {
+  pipeline_value_minor: number;
+  open_opportunities: number;
+  won_opportunities_30d: number;
+  lost_opportunities_30d: number;
+  open_leads: number;
+  qualified_leads_30d: number;
+}
+
+export interface ScorecardSystems {
+  systems_total: number;
+  systems_tier_1: number;
+  systems_tier_2: number;
+  systems_tier_3: number;
+  checks_total: number;
+  checks_failing: number;
+  checks_warning: number;
+  checks_unprobed: number;
+  open_incidents: number;
+  open_sev_1: number;
+  open_sev_2: number;
+  incidents_30d: number;
+  availability_bp: number;
+}
+
+export interface ScorecardPeople {
+  headcount: number;
+  active: number;
+  on_leave: number;
+  onboarding: number;
+  exited: number;
+  missed_reports_30d: number;
+  approved_leave_today: number;
+}
+
+export function getScorecard(): Promise<Scorecard> {
+  return apiFetch<Scorecard>("/api/v1/dashboard/scorecard", {
+    cache: "no-store",
+  });
+}
+
+// ── systems (§8.6) ──────────────────────────────────────────────────────────
+
+/**
+ * The systems headline (`GET /api/v1/systems/overview`, §8.6). Every figure is
+ * measured by Go: failing and unprobed checks, the open incidents by severity,
+ * MTTA/MTTR over the last quarter, how often Atlas detected first, and what is
+ * about to expire. `availability_bp` is basis points (9900 = 99.00%).
+ */
+export interface SystemsOverview {
+  as_of: string;
+  systems_total: number;
+  systems_tier1: number;
+  systems_tier2: number;
+  systems_tier3: number;
+  checks_total: number;
+  checks_failing: number;
+  checks_warning: number;
+  checks_unprobed: number;
+  open_incidents: number;
+  open_sev1: number;
+  open_sev2: number;
+  open_incidents_by_severity: { severity: string; label: string; count: number }[];
+  incidents_30d: number;
+  detected_by_atlas_30d: number;
+  detected_by_client_30d: number;
+  mtta_seconds?: number;
+  mttr_seconds?: number;
+  reviews_outstanding: number;
+  expiring_count: number;
+  rotations_due_count: number;
+  availability: {
+    system_id: string;
+    ref: string;
+    name: string;
+    criticality: SystemCriticality | string;
+    passed: number;
+    total: number;
+    availability_bp: number;
+  }[];
+  expiry_warning_days: number[];
+}
+
+export const SYSTEM_TYPES = [
+  "website",
+  "web_app",
+  "api",
+  "mobile_backend",
+  "integration",
+  "background_job",
+  "database",
+] as const;
+export type SystemType = (typeof SYSTEM_TYPES)[number];
+
+export const SYSTEM_ENVIRONMENTS = ["prod", "staging"] as const;
+export type SystemEnvironment = (typeof SYSTEM_ENVIRONMENTS)[number];
+
+export const SYSTEM_CRITICALITIES = ["tier1", "tier2", "tier3"] as const;
+export type SystemCriticality = (typeof SYSTEM_CRITICALITIES)[number];
+
+export const SYSTEM_STATUSES = ["active", "retired"] as const;
+export type SystemStatus = (typeof SYSTEM_STATUSES)[number];
+
+export const CHECK_TYPES = [
+  "http_status",
+  "http_content",
+  "tcp",
+  "tls_expiry",
+  "dns_expiry",
+  "heartbeat",
+  "latency",
+  "dependency",
+] as const;
+export type CheckType = (typeof CHECK_TYPES)[number];
+
+export const CHECK_STATUSES = ["pass", "warn", "fail"] as const;
+export type CheckStatus = (typeof CHECK_STATUSES)[number];
+
+export const INCIDENT_SEVERITIES = ["sev1", "sev2", "sev3", "sev4"] as const;
+export type IncidentSeverity = (typeof INCIDENT_SEVERITIES)[number];
+
+export const INCIDENT_STATUSES = [
+  "open",
+  "acknowledged",
+  "mitigated",
+  "resolved",
+  "closed",
+] as const;
+export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
+
+/** One registered system (`systems.system`, §8.6). */
+export interface AtlasSystem {
+  id: string;
+  /** Human reference allocated by Go, e.g. `SYS-2026-0007`. */
+  ref: string;
+  name: string;
+  system_type: SystemType | string;
+  owner?: { id: string; name: string };
+  /** Set only when the system is client-hosted by us. */
+  client?: { id: string; name: string };
+  environment: SystemEnvironment | string;
+  criticality: SystemCriticality | string;
+  contract_ref?: string;
+  runbook_url?: string;
+  repository_url?: string;
+  description?: string;
+  status: SystemStatus | string;
+  /** Derived: a check's health is its latest result, never a stored counter. */
+  checks_total: number;
+  checks_failing: number;
+  checks_warning: number;
+  open_incidents: number;
+  /** Basis points over the last 30 days; absent when the system has no probes. */
+  availability_bp?: number;
+  /** Present only on the single-system read. Locations, never secrets (§8.6). */
+  credentials?: SystemCredential[];
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A credential record: where a credential is kept, never the credential. */
+export interface SystemCredential {
+  id: string;
+  label: string;
+  credential_kind: string;
+  /** Secrets-manager path, e.g. `sm://atlas/stripe`. */
+  store_path: string;
+  system_id?: string;
+  system_name?: string;
+  owner?: { id: string; name: string };
+  rotated_on?: string;
+  next_rotation_on?: string;
+  notes?: string;
+  active: boolean;
+  version: number;
+}
+
+/** One probe (`systems.check`, §8.6) with its latest result. */
+export interface SystemsCheck {
+  id: string;
+  system_id: string;
+  system_name: string;
+  system_criticality: SystemCriticality | string;
+  name: string;
+  check_type: CheckType | string;
+  target: string;
+  expect?: string;
+  interval_seconds: number;
+  timeout_seconds: number;
+  regions: string[];
+  warn_ms?: number;
+  fail_ms?: number;
+  /** Failures in a row before an incident opens (flap protection). */
+  failure_threshold: number;
+  heartbeat_window_seconds?: number;
+  active: boolean;
+  /** Absent when the check has never run — not `pass`. */
+  last_status?: CheckStatus | string;
+  last_at?: string;
+  last_latency_ms?: number;
+  consecutive_failures: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One probe outcome (`systems.check_result`, §8.6). */
+export interface SystemsCheckResult {
+  id: string;
+  check_id: string;
+  at: string;
+  status: CheckStatus | string;
+  latency_ms?: number;
+  detail?: string;
+  source: string;
+  region?: string;
+}
+
+/** An outage or degradation (`systems.incident`, §8.6). */
+export interface SystemsIncident {
+  id: string;
+  /** Human reference, e.g. `INC-2026-0031`. */
+  ref: string;
+  title: string;
+  severity: IncidentSeverity | string;
+  severity_label: string;
+  status: IncidentStatus | string;
+  detected_at: string;
+  detected_source: string;
+  acknowledged_at?: string;
+  mitigated_at?: string;
+  resolved_at?: string;
+  closed_at?: string;
+  commander?: { id: string; name: string };
+  client_impact?: string;
+  root_cause?: string;
+  summary?: string;
+  /** Set when a SEV1/SEV2 resolves: the post-incident review is owed. */
+  review_required: boolean;
+  review_at?: string;
+  /** The list projection: names of the systems the incident touched. */
+  system_names: string[];
+  /** Detail only. */
+  systems?: { system_id: string; ref: string; name: string; criticality: string }[];
+  timeline?: {
+    id: string;
+    at: string;
+    actor?: { id: string; name: string };
+    entry_type: string;
+    note: string;
+  }[];
+  actions?: {
+    id: string;
+    title: string;
+    owner?: { id: string; name: string };
+    due_on?: string;
+    status: string;
+    task_id?: string;
+    version: number;
+    created_at: string;
+    updated_at: string;
+  }[];
+  /** Derived from the timestamps, so they always agree with them. */
+  mtta_seconds?: number;
+  mttr_seconds?: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Something about to lapse (`GET /api/v1/systems/expiring`, §8.6). */
+export interface SystemsExpiry {
+  kind: "domain" | "certificate" | "credential" | string;
+  id: string;
+  name: string;
+  expires_on: string;
+  days_out: number;
+  auto_renew: boolean;
+  /** The tightest band it falls in: 7, 14, 30, or 0 beyond every band. */
+  warning_band: number;
+  system?: { id: string; name: string };
+  owner?: { id?: string; name: string };
+}
+
+export type SystemsListQuery = {
+  type?: string;
+  environment?: string;
+  criticality?: string;
+  status?: string;
+  owner_person_id?: string;
+  organization_id?: string;
+  unhealthy?: boolean;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type SystemsCheckListQuery = {
+  system_id?: string;
+  type?: string;
+  status?: string;
+  active?: boolean;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type SystemsIncidentListQuery = {
+  severity?: string;
+  status?: string;
+  system_id?: string;
+  commander_person_id?: string;
+  open?: boolean;
+  review_required?: boolean;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export function getSystemsOverview(): Promise<SystemsOverview> {
+  return apiFetch<SystemsOverview>("/api/v1/systems/overview", {
+    cache: "no-store",
+  });
+}
+
+export function listSystems(
+  query: SystemsListQuery = {},
+): Promise<Page<AtlasSystem>> {
+  return apiFetch<Page<AtlasSystem>>("/api/v1/systems", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Single system read; unlike the list, it carries the credential records. */
+export function getSystem(id: string): Promise<AtlasSystem> {
+  return apiFetch<AtlasSystem>(`/api/v1/systems/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listChecks(
+  query: SystemsCheckListQuery = {},
+): Promise<Page<SystemsCheck>> {
+  return apiFetch<Page<SystemsCheck>>("/api/v1/systems/checks", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function listCheckResults(
+  checkId: string,
+  query: { limit?: number; cursor?: string } = {},
+): Promise<Page<SystemsCheckResult>> {
+  return apiFetch<Page<SystemsCheckResult>>(
+    `/api/v1/systems/checks/${checkId}/results`,
+    { query, cache: "no-store" },
+  );
+}
+
+export function listIncidents(
+  query: SystemsIncidentListQuery = {},
+): Promise<Page<SystemsIncident>> {
+  return apiFetch<Page<SystemsIncident>>("/api/v1/systems/incidents", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Single incident read; carries the systems, timeline and follow-up actions. */
+export function getIncident(id: string): Promise<SystemsIncident> {
+  return apiFetch<SystemsIncident>(`/api/v1/systems/incidents/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listExpiring(
+  withinDays?: number,
+): Promise<{ items: SystemsExpiry[]; within_days: number; expiry_warning_days: number[] }> {
+  return apiFetch<{
+    items: SystemsExpiry[];
+    within_days: number;
+    expiry_warning_days: number[];
+  }>("/api/v1/systems/expiring", {
+    query: { within_days: withinDays },
+    cache: "no-store",
+  });
+}
+
+// ── the write pass (§8.6) ───────────────────────────────────────────────────
+//
+// Go owns every rule. A form here only describes its fields; a refusal comes
+// back as a problem with a stable `code` and is shown verbatim. Updates carry
+// the version the client last read, so a stale write is a 412 rather than a
+// silent overwrite.
+
+/** Action statuses on a follow-up action from an incident review. */
+export const INCIDENT_ACTION_STATUSES = ["todo", "doing", "done", "dropped"] as const;
+export type IncidentActionStatus = (typeof INCIDENT_ACTION_STATUSES)[number];
+
+/** Where an incident was noticed first. */
+export const INCIDENT_SOURCES = ["atlas", "client_reported", "manual"] as const;
+export type IncidentSource = (typeof INCIDENT_SOURCES)[number];
+
+/** A domain registration (`GET /api/v1/systems/domains`, §8.6). */
+export interface SystemsDomain {
+  id: string;
+  name: string;
+  system_id?: string;
+  system_name?: string;
+  registrar?: string;
+  registered_on?: string;
+  /** Absent when the renewal date is not known yet. */
+  expires_on?: string;
+  auto_renew: boolean;
+  owner?: { id: string; name: string };
+  notes?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A TLS certificate (`GET /api/v1/systems/certificates`, §8.6). */
+export interface SystemsCertificate {
+  id: string;
+  hostname: string;
+  system_id?: string;
+  system_name?: string;
+  issuer?: string;
+  issued_on?: string;
+  expires_on: string;
+  auto_renew: boolean;
+  owner?: { id: string; name: string };
+  notes?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  /** The tightest warning band it falls in: 7, 14, 30, or 0 beyond every band. */
+  warning_band?: number;
+}
+
+export type SystemsDomainListQuery = {
+  system_id?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type SystemsCertificateListQuery = {
+  system_id?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type SystemsCredentialListQuery = {
+  system_id?: string;
+  active?: boolean;
+  limit?: number;
+  cursor?: string;
+};
+
+export function listDomains(
+  query: SystemsDomainListQuery = {},
+): Promise<Page<SystemsDomain>> {
+  return apiFetch<Page<SystemsDomain>>("/api/v1/systems/domains", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function listCertificates(
+  query: SystemsCertificateListQuery = {},
+): Promise<Page<SystemsCertificate>> {
+  return apiFetch<Page<SystemsCertificate>>("/api/v1/systems/certificates", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Every credential record, locations only — there is no secret to return. */
+export function listCredentials(
+  query: SystemsCredentialListQuery = {},
+): Promise<Page<SystemCredential>> {
+  return apiFetch<Page<SystemCredential>>("/api/v1/systems/credentials", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Bodies a form sends. The reference, status and version are Go's. */
+export interface SystemsSystemBody {
+  name: string;
+  system_type: string;
+  environment: string;
+  criticality: string;
+  owner_person_id?: string;
+  organization_id?: string;
+  contract_id?: string;
+  runbook_url?: string;
+  repository_url?: string;
+  description?: string;
+}
+
+export interface SystemsCheckBody {
+  system_id: string;
+  name: string;
+  check_type: string;
+  target: string;
+  expect?: string;
+  interval_seconds?: number;
+  timeout_seconds?: number;
+  regions?: string[];
+  warn_ms?: number;
+  fail_ms?: number;
+  failure_threshold?: number;
+  heartbeat_window_seconds?: number;
+  active?: boolean;
+}
+
+export interface SystemsIncidentBody {
+  title: string;
+  severity: string;
+  system_ids: string[];
+  detected_at?: string;
+  detected_source?: string;
+  commander_person_id?: string;
+  client_impact?: string;
+}
+
+export interface SystemsDomainBody {
+  name: string;
+  system_id?: string;
+  registrar?: string;
+  registered_on?: string;
+  expires_on?: string;
+  auto_renew?: boolean;
+  owner_person_id?: string;
+  notes?: string;
+}
+
+export interface SystemsCertificateBody {
+  hostname: string;
+  system_id?: string;
+  issuer?: string;
+  issued_on?: string;
+  expires_on?: string;
+  auto_renew?: boolean;
+  owner_person_id?: string;
+  notes?: string;
+}
+
+export interface SystemsCredentialBody {
+  system_id: string;
+  label: string;
+  credential_kind: string;
+  /** Secrets-manager path, never the secret itself. */
+  store_path: string;
+  owner_person_id?: string;
+  rotated_on?: string;
+  next_rotation_on?: string;
+  notes?: string;
+  active?: boolean;
+}
+
+export interface SystemsActionBody {
+  title: string;
+  owner_person_id?: string;
+  due_on?: string;
+  status?: string;
+  task_id?: string;
+}
+
+export function createSystem(body: SystemsSystemBody): Promise<AtlasSystem> {
+  return apiFetch<AtlasSystem>("/api/v1/systems", { method: "POST", body });
+}
+
+export function updateSystem(
+  id: string,
+  version: number,
+  body: SystemsSystemBody,
+): Promise<AtlasSystem> {
+  return apiFetch<AtlasSystem>(`/api/v1/systems/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Retire a system. Refused while an incident is still open, and final. */
+export function retireSystem(id: string, version: number): Promise<AtlasSystem> {
+  return apiFetch<AtlasSystem>(`/api/v1/systems/${id}/retire`, {
+    method: "POST",
+    headers: ifMatch(version),
+  });
+}
+
+export function createCheck(body: SystemsCheckBody): Promise<SystemsCheck> {
+  return apiFetch<SystemsCheck>("/api/v1/systems/checks", { method: "POST", body });
+}
+
+export function updateCheck(
+  id: string,
+  version: number,
+  body: SystemsCheckBody,
+): Promise<SystemsCheck> {
+  return apiFetch<SystemsCheck>(`/api/v1/systems/checks/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+/** Pause or resume a probe. Its result history stays intact either way. */
+export function setCheckActive(
+  id: string,
+  version: number,
+  active: boolean,
+): Promise<SystemsCheck> {
+  return apiFetch<SystemsCheck>(
+    `/api/v1/systems/checks/${id}/${active ? "resume" : "pause"}`,
+    { method: "POST", headers: ifMatch(version) },
+  );
+}
+
+export function openIncident(body: SystemsIncidentBody): Promise<SystemsIncident> {
+  return apiFetch<SystemsIncident>("/api/v1/systems/incidents", { method: "POST", body });
+}
+
+/**
+ * One lifecycle step. `body` carries the optional note; Go decides whether the
+ * step is allowed from the incident's own state.
+ */
+export function stepIncident(
+  id: string,
+  step: "acknowledge" | "mitigate" | "resolve" | "close",
+  version: number,
+  note?: string,
+): Promise<SystemsIncident> {
+  return apiFetch<SystemsIncident>(`/api/v1/systems/incidents/${id}/${step}`, {
+    method: "POST",
+    body: { note },
+    headers: ifMatch(version),
+  });
+}
+
+/** Record the post-incident review. Closing is refused until it is on file. */
+export function reviewIncident(
+  id: string,
+  version: number,
+  body: { root_cause: string; summary?: string },
+): Promise<SystemsIncident> {
+  return apiFetch<SystemsIncident>(`/api/v1/systems/incidents/${id}/review`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function addIncidentNote(
+  id: string,
+  note: string,
+): Promise<{ id: string; at: string; entry_type: string; note: string }> {
+  return apiFetch<{ id: string; at: string; entry_type: string; note: string }>(
+    `/api/v1/systems/incidents/${id}/notes`,
+    { method: "POST", body: { note } },
+  );
+}
+
+export function createIncidentAction(
+  id: string,
+  body: SystemsActionBody,
+): Promise<NonNullable<SystemsIncident["actions"]>[number]> {
+  return apiFetch<NonNullable<SystemsIncident["actions"]>[number]>(
+    `/api/v1/systems/incidents/${id}/actions`,
+    { method: "POST", body },
+  );
+}
+
+export function updateIncidentAction(
+  incidentId: string,
+  actionId: string,
+  version: number,
+  body: SystemsActionBody,
+): Promise<NonNullable<SystemsIncident["actions"]>[number]> {
+  return apiFetch<NonNullable<SystemsIncident["actions"]>[number]>(
+    `/api/v1/systems/incidents/${incidentId}/actions/${actionId}`,
+    { method: "PUT", body, headers: ifMatch(version) },
+  );
+}
+
+export function createDomain(body: SystemsDomainBody): Promise<SystemsDomain> {
+  return apiFetch<SystemsDomain>("/api/v1/systems/domains", { method: "POST", body });
+}
+
+export function updateDomain(
+  id: string,
+  version: number,
+  body: SystemsDomainBody,
+): Promise<SystemsDomain> {
+  return apiFetch<SystemsDomain>(`/api/v1/systems/domains/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function createCertificate(
+  body: SystemsCertificateBody,
+): Promise<SystemsCertificate> {
+  return apiFetch<SystemsCertificate>("/api/v1/systems/certificates", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateCertificate(
+  id: string,
+  version: number,
+  body: SystemsCertificateBody,
+): Promise<SystemsCertificate> {
+  return apiFetch<SystemsCertificate>(`/api/v1/systems/certificates/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function createCredential(
+  body: SystemsCredentialBody,
+): Promise<SystemCredential> {
+  return apiFetch<SystemCredential>("/api/v1/systems/credentials", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateCredential(
+  id: string,
+  version: number,
+  body: SystemsCredentialBody,
+): Promise<SystemCredential> {
+  return apiFetch<SystemCredential>(`/api/v1/systems/credentials/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+// ── Units read wrappers (§8.7) ───────────────────────────────────────────────
+
+export const UNIT_KINDS = ["school", "department", "project", "region"] as const;
+export type UnitKind = (typeof UNIT_KINDS)[number];
+
+export const UNIT_STATUSES = ["active", "retired"] as const;
+export type UnitStatus = (typeof UNIT_STATUSES)[number];
+
+export const INTEGRATION_KINDS = ["api", "webhook", "file", "sftp"] as const;
+export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
+
+export const INTEGRATION_STATUSES = ["ok", "failed", "never"] as const;
+export type IntegrationStatus = (typeof INTEGRATION_STATUSES)[number];
+
+export const INDICATOR_KINDS = ["count", "ratio", "amount", "boolean"] as const;
+export type IndicatorKind = (typeof INDICATOR_KINDS)[number];
+
+/** A business unit (§8.7). */
+export interface Unit {
+  id: string;
+  ref: string;
+  name: string;
+  code: string;
+  kind: UnitKind | string;
+  owner?: { id: string; name: string };
+  description?: string;
+  status: UnitStatus | string;
+  integration_count: number;
+  active_integrations: number;
+  indicator_count: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** How Atlas connects to a unit's system of record (§8.7). */
+export interface UnitIntegration {
+  id: string;
+  unit_id: string;
+  unit_name: string;
+  name: string;
+  kind: IntegrationKind | string;
+  endpoint: string;
+  credential_ref: string;
+  schedule?: string;
+  last_sync_at?: string;
+  last_sync_status: IntegrationStatus | string;
+  active: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** What we measure for each unit (§8.7). */
+export interface UnitIndicatorDefinition {
+  id: string;
+  unit_id: string;
+  unit_name: string;
+  name: string;
+  kind: IndicatorKind | string;
+  source_field: string;
+  formula?: string;
+  target?: string;
+  warning_threshold?: string;
+  critical_threshold?: string;
+  active: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One indicator's value for one unit on one date (§8.7). */
+export interface UnitSnapshot {
+  id: string;
+  unit_id: string;
+  unit_name: string;
+  on_date: string;
+  indicator_id: string;
+  indicator_name: string;
+  value: string;
+  met_target: boolean;
+  notes?: string;
+  created_at: string;
+}
+
+/** Period roll-up of income, expenses, receivables (§8.7). */
+export interface UnitFinanceSummary {
+  id: string;
+  unit_id: string;
+  unit_name: string;
+  period_start: string;
+  period_end: string;
+  income_minor: number;
+  expenses_minor: number;
+  receivables_minor: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type UnitListQuery = {
+  kind?: UnitKind | string;
+  status?: UnitStatus | string;
+  owner_person_id?: string;
+  active?: boolean;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type IntegrationListQuery = {
+  unit_id?: string;
+  kind?: IntegrationKind | string;
+  direction?: IntegrationDirection;
+  status?: IntegrationStatus | string;
+  active?: boolean;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type IndicatorDefinitionListQuery = {
+  unit_id?: string;
+  kind?: IndicatorKind | string;
+  active?: boolean;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type SnapshotListQuery = {
+  unit_id?: string;
+  indicator_id?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type FinanceSummaryListQuery = {
+  unit_id?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export function listUnits(
+  query: UnitListQuery = {},
+): Promise<Page<Unit>> {
+  return apiFetch<Page<Unit>>("/api/v1/units", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getUnit(id: string): Promise<Unit> {
+  return apiFetch<Unit>(`/api/v1/units/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listIntegrations(
+  query: IntegrationListQuery = {},
+): Promise<Page<UnitIntegration>> {
+  return apiFetch<Page<UnitIntegration>>("/api/v1/units/integrations", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getIntegration(id: string): Promise<UnitIntegration> {
+  return apiFetch<UnitIntegration>(`/api/v1/units/integrations/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listIndicatorDefinitions(
+  query: IndicatorDefinitionListQuery = {},
+): Promise<Page<UnitIndicatorDefinition>> {
+  return apiFetch<Page<UnitIndicatorDefinition>>("/api/v1/units/indicator-definitions", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getIndicatorDefinition(id: string): Promise<UnitIndicatorDefinition> {
+  return apiFetch<UnitIndicatorDefinition>(`/api/v1/units/indicator-definitions/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listSnapshots(
+  query: SnapshotListQuery = {},
+): Promise<Page<UnitSnapshot>> {
+  return apiFetch<Page<UnitSnapshot>>("/api/v1/units/snapshots", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getSnapshot(id: string): Promise<UnitSnapshot> {
+  return apiFetch<UnitSnapshot>(`/api/v1/units/snapshots/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listFinanceSummaries(
+  query: FinanceSummaryListQuery = {},
+): Promise<Page<UnitFinanceSummary>> {
+  return apiFetch<Page<UnitFinanceSummary>>("/api/v1/units/finance-summaries", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getFinanceSummary(id: string): Promise<UnitFinanceSummary> {
+  return apiFetch<UnitFinanceSummary>(`/api/v1/units/finance-summaries/${id}`, {
+    cache: "no-store",
+  });
+}
+
+// ── Units write wrappers (§8.7) ──────────────────────────────────────────────
+
+export interface UnitBody {
+  name: string;
+  code: string;
+  kind: UnitKind | string;
+  owner_person_id?: string;
+  description?: string;
+  status?: UnitStatus | string;
+}
+
+export interface IntegrationBody {
+  unit_id: string;
+  name: string;
+  kind: IntegrationKind | string;
+  endpoint: string;
+  credential_ref: string;
+  schedule?: string;
+  active?: boolean;
+}
+
+export interface IndicatorDefinitionBody {
+  unit_id: string;
+  name: string;
+  kind: IndicatorKind | string;
+  source_field: string;
+  formula?: string;
+  target?: string;
+  warning_threshold?: string;
+  critical_threshold?: string;
+  active?: boolean;
+}
+
+export function createUnit(body: UnitBody): Promise<Unit> {
+  return apiFetch<Unit>("/api/v1/units", { method: "POST", body });
+}
+
+export function updateUnit(
+  id: string,
+  version: number,
+  body: UnitBody,
+): Promise<Unit> {
+  return apiFetch<Unit>(`/api/v1/units/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function createIntegration(
+  body: IntegrationBody,
+): Promise<UnitIntegration> {
+  return apiFetch<UnitIntegration>("/api/v1/units/integrations", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateIntegration(
+  id: string,
+  version: number,
+  body: IntegrationBody,
+): Promise<UnitIntegration> {
+  return apiFetch<UnitIntegration>(`/api/v1/units/integrations/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function createIndicatorDefinition(
+  body: IndicatorDefinitionBody,
+): Promise<UnitIndicatorDefinition> {
+  return apiFetch<UnitIndicatorDefinition>(
+    "/api/v1/units/indicator-definitions",
+    { method: "POST", body },
+  );
+}
+
+export function updateIndicatorDefinition(
+  id: string,
+  version: number,
+  body: IndicatorDefinitionBody,
+): Promise<UnitIndicatorDefinition> {
+  return apiFetch<UnitIndicatorDefinition>(
+    `/api/v1/units/indicator-definitions/${id}`,
+    { method: "PUT", body, headers: ifMatch(version) },
+  );
+}
+
+// ── Departments (§8.5) ──────────────────────────────────────────────────────
+
+export interface Department {
+  id: string;
+  name: string;
+  leader_person_id?: string;
+  created_at: string;
+  archived_at?: string;
+}
+
+export interface DepartmentListQuery {
+  limit?: number;
+  cursor?: string;
+  [key: string]: QueryValue;
+}
+
+export interface CreateDepartmentBody {
+  name: string;
+}
+
+export interface UpdateDepartmentBody {
+  name: string;
+}
+
+export function listDepartments(
+  query: DepartmentListQuery = {},
+): Promise<Page<Department>> {
+  return apiFetch<Page<Department>>("/api/v1/people/departments", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getDepartment(id: string): Promise<Department> {
+  return apiFetch<Department>(`/api/v1/people/departments/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function createDepartment(body: CreateDepartmentBody): Promise<Department> {
+  return apiFetch<Department>("/api/v1/people/departments", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateDepartment(
+  id: string,
+  version: number,
+  body: UpdateDepartmentBody,
+): Promise<Department> {
+  return apiFetch<Department>(`/api/v1/people/departments/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function archiveDepartment(id: string): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(`/api/v1/people/departments/${id}`, {
+    method: "DELETE",
+  });
+}
+
+// ── Performance reviews (§8.5, decision D8) ───────────────────────────────
+
+export interface Review {
+  id: string;
+  person_id: string;
+  reviewer_id: string;
+  period_start: string;
+  period_end: string;
+  rating: number;
+  comments: string;
+  status: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReviewListQuery {
+  limit?: number;
+  cursor?: string;
+  person_id?: string;
+  status?: string;
+  [key: string]: QueryValue;
+}
+
+export interface CreateReviewBody {
+  person_id: string;
+  reviewer_id: string;
+  period_start: string;
+  period_end: string;
+  rating: number;
+  comments?: string;
+  status?: string;
+}
+
+export interface UpdateReviewBody {
+  person_id?: string;
+  reviewer_id?: string;
+  period_start?: string;
+  period_end?: string;
+  rating?: number;
+  comments?: string;
+  status?: string;
+}
+
+export function listReviews(query: ReviewListQuery = {}): Promise<Page<Review>> {
+  return apiFetch<Page<Review>>("/api/v1/people/reviews", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getReview(id: string): Promise<Review> {
+  return apiFetch<Review>(`/api/v1/people/reviews/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function createReview(body: CreateReviewBody): Promise<Review> {
+  return apiFetch<Review>("/api/v1/people/reviews", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateReview(
+  id: string,
+  version: number,
+  body: UpdateReviewBody,
+): Promise<Review> {
+  return apiFetch<Review>(`/api/v1/people/reviews/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function deleteReview(id: string, version: number): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(`/api/v1/people/reviews/${id}`, {
+    method: "DELETE",
+    headers: ifMatch(version),
+  });
+}
+
+// ── Intel read wrappers (§8.8) ───────────────────────────────────────────────
+
+export const DECISION_OUTCOMES = ["open", "approved", "rejected", "deferred"] as const;
+export type DecisionOutcome = (typeof DECISION_OUTCOMES)[number];
+
+export const RISK_KINDS = ["client", "delivery", "financial", "people", "systems"] as const;
+export type RiskKind = (typeof RISK_KINDS)[number];
+
+export const RISK_LIKELIHOODS = ["low", "medium", "high", "critical"] as const;
+export type RiskLikelihood = (typeof RISK_LIKELIHOODS)[number];
+
+export const RISK_IMPACTS = ["low", "medium", "high", "critical"] as const;
+export type RiskImpact = (typeof RISK_IMPACTS)[number];
+
+export const RISK_STATUSES = ["open", "monitoring", "closed", "mitigated"] as const;
+export type RiskStatus = (typeof RISK_STATUSES)[number];
+
+/** A decision — the company's memory of a major decision (§8.8). */
+export interface Decision {
+  id: string;
+  ref: string;
+  question: string;
+  context_links: string[];
+  options: string[];
+  recommendation?: string;
+  requested_by?: string;
+  requested_by_name?: string;
+  deciders: string[];
+  due_on?: string;
+  outcome: DecisionOutcome | string;
+  rationale?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A risk — client, delivery, financial, people, or systems (§8.8). */
+export interface Risk {
+  id: string;
+  ref: string;
+  title: string;
+  kind: RiskKind | string;
+  owner?: { id: string; name: string };
+  likelihood: RiskLikelihood | string;
+  impact: RiskImpact | string;
+  mitigation?: string;
+  status: RiskStatus | string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A daily executive brief (§8.8). */
+export interface Brief {
+  id: string;
+  ref: string;
+  for_date: string;
+  summary?: string;
+  sections?: Record<string, any>;
+  delivered: boolean;
+  delivered_at?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A point-in-time KPI figure (§8.8). */
+export interface MetricSnapshot {
+  id: string;
+  ref: string;
+  metric_name: string;
+  metric_value: string;
+  as_of: string;
+  source?: string;
+  version: number;
+  created_at: string;
+}
+
+export type DecisionListQuery = {
+  outcome?: DecisionOutcome | string;
+  decider?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type RiskListQuery = {
+  kind?: RiskKind | string;
+  status?: RiskStatus | string;
+  owner_person_id?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type BriefListQuery = {
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type MetricSnapshotListQuery = {
+  metric_name?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+// ── Intel write wrappers (§8.8) ──────────────────────────────────────────────
+
+export interface DecisionBody {
+  question: string;
+  context_links?: string[];
+  options?: string[];
+  recommendation?: string;
+  requested_by?: string;
+  requested_by_name?: string;
+  deciders?: string[];
+  due_on?: string;
+  outcome?: string;
+  rationale?: string;
+}
+
+export interface DecisionDecideBody {
+  outcome: string;
+  rationale?: string;
+}
+
+export interface RiskBody {
+  title: string;
+  kind: string;
+  owner_person_id?: string;
+  likelihood: string;
+  impact: string;
+  mitigation?: string;
+  status?: string;
+}
+
+export interface BriefBody {
+  for_date?: string;
+  summary: string;
+  sections?: Record<string, any>;
+}
+
+export interface MetricSnapshotBody {
+  metric_name: string;
+  metric_value: string;
+  as_of?: string;
+  source?: string;
+}
+
+export interface DecisionDecidedBody {
+  outcome: string;
+  rationale?: string;
+}
+
+export function createDecision(body: DecisionBody): Promise<Decision> {
+  return apiFetch<Decision>("/api/v1/intel/decisions", { method: "POST", body });
+}
+
+export function updateDecision(
+  id: string,
+  version: number,
+  body: DecisionBody,
+): Promise<Decision> {
+  return apiFetch<Decision>(`/api/v1/intel/decisions/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function decideDecision(
+  id: string,
+  version: number,
+  body: DecisionDecideBody,
+): Promise<Decision> {
+  return apiFetch<Decision>(`/api/v1/intel/decisions/${id}/decide`, {
+    method: "POST",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function createRisk(body: RiskBody): Promise<Risk> {
+  return apiFetch<Risk>("/api/v1/intel/risks", { method: "POST", body });
+}
+
+export function updateRisk(
+  id: string,
+  version: number,
+  body: RiskBody,
+): Promise<Risk> {
+  return apiFetch<Risk>(`/api/v1/intel/risks/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function createBrief(body: BriefBody): Promise<Brief> {
+  return apiFetch<Brief>("/api/v1/intel/briefs", { method: "POST", body });
+}
+
+export function updateBrief(
+  id: string,
+  version: number,
+  body: BriefBody,
+): Promise<Brief> {
+  return apiFetch<Brief>(`/api/v1/intel/briefs/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+export function deliverBrief(id: string, version: number): Promise<Brief> {
+  return apiFetch<Brief>(
+    `/api/v1/intel/briefs/${id}/deliver`,
+    { method: "POST", headers: ifMatch(version) },
+  );
+}
+
+export function createMetricSnapshot(
+  body: MetricSnapshotBody,
+): Promise<MetricSnapshot> {
+  return apiFetch<MetricSnapshot>("/api/v1/intel/metric-snapshots", {
+    method: "POST",
+    body,
+  });
+}
+
+export function listDecisions(
+  query: DecisionListQuery = {},
+): Promise<Page<Decision>> {
+  return apiFetch<Page<Decision>>("/api/v1/intel/decisions", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getDecision(id: string): Promise<Decision> {
+  return apiFetch<Decision>(`/api/v1/intel/decisions/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listRisks(
+  query: RiskListQuery = {},
+): Promise<Page<Risk>> {
+  return apiFetch<Page<Risk>>("/api/v1/intel/risks", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getRisk(id: string): Promise<Risk> {
+  return apiFetch<Risk>(`/api/v1/intel/risks/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listBriefs(
+  query: BriefListQuery = {},
+): Promise<Page<Brief>> {
+  return apiFetch<Page<Brief>>("/api/v1/intel/briefs", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getBrief(id: string): Promise<Brief> {
+  return apiFetch<Brief>(`/api/v1/intel/briefs/${id}`, {
+    cache: "no-store",
+  });
+}
+
+export function listMetricSnapshots(
+  query: MetricSnapshotListQuery = {},
+): Promise<Page<MetricSnapshot>> {
+  return apiFetch<Page<MetricSnapshot>>("/api/v1/intel/metric-snapshots", {
+    query,
+    cache: "no-store",
+  });
+}
+
+export function getMetricSnapshot(id: string): Promise<MetricSnapshot> {
+  return apiFetch<MetricSnapshot>(`/api/v1/intel/metric-snapshots/${id}`, {
+    cache: "no-store",
+  });
+}
+
+// ── Integrations read/write wrappers (§8.9) ──────────────────────────────────
+
+export const INTEGRATION_DIRECTION = ["in", "out", "both"] as const;
+export type IntegrationDirection = (typeof INTEGRATION_DIRECTION)[number];
+
+export const WEBHOOK_PROCESSING_STATUS = [
+  "pending",
+  "processed",
+  "failed",
+] as const;
+export type WebhookProcessingStatus =
+  (typeof WEBHOOK_PROCESSING_STATUS)[number];
+
+export const OUTBOUND_CIRCUIT_STATE = [
+  "closed",
+  "open",
+  "half_open",
+] as const;
+export type OutboundCircuitState = (typeof OUTBOUND_CIRCUIT_STATE)[number];
+
+/** Integration registry entry (§8.9). */
+export interface Integration {
+  id: string;
+  ref: string;
+  name: string;
+  kind: IntegrationKind;
+  direction: IntegrationDirection;
+  owner_person_id?: string;
+  owner_name: string;
+  credential_ref: string;
+  scopes: string[];
+  status: IntegrationStatus;
+  last_success?: string;
+  error_rate: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Webhook inbox entry: raw inbound provider payload (§8.9, §11). */
+export interface WebhookInboxEntry {
+  id: string;
+  provider: string;
+  event_type: string;
+  delivery_id: string;
+  payload: string;
+  headers?: string;
+  received_at: string;
+  processed_at?: string;
+  processing_status: WebhookProcessingStatus;
+  error_message: string;
+}
+
+/** Outbound log entry: outbound call attempt (§8.9). */
+export interface OutboundLogEntry {
+  id: string;
+  provider: string;
+  endpoint: string;
+  method: string;
+  status_code?: number;
+  error_message: string;
+  attempt: number;
+  max_attempts: number;
+  last_attempt_at: string;
+  circuit_state: OutboundCircuitState;
+  created_at: string;
+}
+
+/** Integration create/update input (§8.9). */
+export interface IntegrationInput {
+  name: string;
+  kind: IntegrationKind;
+  direction: IntegrationDirection;
+  owner_person_id?: string;
+  credential_ref: string;
+  scopes: string[];
+  status?: IntegrationStatus;
+}
+
+/** Webhook inbox list query (§8.9). */
+export interface WebhookInboxQuery {
+  provider?: string;
+  event_type?: string;
+  delivery_id?: string;
+  processing_status?: WebhookProcessingStatus;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+  [key: string]: QueryValue;
+}
+
+/** Integration registry list query (§8.9). */
+export interface IntegrationRegistryQuery {
+  kind?: IntegrationKind;
+  direction?: IntegrationDirection;
+  status?: IntegrationStatus;
+  owner_person_id?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+  [key: string]: QueryValue;
+}
+
+/** Outbound log list query (§8.9). */
+export interface OutboundLogQuery {
+  provider?: string;
+  endpoint?: string;
+  circuit_state?: OutboundCircuitState;
+  from?: string;
+  to?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+  [key: string]: QueryValue;
+}
+
+/** List webhook inbox entries (`GET /api/v1/integrations/webhook-inbox`). */
+export function listWebhookInbox(
+  query: WebhookInboxQuery = {},
+): Promise<Page<WebhookInboxEntry>> {
+  return apiFetch<Page<WebhookInboxEntry>>(
+    "/api/v1/integrations/webhook-inbox",
+    { query, cache: "no-store" },
+  );
+}
+
+/** Get one webhook inbox entry (`GET /api/v1/integrations/webhook-inbox/{id}`). */
+export function getWebhookInbox(id: string): Promise<WebhookInboxEntry> {
+  return apiFetch<WebhookInboxEntry>(
+    `/api/v1/integrations/webhook-inbox/${id}`,
+    { cache: "no-store" },
+  );
+}
+
+/** List outbound log entries (`GET /api/v1/integrations/outbound-log`). */
+export function listOutboundLog(
+  query: OutboundLogQuery = {},
+): Promise<Page<OutboundLogEntry>> {
+  return apiFetch<Page<OutboundLogEntry>>(
+    "/api/v1/integrations/outbound-log",
+    { query, cache: "no-store" },
+  );
+}
+
+/** Get one outbound log entry (`GET /api/v1/integrations/outbound-log/{id}`). */
+export function getOutboundLog(id: string): Promise<OutboundLogEntry> {
+  return apiFetch<OutboundLogEntry>(
+    `/api/v1/integrations/outbound-log/${id}`,
+    { cache: "no-store" },
+  );
+}
+
+/** List integration registrations (`GET /api/v1/integrations`). */
+export function listIntegrationRegistrations(
+  query: IntegrationListQuery = {},
+): Promise<Page<Integration>> {
+  return apiFetch<Page<Integration>>("/api/v1/integrations", {
+    query,
+    cache: "no-store",
+  });
+}
+
+/** Get one integration registration (`GET /api/v1/integrations/{id}`). */
+export function getIntegrationRegistration(id: string): Promise<Integration> {
+  return apiFetch<Integration>(`/api/v1/integrations/${id}`, {
+    cache: "no-store",
+  });
+}
+
+/** Create an integration registration (`POST /api/v1/integrations`). */
+export function createIntegrationRegistration(
+  body: IntegrationInput,
+): Promise<Integration> {
+  return apiFetch<Integration>("/api/v1/integrations", {
+    method: "POST",
+    body,
+  });
+}
+
+/** Update an integration registration (`PUT /api/v1/integrations/{id}`). */
+export function updateIntegrationRegistration(
+  id: string,
+  version: number,
+  body: IntegrationInput,
+): Promise<Integration> {
+  return apiFetch<Integration>(`/api/v1/integrations/${id}`, {
+    method: "PUT",
+    body,
+    headers: ifMatch(version),
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// ── GitHub Engineering Intelligence (§8.9) ──────────────────────────────────
+
+/** The current GitHub connection status for the signed-in person. */
+export interface GitHubStatus {
+  connected: boolean;
+  installation_id?: number;
+  account_login?: string;
+  account_type?: string;
+  person_id?: string;
+}
+
+/** Fetch the current GitHub connection status. */
+export function getGitHubStatus(): Promise<GitHubStatus> {
+  return apiFetch<GitHubStatus>("/api/v1/integrations/github/status", {
+    cache: "no-store",
+  });
+}
+
+/** Redirect to GitHub App installation. */
+export function connectGitHub(personId: string): Promise<void> {
+  return apiFetch<void>("/api/v1/integrations/github/install", {
+    method: "GET",
+    query: { person_id: personId },
+  });
+}
+
+// Email (§8.4)
+// ═════════════════════════════════════════════════════════════════════
+
+export interface EmailThread {
+  id: string;
+  subject: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EmailMessage {
+  id: string;
+  thread_id: string;
+  direction: "inbound" | "outbound";
+  from_address: string;
+  to_addresses: string[];
+  cc_addresses: string[];
+  bcc_addresses: string[];
+  subject: string;
+  body_text: string;
+  body_html: string;
+  message_id: string;
+  in_reply_to?: string;
+  msg_references?: string;
+  received_at?: string;
+  sent_at?: string;
+  status: "received" | "sent" | "delivered" | "failed";
+  provider_ref?: string;
+  error_message?: string;
+  created_at: string;
+}
+
+export interface EmailAddress {
+  id: string;
+  user_id: string;
+  address: string;
+  verified: boolean;
+  is_primary: boolean;
+  created_at: string;
+}
+
+export interface ThreadListItem {
+  id: string;
+  subject: string;
+  updated_at: string;
+  message_count: number;
+  unread_count: number;
+  latest?: EmailMessage;
+}
+
+/** Compose and send an email (`POST /api/v1/email/compose`, `core.email.send`). */
+export interface ComposeEmailBody {
+  thread_id?: string;
+  subject: string;
+  body_text?: string;
+  body_html?: string;
+  from_address: string;
+  to_addresses: string[];
+  cc_addresses?: string[];
+  bcc_addresses?: string[];
+  in_reply_to?: string;
+  msg_references?: string;
+  idempotency_key?: string;
+}
+
+export function composeEmail(body: ComposeEmailBody): Promise<{
+  id: string;
+  thread_id: string;
+  status: string;
+  created_at: string;
+}> {
+  return apiFetch<{
+    id: string;
+    thread_id: string;
+    status: string;
+    created_at: string;
+  }>("/api/v1/email/compose", {
+    method: "POST",
+    body,
+  });
+}
+
+/** List email threads (`GET /api/v1/email/threads`, authenticated). */
+export function listEmailThreads(): Promise<ThreadListItem[]> {
+  return apiFetch<ThreadListItem[]>("/api/v1/email/threads", {
+    cache: "no-store",
+  });
+}
+
+/** Get an email thread with messages (`GET /api/v1/email/threads/{id}`, authenticated). */
+export function getEmailThread(id: string): Promise<EmailMessage[]> {
+  return apiFetch<EmailMessage[]>(`/api/v1/email/threads/${id}`, {
+    cache: "no-store",
+  });
+}
+
+/** List the caller's verified send-as addresses (`GET /api/v1/email/addresses`, authenticated). */
+export function listEmailAddresses(): Promise<EmailAddress[]> {
+  return apiFetch<EmailAddress[]>("/api/v1/email/addresses", {
+    cache: "no-store",
+  });
+}
+
+/** Register a send-as email address (`POST /api/v1/email/addresses`, authenticated). */
+export interface RegisterEmailAddressBody {
+  address: string;
+  is_primary?: boolean;
+}
+
+export function registerEmailAddress(
+  body: RegisterEmailAddressBody,
+): Promise<EmailAddress> {
+  return apiFetch<EmailAddress>("/api/v1/email/addresses", {
+    method: "POST",
+    body,
+  });
+}
+
+/** Delete a send-as email address (`DELETE /api/v1/email/addresses/{id}`, authenticated). */
+export function deleteEmailAddress(id: string): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(`/api/v1/email/addresses/${id}`, {
+    method: "DELETE",
+  });
+}
+
+/** Set a send-as address as primary (`POST /api/v1/email/addresses/{id}/primary`, authenticated). */
+export function setPrimaryEmailAddress(id: string): Promise<EmailAddress> {
+  return apiFetch<EmailAddress>(`/api/v1/email/addresses/${id}/primary`, {
+    method: "POST",
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// Chat (§8.5)
+// ═════════════════════════════════════════════════════════════════════
+
+export interface ChatConversation {
+  id: string;
+  type: "direct" | "group";
+  name?: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversation_id: string;
+  sender_id: string;
+  sender_name?: string;
+  body: string;
+  body_type: "text" | "file" | "system";
+  reply_to_message?: string;
+  created_at: string;
+  edited_at?: string;
+}
+
+export interface ConversationView {
+  id: string;
+  type: "direct" | "group";
+  name?: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  last_message?: ChatMessage;
+  unread_count: number;
+}
+
+/** List the caller's conversations (`GET /api/v1/chat/conversations`, authenticated). */
+export function listChatConversations(): Promise<ConversationView[]> {
+  return apiFetch<ConversationView[]>("/api/v1/chat/conversations", {
+    cache: "no-store",
+  });
+}
+
+/** Start a 1:1 or group conversation (`POST /api/v1/chat/conversations`, authenticated). */
+export interface CreateChatConversationBody {
+  type: "direct" | "group";
+  name?: string;
+  participant: string[];
+}
+
+export function createChatConversation(
+  body: CreateChatConversationBody,
+): Promise<ChatConversation> {
+  return apiFetch<ChatConversation>("/api/v1/chat/conversations", {
+    method: "POST",
+    body,
+  });
+}
+
+/** List messages in a conversation (`GET /api/v1/chat/conversations/{id}/messages`, authenticated). */
+export function listChatMessages(conversationId: string): Promise<ChatMessage[]> {
+  return apiFetch<ChatMessage[]>(
+    `/api/v1/chat/conversations/${conversationId}/messages`,
+    { cache: "no-store" },
+  );
+}
+
+/** Send a message in a conversation (`POST /api/v1/chat/conversations/{id}/messages`, authenticated). */
+export interface SendChatMessageBody {
+  body: string;
+  body_type?: "text" | "file" | "system";
+  reply_to_message?: string;
+}
+
+export function sendChatMessage(
+  conversationId: string,
+  body: SendChatMessageBody,
+): Promise<ChatMessage> {
+  return apiFetch<ChatMessage>(
+    `/api/v1/chat/conversations/${conversationId}/messages`,
+    {
+      method: "POST",
+      body,
+    },
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// Documents (§8.6)
+// ═════════════════════════════════════════════════════════════════════
+
+export type DocumentCategory =
+  | "invoice"
+  | "system_doc"
+  | "contract"
+  | "policy"
+  | "other";
+
+export interface Document {
+  id: string;
+  key: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  category: DocumentCategory;
+  description: string;
+  uploaded_by: string;
+  uploaded_at: string;
+  updated_at: string;
+  is_public: boolean;
+  version: number;
+}
+
+export interface UploadResult {
+  document: Document;
+  upload_url: string;
+  headers?: Record<string, string>;
+}
+
+export interface DownloadResult {
+  document: Document;
+  download_url: string;
+}
+
+export interface DocumentShare {
+  document_id: string;
+  user_id: string;
+  permission: "read" | "write";
+  shared_by: string;
+  created_at: string;
+}
+
+/** Register a document upload (`POST /api/v1/documents`, authenticated).
+ * Returns a presigned PUT URL the client PUTs the file to. */
+export interface PrepareUploadBody {
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  category?: DocumentCategory;
+  description?: string;
+}
+
+export function prepareDocumentUpload(
+  body: PrepareUploadBody,
+): Promise<UploadResult> {
+  return apiFetch<UploadResult>("/api/v1/documents", {
+    method: "POST",
+    body,
+  });
+}
+
+/** List documents (`GET /api/v1/documents`, authenticated). */
+export interface ListDocumentsQuery {
+  category?: DocumentCategory;
+  limit?: number;
+  cursor?: string;
+}
+
+export function listDocuments(
+  query: ListDocumentsQuery = {},
+): Promise<Document[]> {
+  const q: Record<string, string | number> = {};
+  if (query.category) q.category = query.category;
+  if (query.limit !== undefined) q.limit = query.limit;
+  if (query.cursor) q.cursor = query.cursor;
+  return apiFetch<Document[]>("/api/v1/documents", {
+    query: q as Record<string, QueryValue>,
+    cache: "no-store",
+  });
+}
+
+/** Get document metadata + presigned download URL (`GET /api/v1/documents/{id}`, authenticated). */
+export function getDocument(id: string): Promise<DownloadResult> {
+  return apiFetch<DownloadResult>(`/api/v1/documents/${id}`, {
+    cache: "no-store",
+  });
+}
+
+/** Update document metadata (`PUT /api/v1/documents/{id}`, authenticated). */
+export interface UpdateDocumentBody {
+  category?: DocumentCategory;
+  description?: string;
+  is_public?: boolean;
+}
+
+export function updateDocument(
+  id: string,
+  body: UpdateDocumentBody,
+): Promise<Document> {
+  return apiFetch<Document>(`/api/v1/documents/${id}`, {
+    method: "PUT",
+    body,
+  });
+}
+
+/** Delete a document record (`DELETE /api/v1/documents/{id}`, authenticated). */
+export function deleteDocument(id: string): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(`/api/v1/documents/${id}`, {
+    method: "DELETE",
+  });
+}
+
+/** Grant access to a document (`POST /api/v1/documents/{id}/shares`, authenticated). */
+export interface ShareDocumentBody {
+  user_id: string;
+  permission: "read" | "write";
+}
+
+export function shareDocument(
+  id: string,
+  body: ShareDocumentBody,
+): Promise<DocumentShare> {
+  return apiFetch<DocumentShare>(`/api/v1/documents/${id}/shares`, {
+    method: "POST",
+    body,
+  });
+}
+
+/** List shares for a document (`GET /api/v1/documents/{id}/shares`, authenticated). */
+export function listDocumentShares(id: string): Promise<DocumentShare[]> {
+  return apiFetch<DocumentShare[]>(
+    `/api/v1/documents/${id}/shares`,
+    { cache: "no-store" },
+  );
+}
+
+

@@ -3,9 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
-import { Button, Field, TextInput } from "@/components/form";
+import { Button, Checkbox, Field, TextInput } from "@/components/form";
+import { PersonSelect } from "@/components/person-select";
+import { useToast } from "@/components/toast";
 import { ProblemNotice } from "@/components/ui";
 import { offboardPerson } from "@/lib/api/atlas";
+import type { PersonOption } from "@/lib/directory";
 import { useMutation } from "@/lib/use-mutation";
 
 /**
@@ -14,10 +17,12 @@ import { useMutation } from "@/lib/use-mutation";
  * the linked login is deactivated, and its sessions and role grants are revoked.
  * A destructive action, so it needs an explicit acknowledgement first.
  */
-export function OffboardForm() {
+export function OffboardForm({ people, me }: { people: PersonOption[]; me?: string }) {
   const router = useRouter();
+  const notify = useToast();
   const { busy, problem, run } = useMutation();
   const [acknowledged, setAcknowledged] = useState(false);
+  const [person, setPerson] = useState("");
   const [summary, setSummary] = useState<string | null>(null);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -25,7 +30,7 @@ export function OffboardForm() {
     const data = new FormData(event.currentTarget);
 
     const result = await run(() =>
-      offboardPerson(String(data.get("person_id") ?? "").trim(), {
+      offboardPerson(person, {
         reason: String(data.get("reason") ?? ""),
         last_working_day:
           String(data.get("last_working_day") ?? "").trim() || undefined,
@@ -37,27 +42,30 @@ export function OffboardForm() {
         `${result.status}${result.account_status ? ` · login ${result.account_status}` : ""} · ` +
           `${result.sessions_revoked} session(s) and ${result.roles_revoked} role grant(s) revoked.`,
       );
+      notify("Person off-boarded");
       setAcknowledged(false);
+      setPerson("");
       router.refresh();
     }
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-3">
+    <form onSubmit={onSubmit} className="flex flex-col gap-4">
       {problem && <ProblemNotice error={problem} title="Off-boarding failed" />}
       {summary && (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+        <p className="rounded-control bg-[#E3F4EA] px-3 py-2.5 text-sm font-medium text-[#17663A]">
           {summary}
         </p>
       )}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Field label="Person id" htmlFor="offboard-person">
-          <TextInput
+      <div className="grid grid-cols-1 gap-3.5 md:grid-cols-3">
+        <Field label="Person" htmlFor="offboard-person">
+          <PersonSelect
             id="offboard-person"
-            name="person_id"
-            required
-            placeholder="00000000-0000-0000-0000-000000000000"
+            people={people.filter((p) => p.id !== me)}
+            value={person}
+            onChange={setPerson}
+            emptyLabel="Choose a person"
           />
         </Field>
         <Field label="Last working day" hint="defaults to today" htmlFor="offboard-day">
@@ -68,19 +76,17 @@ export function OffboardForm() {
         </Field>
       </div>
 
-      <label className="flex items-center gap-2 text-sm text-slate-700">
-        <input
-          type="checkbox"
-          checked={acknowledged}
-          onChange={(event) => setAcknowledged(event.target.checked)}
-          className="h-4 w-4 rounded border-slate-300 text-atlas focus:ring-atlas"
-        />
-        I understand this deactivates the person&apos;s login and revokes access.
-      </label>
+      <Checkbox
+        checked={acknowledged}
+        onChange={(event) => setAcknowledged(event.target.checked)}
+        label="I understand this deactivates the person’s login and revokes their sessions and roles immediately."
+      />
 
-      <Button type="submit" variant="danger" disabled={busy || !acknowledged}>
-        {busy ? "Off-boarding…" : "Off-board person"}
-      </Button>
+      <div>
+        <Button type="submit" variant="danger" disabled={busy || !acknowledged || !person}>
+          {busy ? "Off-boarding…" : "Off-board person"}
+        </Button>
+      </div>
     </form>
   );
 }

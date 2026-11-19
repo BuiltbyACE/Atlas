@@ -4,8 +4,11 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { Button, Field, Select, TextArea, TextInput } from "@/components/form";
+import { PersonSelect } from "@/components/person-select";
+import { useToast } from "@/components/toast";
 import { Card, ProblemNotice } from "@/components/ui";
 import { PROJECT_STATUSES, updateProject, type Project } from "@/lib/api/atlas";
+import type { PersonOption } from "@/lib/directory";
 import { dateInput, humanise, toApiTime } from "@/lib/format";
 import { useMutation } from "@/lib/use-mutation";
 
@@ -15,8 +18,17 @@ import { useMutation } from "@/lib/use-mutation";
  * (§6.6). `started_at` is preserved (Go stamps it when a project goes active).
  * Status moves are validated by Go (a 409/412 comes back as a problem).
  */
-export function ProjectEditor({ project }: { project: Project }) {
+export function ProjectEditor({
+  project,
+  people,
+  me,
+}: {
+  project: Project;
+  people: PersonOption[];
+  me?: string;
+}) {
   const router = useRouter();
+  const notify = useToast();
   const { busy, problem, run } = useMutation();
   const [saved, setSaved] = useState(false);
 
@@ -45,12 +57,18 @@ export function ProjectEditor({ project }: { project: Project }) {
 
     if (updated) {
       setSaved(true);
+      notify("Project saved");
       router.refresh();
     }
   }
 
   return (
-    <Card title="Project details" description="Go validates status moves and audits the change.">
+    <Card
+      id="details"
+      className="scroll-mt-24"
+      title="Project details"
+      description="Atlas checks status moves (a completed project can’t reopen) and audits every change."
+    >
       <form onSubmit={onSubmit} className="space-y-4">
         {problem && <ProblemNotice error={problem} title="Could not save the project" />}
 
@@ -70,12 +88,14 @@ export function ProjectEditor({ project }: { project: Project }) {
               ))}
             </Select>
           </Field>
-          <Field label="Owner person id" hint="optional" htmlFor="proj-owner">
-            <TextInput
+          <Field label="Owner" htmlFor="proj-owner">
+            <PersonSelect
               id="proj-owner"
               name="owner_person_id"
+              people={people}
+              me={me}
               defaultValue={project.owner_person_id ?? ""}
-              placeholder="UUID"
+              emptyLabel="No owner"
             />
           </Field>
           <Field label="Target date" hint="optional" htmlFor="proj-due">
@@ -91,7 +111,7 @@ export function ProjectEditor({ project }: { project: Project }) {
           <Button type="submit" disabled={busy}>
             {busy ? "Saving…" : "Save changes"}
           </Button>
-          {saved && !busy && <span className="text-sm text-emerald-600">Saved.</span>}
+          {saved && !busy && <span className="text-sm font-medium text-[#17803D]">Saved.</span>}
         </div>
       </form>
     </Card>

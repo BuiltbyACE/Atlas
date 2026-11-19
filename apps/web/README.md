@@ -39,7 +39,7 @@ npm run dev
 ```
 
 `npm run dev` serves the app on http://localhost:3000. A development `rewrites`
-rule in `next.config.ts` proxies `/api/*` to `ATLAS_API_INTERNAL_URL`
+rule in `next.config.mjs` proxies `/api/*` to `ATLAS_API_INTERNAL_URL`
 (default `http://localhost:8080`).
 
 ## Scripts

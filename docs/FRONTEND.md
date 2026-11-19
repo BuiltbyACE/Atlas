@@ -49,7 +49,7 @@ Three rules that decide everything (ATLAS.md §5.2, ADR-002):
 Key consequences you will feel daily:
 
 - **One origin.** Caddy routes `/api/*` to Go and everything else to Next.js, so
-  cookies are first-party and there is no CORS. Locally, a `next.config.ts`
+  cookies are first-party and there is no CORS. Locally, a `next.config.mjs`
   rewrite proxies `/api/*` to Go (see §5).
 - **The session cookie is the only client auth token.** Never store it in
   JavaScript; it is HttpOnly. Just let the browser send it.
@@ -187,7 +187,7 @@ Every non-2xx is `application/problem+json` (ATLAS.md §11):
 
 ```json
 {
-  "type": "https://atlas.safaristack.co.ke/problems/unauthenticated",
+  "type": "https://atlas.safaristacksolutions.co.ke/problems/unauthenticated",
   "title": "Unauthorized",
   "status": 401,
   "detail": "Authentication is required.",
@@ -265,7 +265,7 @@ task api:run       # Go API on :8080
 cd apps/web; npm install; npm run dev   # Next.js on :3000
 ```
 
-The web app reaches Go through the `next.config.ts` rewrite, so in the browser
+The web app reaches Go through the `next.config.mjs` rewrite, so in the browser
 `/api/v1/...` is same-origin on `:3000` — the cookie and `SameSite=Lax` behave
 exactly as in production. You do **not** need CORS locally.
 
@@ -329,7 +329,7 @@ apps/web/
 │   ├── api/generated/             # generated client goes here
 │   ├── auth/session.ts            # getCurrentUser / requireUser
 │   └── realtime/socket.ts         # Phoenix client + hooks (done)
-├── next.config.ts                 # /api/* rewrite to Go
+├── next.config.mjs                 # /api/* rewrite to Go
 └── README.md
 ```
 
@@ -421,7 +421,7 @@ against Go's JWKS).
 
 Two caveats:
 
-- `next.config.ts` rewrites do **not** proxy WebSockets. In dev, the browser
+- `next.config.mjs` rewrites do **not** proxy WebSockets. In dev, the browser
   connects straight to `NEXT_PUBLIC_REALTIME_URL` (the orchestrator on `:4000`);
   in production Caddy proxies `/socket`.
 - For a socket to authenticate, the **Go API must be running** (Elixir fetches
@@ -448,8 +448,8 @@ Two caveats:
 
 Tracked in ATLAS.md §21. Most relevant to you:
 
-- **D1 — domain** (`atlas.safaristack.co.ke` appears already in Problem `type`
-  URIs). **D2 — hosting/region** (latency to Kenya).
+- **D1 — domain** (`atlas.safaristacksolutions.co.ke` is now the live origin and
+  appears in Problem `type` URIs). **D2 — hosting/region** (latency to Kenya).
 - **UI kit [DECIDE]** — Tailwind is chosen; a component kit (e.g. shadcn/ui) is
   proposed in ATLAS.md §15 but not decided.
 - **Email provider** (invitations, password resets) — not yet chosen; the UI
@@ -465,3 +465,36 @@ Tracked in ATLAS.md §21. Most relevant to you:
 5. Wire `generate:api` and migrate to generated types.
 6. Dashboard and the authenticated shell polish — with honest empty states —
    ready for the first data modules.
+
+## 10. The workspace redesign (October 2026)
+
+The authenticated screens follow the workspace prototypes in `images/Atlas
+Design – 01…08` (unpacked, each is a bundled HTML page). Where things live:
+
+- **Tokens** in `tailwind.config.ts` (`canvas`, `navy`, `night`, `muted`,
+  `line`, `sky`, radii `card`/`control`, shadows). Login keeps `milk`/`ink`.
+- **Primitives** in `components/ui.tsx` (Card, Badge pills, Stat tiles, Chips,
+  Avatar, IconTile, Meter, EmptyState, Table), `components/form.tsx`,
+  `components/drawer.tsx`, `components/toast.tsx`, `components/icons.tsx`,
+  `components/person-select.tsx`, `components/day-picker.tsx`.
+- **Shell** in `components/shell/` (sidebar, top bar with Ctrl K jump, live
+  pill, notifications bell on the real `/api/v1/notifications`, New menu).
+  `?new=task|project|leave` opens the matching drawer.
+- **Task board** (`app/(app)/work/tasks/task-board.tsx`): pointer-event drag
+  and drop (mouse anywhere on a card; touch via the grip; keyboard via the grip's
+  "Move to" menu). Every move is `PUT /work/tasks/{id}` with `If-Match`;
+  refusals roll the card back and show Go's reason. `TASK_EVIDENCE_REQUIRED`
+  opens the card on its evidence section.
+- **Realtime**: `lib/realtime/socket.ts` reads the token through a closure and
+  refreshes it before expiry and on socket errors; one channel per topic is
+  shared by all subscribers (Phoenix evicts a duplicate join); a dev build
+  reaches the orchestrator on :4000 (see `NEXT_PUBLIC_REALTIME_URL`).
+
+Names: the people pickers and every name lookup use the availability roster,
+which needs `people.person.read`. Engineers and staff do not hold it, so for
+them names fall back to `Person 01a1…` and pickers to an id field. A
+people-search endpoint with a narrower permission is the open backend item.
+
+Deliberately not built (no backend for them): the daily report's "needs
+management's attention" flag, and task "type" tags. "What moved" is required
+in the form but not yet enforced by Go.

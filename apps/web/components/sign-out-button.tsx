@@ -3,15 +3,20 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { Icon } from "@/components/icons";
 import { ApiError } from "@/lib/api/client";
 import { logout } from "@/lib/auth/flow";
+import { disconnectSocket } from "@/lib/realtime/socket";
 
 /**
  * Ends the current session (`POST /api/v1/auth/logout`); Go revokes it and
  * clears the HttpOnly cookie. A 401 means the session was already gone, which
- * is the outcome we wanted, so it also goes to /login.
+ * is the outcome we wanted, so it also goes to /login. The realtime socket is
+ * dropped too, so it does not keep retrying with the old session's token.
+ *
+ * `compact` renders the sidebar's icon button.
  */
-export function SignOutButton() {
+export function SignOutButton({ compact = false }: { compact?: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -29,8 +34,27 @@ export function SignOutButton() {
         return;
       }
     }
+    disconnectSocket();
     // /login renders per request, so it sees the cleared cookie.
     router.replace("/login");
+  }
+
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={signOut}
+        disabled={busy}
+        aria-label={failed ? "Couldn’t sign out. Try again" : "Sign out"}
+        title={failed ? "Couldn’t sign out. Try again." : "Sign out"}
+        className={
+          "ml-auto grid h-10 w-10 flex-none place-items-center rounded-[10px] transition hover:bg-white/10 hover:text-white disabled:cursor-progress disabled:opacity-60 " +
+          (failed ? "text-[#FFB3A5]" : "text-[#B9CAE6]")
+        }
+      >
+        <Icon name="signOut" />
+      </button>
+    );
   }
 
   return (

@@ -61,6 +61,7 @@ var Permissions = []Permission{
 	{"core.file.write", "Upload files and attach evidence", false},
 	{"core.service_identity.manage", "Manage service identities and credentials", false},
 	{"core.authz.check", "Check whether a user may join a realtime topic", false},
+	{"core.email.send", "Compose and send email from Atlas", false},
 	{"core.approval.read", "View approval requests", false},
 	{"core.approval.decide", "Approve or reject approval requests", false},
 	{"core.approval_policy.read", "View approval policies", false},
@@ -137,6 +138,8 @@ var Permissions = []Permission{
 	{"finance.invoice.issue", "Issue invoices to clients", false},
 	{"finance.payment.read", "View payments", false},
 	{"finance.payment.record", "Record payments", false},
+	{"finance.account.manage", "Open and edit cash accounts", false},
+	{"finance.recurring_cost.manage", "Record and edit standing costs", false},
 	{"finance.report.read", "View financial reports", false},
 	{"finance.amount.sensitive.read", "View sensitive financial amounts", true},
 
@@ -161,6 +164,7 @@ var Permissions = []Permission{
 	{"intel.brief.read", "View briefs", false},
 	{"intel.brief.manage", "Create and manage briefs", false},
 	{"intel.metric.read", "View metric snapshots", false},
+	{"intel.metric.manage", "Record metric snapshots", false},
 	{"intel.dashboard.read", "View the executive dashboard", false},
 
 	// integrations
@@ -173,6 +177,9 @@ var Permissions = []Permission{
 // configuration, not business records. Idempotent: only inserted if absent, so an
 // operator's later change is never overwritten.
 var SettingDefaults = map[string]string{
+	"company.name":     `"SafariStack Solutions"`,
 	"company.timezone": `"Africa/Nairobi"`,
 	"company.currency": `"KES"`,
+	// Above KES 1,000 a claim must carry a receipt (§8.4 [CONFIG]).
+	"finance.expense.receipt_min_minor": `100000`,
 }

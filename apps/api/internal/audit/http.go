@@ -130,6 +130,7 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) (Query, bool) {
 	values := r.URL.Query()
 	q := Query{
 		EntityType: strings.TrimSpace(values.Get("entity_type")),
+		Module:     strings.TrimSpace(values.Get("module")),
 		ActorType:  strings.TrimSpace(values.Get("actor_type")),
 		ActorID:    strings.TrimSpace(values.Get("actor_id")),
 		Action:     strings.TrimSpace(values.Get("action")),

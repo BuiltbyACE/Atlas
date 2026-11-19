@@ -1,6 +1,8 @@
 package work
 
 import (
+	"time"
+
 	"context"
 	"fmt"
 	"log/slog"
@@ -246,6 +248,13 @@ func (s *Service) ResolveEscalations(ctx context.Context, entityType string, ent
 			escalationSnapshot(e), escalationSnapshot(e))
 	}
 	return len(closed), nil
+}
+
+// LastResolvedAt reports when an entity's most recent escalation was resolved
+// (nil if never), so another module can tell a new episode from the one a
+// person already closed (the people module does, ADR-017).
+func (s *Service) LastResolvedAt(ctx context.Context, entityType string, entityID uuid.UUID) (*time.Time, error) {
+	return s.store.LastEscalationResolvedAt(ctx, entityType, entityID)
 }
 
 // OpenEscalatedEntities returns the entity ids of the given type that currently

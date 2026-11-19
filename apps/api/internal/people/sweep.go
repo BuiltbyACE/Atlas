@@ -35,6 +35,9 @@ type MissedReport struct {
 type MissCounts struct {
 	PersonID uuid.UUID
 	Misses   int
+	// LastMissedAt is when the newest of those reports was marked missed. It
+	// scopes the escalation episode: see Service.escalate.
+	LastMissedAt time.Time
 }
 
 // Escalator is the work module's escalation ladder seen from people: the
@@ -53,6 +56,9 @@ type Escalator interface {
 	// OpenEscalatedEntities lists the entities of a type with an open
 	// escalation, so people can resolve the ones whose condition has cleared.
 	OpenEscalatedEntities(ctx context.Context, entityType string) ([]uuid.UUID, error)
+	// LastResolvedAt reports when the entity's latest escalation was resolved,
+	// or nil if none ever was.
+	LastResolvedAt(ctx context.Context, entityType string, entityID uuid.UUID) (*time.Time, error)
 }
 
 // SweepResult counts one pass's work, for the worker's log line.
@@ -183,6 +189,17 @@ func (s *Service) escalate(ctx context.Context, policy DailyReportPolicy, counts
 			continue
 		}
 		breaching[c.PersonID] = true
+		// An escalation someone resolved closes that episode: the one-open
+		// index alone would let the next pass raise a fresh copy at once while
+		// the count is still over the threshold (the "same reason raised 3x"
+		// duplicates). Only a miss after that resolution opens a new episode.
+		resolvedAt, err := s.escalator.LastResolvedAt(ctx, EscalationEntity, c.PersonID)
+		if err != nil {
+			return nil, raised, fmt.Errorf("people: read miss escalation history: %w", err)
+		}
+		if resolvedAt != nil && !c.LastMissedAt.After(*resolvedAt) {
+			continue
+		}
 		reason := fmt.Sprintf("%d daily reports missed in %d days", c.Misses, policy.MissedWindowDays)
 		opened, err := s.escalator.RaiseEscalation(ctx, EscalationEntity, c.PersonID, EscalationLevel, reason, assignee)
 		if err != nil {
