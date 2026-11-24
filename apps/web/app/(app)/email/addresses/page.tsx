@@ -13,7 +13,7 @@ import {
   type EmailAddress,
 } from "@/lib/api/atlas";
 import { ApiError } from "@/lib/api/client";
-import { requireUser } from "@/lib/auth/session";
+import { getCurrentUser } from "@/lib/auth/session";
 
 /**
  * Email addresses (§8.4). Manage your verified “send as” addresses.
@@ -22,21 +22,27 @@ import { requireUser } from "@/lib/auth/session";
 export default function AddressesPage() {
   const [addresses, setAddresses] = useState<EmailAddress[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<ApiError | null>(null);
+  // loadError replaces the page (nothing to show); actionError is shown beside the list.
+  const [loadError, setLoadError] = useState<ApiError | null>(null);
+  const [actionError, setActionError] = useState<ApiError | null>(null);
+  const [loginEmail, setLoginEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [newAddress, setNewAddress] = useState("");
   const [isPrimary, setIsPrimary] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    getCurrentUser().then((me) => {
+      if (!cancelled && me) setLoginEmail(me.email.toLowerCase());
+    });
     listEmailAddresses()
       .then((items) => {
         if (!cancelled) setAddresses(items);
       })
       .catch((caught) => {
         if (!cancelled) {
-          if (caught instanceof ApiError) setError(caught);
-          else setError(new ApiError(500, { title: "Unexpected error", detail: "An unexpected error occurred" }));
+          if (caught instanceof ApiError) setLoadError(caught);
+          else setLoadError(new ApiError(500, { title: "Unexpected error", detail: "An unexpected error occurred" }));
         }
       })
       .finally(() => {
@@ -56,11 +62,11 @@ export default function AddressesPage() {
     );
   }
 
-  if (error) {
+  if (loadError) {
     return (
       <div className="space-y-6">
         <PageHeader title="Email addresses" description="Manage your send-as email addresses." />
-        <ProblemNotice error={error} title="Your email addresses could not be loaded" />
+        <ProblemNotice error={loadError} title="Your email addresses could not be loaded" />
       </div>
     );
   }
@@ -68,7 +74,7 @@ export default function AddressesPage() {
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
-    setError(null);
+    setActionError(null);
 
     const trimmed = newAddress.trim();
     if (!trimmed) {
@@ -86,8 +92,8 @@ export default function AddressesPage() {
       const updated = await listEmailAddresses();
       setAddresses(updated);
     } catch (caught) {
-      if (caught instanceof ApiError) setError(caught);
-      else setError(new ApiError(500, { title: "Unexpected error", detail: "An unexpected error occurred" }));
+      if (caught instanceof ApiError) setActionError(caught);
+      else setActionError(new ApiError(500, { title: "Unexpected error", detail: "An unexpected error occurred" }));
     } finally {
       setBusy(false);
     }
@@ -95,14 +101,14 @@ export default function AddressesPage() {
 
   async function onSetPrimary(id: string) {
     setBusy(true);
-    setError(null);
+    setActionError(null);
     try {
       await setPrimaryEmailAddress(id);
       const updated = await listEmailAddresses();
       setAddresses(updated);
     } catch (caught) {
-      if (caught instanceof ApiError) setError(caught);
-      else setError(new ApiError(500, { title: "Unexpected error", detail: "An unexpected error occurred" }));
+      if (caught instanceof ApiError) setActionError(caught);
+      else setActionError(new ApiError(500, { title: "Unexpected error", detail: "An unexpected error occurred" }));
     } finally {
       setBusy(false);
     }
@@ -111,13 +117,13 @@ export default function AddressesPage() {
   async function onDelete(id: string) {
     if (!confirm("Remove this email address?")) return;
     setBusy(true);
-    setError(null);
+    setActionError(null);
     try {
       await deleteEmailAddress(id);
       setAddresses(addresses.filter((a) => a.id !== id));
     } catch (caught) {
-      if (caught instanceof ApiError) setError(caught);
-      else setError(new ApiError(500, { title: "Unexpected error", detail: "An unexpected error occurred" }));
+      if (caught instanceof ApiError) setActionError(caught);
+      else setActionError(new ApiError(500, { title: "Unexpected error", detail: "An unexpected error occurred" }));
     } finally {
       setBusy(false);
     }
@@ -137,6 +143,7 @@ export default function AddressesPage() {
       />
 
       <div className="space-y-6">
+        {actionError ? <ProblemNotice error={actionError} title="That did not work" /> : null}
         <Card>
           <div className="px-[22px] py-[22px]">
             <h3 className="mb-[16px] text-[15px] font-semibold text-night">Add address</h3>
@@ -198,12 +205,16 @@ export default function AddressesPage() {
                           )}
                         </Td>
                         <Td className="tabular text-right text-muted">
-                          <button
-                            onClick={() => onDelete(addr.id)}
-                            className="text-[12px] text-danger hover:underline"
-                          >
-                            Remove
-                          </button>
+                          {addr.address.toLowerCase() === loginEmail ? (
+                            <span title="The address you sign in with cannot be removed">Sign-in address</span>
+                          ) : (
+                            <button
+                              onClick={() => onDelete(addr.id)}
+                              className="text-[12px] text-danger hover:underline"
+                            >
+                              Remove
+                            </button>
+                          )}
                         </Td>
                       </tr>
                     ))}
