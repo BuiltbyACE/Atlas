@@ -138,7 +138,7 @@ func TestRoleSnapshots(t *testing.T) {
 	want := map[string][]string{
 		"ceo_commercial": {
 			"/contracts", "/crm", "/dashboard", "/dashboard/commercial", "/dashboard/daily",
-			"/dashboard/my-work", "/dashboard/scorecard", "/email/addresses", "/email/inbox",
+			"/dashboard/my-work", "/dashboard/scorecard", "/email/addresses", "/email/compose", "/email/inbox",
 			"/finance", "/finance/my-expenses", "/integrations/github", "/intel", "/people",
 			"/people/activity", "/daily-reports", "/people/departments", "/settings",
 			"/approvals", "/units", "/work", "/work/tasks", "/work/workload", "/work/escalations",
@@ -147,42 +147,42 @@ func TestRoleSnapshots(t *testing.T) {
 		"ceo_internal": {
 			"/approvals", "/contracts", "/crm", "/crm/followups", "/dashboard",
 			"/dashboard/commercial", "/dashboard/daily", "/dashboard/my-work", "/dashboard/scorecard",
-			"/daily-reports", "/email/addresses", "/email/inbox", "/finance", "/finance/my-expenses",
+			"/daily-reports", "/email/addresses", "/email/compose", "/email/inbox", "/finance", "/finance/my-expenses",
 			"/integrations/github", "/intel", "/people", "/people/activity", "/people/departments",
 			"/people/reviews", "/settings", "/systems", "/units", "/work", "/work/escalations",
 			"/work/tasks", "/work/time-entries", "/work/workload",
 		},
 		"finance_officer": {
 			"/approvals", "/contracts", "/dashboard", "/dashboard/my-work", "/email/addresses",
-			"/email/inbox", "/finance", "/finance/my-expenses", "/integrations/github", "/people",
+			"/email/compose", "/email/inbox", "/finance", "/finance/my-expenses", "/integrations/github", "/people",
 			"/people/departments", "/settings", "/units", "/work", "/work/escalations", "/work/tasks",
 			"/work/workload",
 		},
 		"sales_rep": {
 			"/contracts", "/crm", "/crm/followups", "/crm/interactions", "/crm/proposals",
-			"/dashboard", "/dashboard/my-work", "/email/addresses", "/email/inbox",
+			"/dashboard", "/dashboard/my-work", "/email/addresses", "/email/compose", "/email/inbox",
 			"/integrations/github", "/settings", "/units",
 		},
 		"project_lead": {
 			"/contracts", "/daily-reports", "/dashboard", "/dashboard/my-work", "/email/addresses",
-			"/email/inbox", "/finance/my-expenses", "/integrations/github", "/people",
+			"/email/compose", "/email/inbox", "/finance/my-expenses", "/integrations/github", "/people",
 			"/people/departments", "/settings", "/units", "/work", "/work/escalations", "/work/tasks",
 			"/work/time-entries", "/work/workload",
 		},
 		"engineer": {
-			"/dashboard", "/dashboard/my-work", "/email/addresses", "/email/inbox",
+			"/dashboard", "/dashboard/my-work", "/email/addresses", "/email/compose", "/email/inbox",
 			"/finance/my-expenses", "/integrations/github", "/people", "/people/departments",
 			"/settings", "/systems", "/units", "/work", "/work/escalations", "/work/tasks",
 			"/work/workload",
 		},
 		"staff": {
-			"/dashboard", "/dashboard/my-work", "/email/addresses", "/email/inbox",
+			"/dashboard", "/dashboard/my-work", "/email/addresses", "/email/compose", "/email/inbox",
 			"/finance/my-expenses", "/integrations/github", "/people", "/people/departments",
 			"/settings", "/units", "/work", "/work/escalations", "/work/tasks", "/work/workload",
 		},
 		"unit_manager": {
 			"/crm/followups", "/daily-reports", "/dashboard", "/dashboard/my-work",
-			"/email/addresses", "/email/inbox", "/finance", "/finance/my-expenses",
+			"/email/addresses", "/email/compose", "/email/inbox", "/finance", "/finance/my-expenses",
 			"/integrations/github", "/people", "/people/departments", "/settings", "/units", "/work",
 			"/work/escalations", "/work/tasks", "/work/workload",
 		},
@@ -192,7 +192,7 @@ func TestRoleSnapshots(t *testing.T) {
 			"/people/departments", "/settings",
 		},
 		"system_admin": {
-			"/dashboard", "/dashboard/my-work", "/email/addresses", "/email/inbox",
+			"/dashboard", "/dashboard/my-work", "/email/addresses", "/email/compose", "/email/inbox",
 			"/integrations/github", "/people", "/people/activity", "/people/departments",
 			"/people/onboard", "/settings", "/systems",
 		},
