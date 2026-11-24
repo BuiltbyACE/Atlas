@@ -15,9 +15,13 @@ type fakeStore struct {
 	people       map[string]int
 	approvals    ApprovalsSummary
 	work         WorkSummary
+	units        UnitsSummary
+	intel        IntelSummary
 	peopleErr    error
 	approvalsErr error
 	workErr      error
+	unitsErr     error
+	intelErr     error
 	gotNow       time.Time
 }
 
@@ -44,6 +48,24 @@ func (s *fakeStore) Work(_ context.Context, now time.Time) (WorkSummary, error) 
 	return s.work, nil
 }
 
+func (s *fakeStore) Units(context.Context) (UnitsSummary, error) {
+	if s.unitsErr != nil {
+		return UnitsSummary{}, s.unitsErr
+	}
+	return s.units, nil
+}
+
+func (s *fakeStore) Intel(context.Context) (IntelSummary, error) {
+	if s.intelErr != nil {
+		return IntelSummary{}, s.intelErr
+	}
+	return s.intel, nil
+}
+
+func (s *fakeStore) DailyBrief(context.Context, time.Time) (DailyBrief, error) {
+	return DailyBrief{}, nil
+}
+
 type fakeAuditStore struct {
 	entries []audit.Entry
 	err     error
@@ -62,6 +84,8 @@ func TestSummaryBuildsTiles(t *testing.T) {
 		people:    map[string]int{"active": 3, "on_leave": 1},
 		approvals: ApprovalsSummary{Pending: 2, Escalated: 1, Overdue: 1, PendingByRole: map[string]int{"ceo_finance": 2}},
 		work:      WorkSummary{Overdue: 4, OpenEscalations: 2},
+		units:     UnitsSummary{Units: 5, Integrations: 3, Indicators: 7},
+		intel:     IntelSummary{Decisions: 2, Risks: 1, Briefs: 4, Snapshots: 6},
 	}
 	auditStore := &fakeAuditStore{entries: []audit.Entry{{
 		ID:         uuid.New(),
@@ -92,6 +116,12 @@ func TestSummaryBuildsTiles(t *testing.T) {
 	}
 	if sum.Work.Overdue != 4 || sum.Work.OpenEscalations != 2 {
 		t.Fatalf("work = %+v", sum.Work)
+	}
+	if sum.Units.Units != 5 || sum.Units.Integrations != 3 || sum.Units.Indicators != 7 {
+		t.Fatalf("units = %+v", sum.Units)
+	}
+	if sum.Intel.Decisions != 2 || sum.Intel.Risks != 1 || sum.Intel.Briefs != 4 || sum.Intel.Snapshots != 6 {
+		t.Fatalf("intel = %+v", sum.Intel)
 	}
 	if len(sum.RecentAudit) != 1 {
 		t.Fatalf("recent_audit = %d, want 1", len(sum.RecentAudit))
@@ -151,10 +181,12 @@ func TestSummaryUsesNow(t *testing.T) {
 
 func TestSummaryPropagatesErrors(t *testing.T) {
 	cases := map[string]*Service{
-		"people": NewService(&fakeStore{peopleErr: errors.New("boom")}, &fakeAuditStore{}, nil),
+		"people":   NewService(&fakeStore{peopleErr: errors.New("boom")}, &fakeAuditStore{}, nil),
 		"approvals": NewService(&fakeStore{approvalsErr: errors.New("boom")},
 			&fakeAuditStore{}, nil),
-		"audit": NewService(&fakeStore{people: map[string]int{}},
+		"units":   NewService(&fakeStore{unitsErr: errors.New("boom")}, &fakeAuditStore{}, nil),
+		"intel":   NewService(&fakeStore{intelErr: errors.New("boom")}, &fakeAuditStore{}, nil),
+		"audit":   NewService(&fakeStore{people: map[string]int{}},
 			&fakeAuditStore{err: errors.New("boom")}, nil),
 	}
 	for name, svc := range cases {

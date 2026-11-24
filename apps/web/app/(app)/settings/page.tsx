@@ -28,10 +28,11 @@ export default function SettingsPage() {
         title="Company policy"
         description="Configuration, not code (blueprint section 6.7)."
       >
-        <p className="text-sm text-slate-600">
-          Approval thresholds, escalation windows and retention policies will be
-          edited here once the policy store is implemented. Changes will require
-          both CEOs.
+        <p className="text-sm text-muted">
+          Escalation windows (ADR-016), the daily-report rhythm (ADR-017) and the
+          timesheet rule (ADR-019) are stored as typed settings in Go. Editing
+          them here — with both CEOs approving each change — arrives with the
+          policy screens.
         </p>
       </Card>
     </div>

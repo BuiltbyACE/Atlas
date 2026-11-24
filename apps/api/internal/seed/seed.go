@@ -11,10 +11,12 @@ import (
 
 // Report summarises what a seed run wrote.
 type Report struct {
-	Roles           int
-	Permissions     int
-	RolePermissions int
-	SettingsAdded   int
+	Roles              int
+	Permissions        int
+	RolePermissions    int
+	SettingsAdded      int
+	CRMConfigAdded     int
+	FinanceConfigAdded int
 }
 
 // Validate checks the catalogue and mapping are internally consistent. It runs
@@ -128,6 +130,22 @@ func Run(ctx context.Context, pool *pgxpool.Pool) (Report, error) {
 		}
 		rep.SettingsAdded += int(tag.RowsAffected())
 	}
+
+	// CRM config (lead sources, pipeline stages) is seeded only when absent, so
+	// an operator's edit is preserved (§8.1 [CONFIG]).
+	added, err := seedCRMConfig(ctx, tx)
+	if err != nil {
+		return rep, err
+	}
+	rep.CRMConfigAdded = added
+
+	// Finance config (expense categories) is seeded only when absent, so an
+	// operator's edit is preserved (§8.4 [CONFIG]).
+	added, err = seedFinanceConfig(ctx, tx)
+	if err != nil {
+		return rep, err
+	}
+	rep.FinanceConfigAdded = added
 
 	if err := tx.Commit(ctx); err != nil {
 		return rep, fmt.Errorf("commit seed: %w", err)

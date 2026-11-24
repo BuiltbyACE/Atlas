@@ -49,6 +49,11 @@ defmodule AtlasOrchestrator.Work.Handler do
     "work.time_entry.updated.v1" => {"time_entry", "time_entry_id", "project_id", nil},
     "work.time_entry.removed.v1" => {"time_entry", "time_entry_id", "project_id", nil},
     "integrations.git.pull_request.merged.v1" => {"evidence", "evidence_id", "project_id", nil},
+    "integrations.github.push.v1" => {"github", "evidence_id", "project_id", nil},
+    "integrations.github.pull_request.v1" => {"github", "evidence_id", "project_id", nil},
+    "integrations.github.check_run.v1" => {"github", "evidence_id", "project_id", nil},
+    "integrations.github.deployment_status.v1" => {"github", "evidence_id", "project_id", nil},
+    "integrations.github.installation.v1" => {"github", "evidence_id", "project_id", nil},
     "core.escalation.raised.v1" => {"escalation", "escalation_id", "project_id", "assignee_user_id"},
     "core.escalation.resolved.v1" => {"escalation", "escalation_id", "project_id", "assignee_user_id"}
   }

@@ -108,6 +108,9 @@ type Store interface {
 	// escalation of the given type, so another module can resolve the ones whose
 	// condition has cleared.
 	OpenEscalationEntities(ctx context.Context, entityType string) ([]uuid.UUID, error)
+	// LastEscalationResolvedAt returns when an entity's most recent escalation
+	// was resolved, or nil when none ever was.
+	LastEscalationResolvedAt(ctx context.Context, entityType string, entityID uuid.UUID) (*time.Time, error)
 }
 
 // PGStore implements Store over Postgres.
@@ -1531,6 +1534,22 @@ func (s *PGStore) OpenEscalationEntities(ctx context.Context, entityType string)
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// LastEscalationResolvedAt returns the latest resolved_at among an entity's
+// resolved escalations, or nil when none was ever resolved. The people module
+// uses it to scope a repeated-miss episode: a person resolved by hand is not
+// re-escalated until they miss another report (ADR-017).
+func (s *PGStore) LastEscalationResolvedAt(ctx context.Context, entityType string, entityID uuid.UUID) (*time.Time, error) {
+	var at *time.Time
+	if err := s.db.QueryRow(ctx, `
+		SELECT max(resolved_at)
+		  FROM work.escalations
+		 WHERE entity_type = $1 AND entity_id = $2 AND status = 'resolved'`,
+		entityType, entityID).Scan(&at); err != nil {
+		return nil, fmt.Errorf("work: last escalation resolution: %w", err)
+	}
+	return at, nil
 }
 
 // RaiseEscalationForEntity opens one escalation for an entity another module

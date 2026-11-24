@@ -4,9 +4,12 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { Button, Field, Select, TextArea, TextInput } from "@/components/form";
+import { PersonSelect } from "@/components/person-select";
+import { useToast } from "@/components/toast";
 import { Card, ProblemNotice } from "@/components/ui";
 import { PRIORITIES, TASK_STATUSES, updateTask, type Task } from "@/lib/api/atlas";
-import { dateInput, humanise, toApiTime } from "@/lib/format";
+import type { PersonOption } from "@/lib/directory";
+import { dateInput, humanise, statusLabel, toApiTime } from "@/lib/format";
 import { useMutation } from "@/lib/use-mutation";
 
 function optionalNumber(raw: FormDataEntryValue | null): number | null {
@@ -20,8 +23,17 @@ function optionalNumber(raw: FormDataEntryValue | null): number | null {
  * (§6.6). `milestone_id`/`parent_id` are not editable here but are preserved so
  * the replacement does not clear them.
  */
-export function TaskEditor({ task }: { task: Task }) {
+export function TaskEditor({
+  task,
+  people,
+  me,
+}: {
+  task: Task;
+  people: PersonOption[];
+  me?: string;
+}) {
   const router = useRouter();
+  const notify = useToast();
   const { busy, problem, run } = useMutation();
   const [saved, setSaved] = useState(false);
 
@@ -52,12 +64,16 @@ export function TaskEditor({ task }: { task: Task }) {
 
     if (updated) {
       setSaved(true);
+      notify("Task saved");
       router.refresh();
     }
   }
 
   return (
-    <Card title="Edit task" description="Go validates every transition; a stale version returns 412.">
+    <Card
+      title="Edit task"
+      description="Atlas checks every move: some steps can’t be skipped, Done needs evidence, and a change someone else saved first is refused rather than overwritten."
+    >
       <form onSubmit={onSubmit} className="space-y-4">
         {problem && <ProblemNotice error={problem} title="Could not save the task" />}
 
@@ -65,12 +81,12 @@ export function TaskEditor({ task }: { task: Task }) {
           <TextInput id="edit-title" name="title" required maxLength={300} defaultValue={task.title} />
         </Field>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Status" htmlFor="edit-status">
             <Select id="edit-status" name="status" defaultValue={task.status}>
               {TASK_STATUSES.map((status) => (
                 <option key={status} value={status}>
-                  {humanise(status)}
+                  {statusLabel(status)}
                 </option>
               ))}
             </Select>
@@ -84,12 +100,13 @@ export function TaskEditor({ task }: { task: Task }) {
               ))}
             </Select>
           </Field>
-          <Field label="Assignee person id" hint="optional" htmlFor="edit-assignee">
-            <TextInput
+          <Field label="Owner" htmlFor="edit-assignee">
+            <PersonSelect
               id="edit-assignee"
               name="assignee_person_id"
+              people={people}
+              me={me}
               defaultValue={task.assignee_person_id ?? ""}
-              placeholder="UUID"
             />
           </Field>
           <Field label="Due date" hint="optional" htmlFor="edit-due">
@@ -125,7 +142,7 @@ export function TaskEditor({ task }: { task: Task }) {
           <Button type="submit" disabled={busy}>
             {busy ? "Saving…" : "Save changes"}
           </Button>
-          {saved && !busy && <span className="text-sm text-emerald-600">Saved.</span>}
+          {saved && !busy && <span className="text-sm font-medium text-[#17803D]">Saved.</span>}
         </div>
       </form>
     </Card>

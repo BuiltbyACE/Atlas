@@ -98,6 +98,9 @@ type Cancel struct {
 	ApprovalID uuid.UUID
 	ActorID    uuid.UUID
 	Reason     string
+	// Privileged is true when the actor holds core.approval.decide, so they may
+	// cancel a request they did not make. Without it only the requester may.
+	Privileged bool
 }
 
 func (r Request) valid() error {

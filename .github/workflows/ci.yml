@@ -9,6 +9,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job here only reads the repository; none publishes packages or images.
+# Keep the workflow at the least privilege that still allows actions/checkout.
+permissions:
+  contents: read
+
 jobs:
   go:
     name: Go core (apps/api)
@@ -71,8 +76,20 @@ jobs:
       - name: Apply migrations
         run: go run ./cmd/atlas-cli migrate up
 
-      - name: Tests (unit + database integration)
-        run: go test ./...
+      # The role catalogue is data, not schema: migrations never insert into
+      # core.roles, so tests that grant a role (core.role_grants.role_key is a
+      # foreign key) need the catalogue present. seed.Run is idempotent.
+      - name: Seed configuration catalogue
+        run: go run ./cmd/atlas-cli seed
+
+      # Package tests share one database. The approvals suite TRUNCATEs
+      # core.approvals and outbox.events, so packages running in parallel wipe
+      # each other's fixtures (observed: dashboard pending_by_role = 0 and CRM
+      # duplicate organization names). Serial package execution still runs every
+      # package and every test; it is a temporary constraint until each package
+      # gets its own database or schema.
+      - name: Tests (unit + database integration, serial packages)
+        run: go test -count=1 -p 1 ./...
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
@@ -108,9 +125,12 @@ jobs:
 
       # The business schemas and outbox are created by the Go migration, which
       # needs the Atlas roles to exist first (docs/ATLAS.md §5.6, §10).
+      # Connect as the bootstrap superuser: atlas_migrator is the role this step
+      # creates, so it cannot also be the role authenticating here. The Go and
+      # Playwright jobs use the same bootstrap pattern.
       - name: Create Atlas database roles
         run: |
-          psql "$ATLAS_MIGRATE_DATABASE_URL" -v ON_ERROR_STOP=1 <<'EOSQL'
+          psql "postgres://atlas:atlas@localhost:5432/atlas" -v ON_ERROR_STOP=1 <<'EOSQL'
           -- Same roles as infra/compose/postgres/initdb.d/01-roles.sh
           CREATE ROLE atlas_migrator LOGIN PASSWORD 'atlas_migrator';
           CREATE ROLE atlas_api LOGIN PASSWORD 'atlas_api';
@@ -201,16 +221,39 @@ jobs:
           git ls-files "contracts/**/*.yaml" | xargs -I{} python3 -c "import yaml,sys; yaml.safe_load(open('{}'))"
           git ls-files "contracts/**/*.json" | while read -r f; do python3 -c "import json,sys; json.load(open('$f'))"; done
 
-      - uses: sqlcdev/sqlc-action@v2
+      # setup-sqlc installs the binary only; generation is a separate, explicit
+      # step so the config path and working directory stay visible.
+      - uses: sqlc-dev/setup-sqlc@v5
         with:
-          config: apps/api/sqlc.yaml
+          sqlc-version: "1.31.1"
 
+      - name: Generate sqlc code
+        working-directory: apps/api
+        run: sqlc generate
+
+      # `git diff` ignores untracked files, so the previous check passed even
+      # though internal/db held no generated code. Intent-to-add makes new output
+      # visible to the diff without staging file contents, and the pathspec keeps
+      # the check scoped to generated Go files rather than the whole tree (or the
+      # hand-written README beside them). The explicit emptiness guard also catches
+      # a mis-pointed `out:` directory, which would otherwise leave the tree
+      # untouched and look clean.
       - name: Generated code is committed and up to date
-        run: git diff --exit-code || (echo "sqlc output differs from committed code — run `task generate`" && exit 1)
+        run: |
+          if [ "$(find apps/api/internal/db -maxdepth 1 -name '*.go' | wc -l)" -eq 0 ]; then
+            echo 'sqlc wrote no Go files to apps/api/internal/db — check the out path in sqlc.yaml'
+            exit 1
+          fi
+          git add --intent-to-add -- 'apps/api/internal/db/*.go'
+          if ! git diff --exit-code -- 'apps/api/internal/db/*.go'; then
+            echo 'sqlc output differs from committed code — run "task generate" and commit apps/api/internal/db'
+            exit 1
+          fi
 
   images:
     name: Build Docker images
     runs-on: ubuntu-latest
+    needs: [go, elixir, web]
     steps:
       - uses: actions/checkout@v4
 
@@ -218,7 +261,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: apps/api
-          file: infra/docker/Dockerfile.api
+          file: apps/api/Dockerfile
           push: false
           tags: atlas-api:ci
 
@@ -226,7 +269,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: apps/orchestrator
-          file: infra/docker/Dockerfile.orchestrator
+          file: apps/orchestrator/Dockerfile
           push: false
           tags: atlas-orchestrator:ci
 
@@ -234,6 +277,263 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: apps/web
-          file: infra/docker/Dockerfile.web
+          file: apps/web/Dockerfile
           push: false
           tags: atlas-web:ci
+
+      - name: Scan atlas-api image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image: 'atlas-api:ci'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+
+      - name: Scan atlas-web image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image: 'atlas-web:ci'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+
+  playwright:
+    name: E2E tests (Playwright)
+    runs-on: ubuntu-latest
+    needs: [web]
+    timeout-minutes: 20
+    services:
+      # A fresh, disposable database per run. Nothing here touches a deployed
+      # database; the credentials are local CI throwaways.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: atlas
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U atlas -d atlas"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # Separate roles: migrations/test bootstrap use atlas_migrator, the API
+      # runs as atlas_api, and atlas is reserved for test tooling that needs the
+      # owner role. atlas-cli validates ATLAS_DATABASE_URL even when falling
+      # back to ATLAS_MIGRATE_DATABASE_URL, so both are set.
+      ATLAS_ENV: local
+      ATLAS_DATABASE_URL: postgres://atlas_migrator:atlas_migrator@127.0.0.1:55433/atlas?sslmode=disable
+      ATLAS_MIGRATE_DATABASE_URL: postgres://atlas_migrator:atlas_migrator@127.0.0.1:55433/atlas?sslmode=disable
+      ATLAS_TEST_DATABASE_URL: postgres://atlas:atlas@127.0.0.1:55433/atlas?sslmode=disable
+      # local keeps session cookies non-Secure so they work over http://localhost.
+      # The browser calls Next same-origin; Next rewrites /api to the Go API.
+      NEXT_PUBLIC_API_BASE_URL: ""
+      ATLAS_API_INTERNAL_URL: http://127.0.0.1:8080
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+      PLAYWRIGHT_MANAGE_WEB_SERVER: "0"
+      E2E_TEST_NAME: Atlas E2E
+      E2E_TEST_EMAIL: e2e@example.com
+      E2E_TEST_PASSWORD: E2eTestPassword123!
+      ATLAS_E2E_PASSWORD: E2eTestPassword123!
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Atlas database roles
+        run: |
+          set -euo pipefail
+          psql "postgres://atlas:atlas@127.0.0.1:55433/atlas" -v ON_ERROR_STOP=1 <<'EOSQL'
+          CREATE ROLE atlas_migrator LOGIN PASSWORD 'atlas_migrator';
+          CREATE ROLE atlas_api LOGIN PASSWORD 'atlas_api';
+          CREATE ROLE atlas_worker LOGIN PASSWORD 'atlas_worker';
+          CREATE ROLE atlas_orchestrator LOGIN PASSWORD 'atlas_orchestrator';
+          CREATE ROLE atlas_readonly LOGIN PASSWORD 'atlas_readonly';
+          GRANT CREATE, CONNECT ON DATABASE atlas TO atlas_migrator;
+          GRANT CREATE, CONNECT ON DATABASE atlas TO atlas_orchestrator;
+          GRANT CONNECT ON DATABASE atlas TO atlas_api, atlas_worker, atlas_readonly;
+          GRANT CREATE, USAGE ON SCHEMA public TO atlas_migrator;
+          EOSQL
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Apply migrations
+        working-directory: apps/api
+        run: go run ./cmd/atlas-cli migrate up
+
+      - name: Seed configuration catalogue
+        working-directory: apps/api
+        run: go run ./cmd/atlas-cli seed
+
+      # Guarded in the binary: ATLAS_E2E_PROVISION=1 plus ATLAS_ENV=local, a
+      # reserved example domain, and an exact, non-privileged permission set.
+      - name: Provision disposable E2E identity
+        working-directory: apps/api
+        env:
+          ATLAS_ENV: local
+          ATLAS_E2E_PROVISION: "1"
+        run: go run ./cmd/atlas-cli e2e provision --email "$E2E_TEST_EMAIL" --name "$E2E_TEST_NAME"
+
+      - name: Verify service ports are free
+        run: |
+          set -euo pipefail
+          if ss -ltn | awk '{print $4}' | grep -Eq ':(3000|8080)$'; then
+            echo 'Port 3000 or 8080 is already listening; refusing to start a second server.'
+            ss -ltn
+            exit 1
+          fi
+
+      - name: Start API on 8080
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/atlas-e2e"
+          go build -o "$RUNNER_TEMP/atlas-e2e/atlas-api" ./cmd/atlas-api
+          ATLAS_ENV=local \
+          ATLAS_DATABASE_URL='postgres://atlas_api:atlas_api@127.0.0.1:55433/atlas?sslmode=disable' \
+          ATLAS_HTTP_ADDR=127.0.0.1:8080 \
+          ATLAS_LOG_FORMAT=json \
+            nohup "$RUNNER_TEMP/atlas-e2e/atlas-api" > "$RUNNER_TEMP/atlas-e2e/api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/atlas-e2e/api.pid"
+
+      - name: Wait for API readiness
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:8080/api/v1/health/ready > /dev/null; then
+              echo "API ready after ${attempt} attempt(s)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'API did not become ready. Startup log:'
+          cat "$RUNNER_TEMP/atlas-e2e/api.log"
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Build web
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_API_BASE_URL: ""
+          ATLAS_API_INTERNAL_URL: http://127.0.0.1:8080
+        run: npm run build
+
+      - name: Start web on 3000
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          NEXT_PUBLIC_API_BASE_URL="" \
+          ATLAS_API_INTERNAL_URL=http://127.0.0.1:8080 \
+          ATLAS_ENV=local \
+            nohup ./node_modules/.bin/next start -H 127.0.0.1 -p 3000 > "$RUNNER_TEMP/atlas-e2e/web.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/atlas-e2e/web.pid"
+
+      - name: Wait for web readiness
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:3000/login > /dev/null; then
+              echo "Web ready after ${attempt} attempt(s)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'Web did not become ready. Startup log:'
+          cat "$RUNNER_TEMP/atlas-e2e/web.log"
+          exit 1
+
+      - name: Run E2E tests
+        working-directory: apps/web
+        env:
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+          PLAYWRIGHT_MANAGE_WEB_SERVER: "0"
+        run: npx playwright test
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload traces, screenshots and videos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: apps/web/test-results
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload service logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-service-logs
+          path: |
+            ${{ runner.temp }}/atlas-e2e/api.log
+            ${{ runner.temp }}/atlas-e2e/web.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Stop API and web servers
+        if: always()
+        run: |
+          set -euo pipefail
+          for name in web api; do
+            pidfile="$RUNNER_TEMP/atlas-e2e/$name.pid"
+            [ -f "$pidfile" ] || continue
+            pid="$(cat "$pidfile")"
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+              kill "$pid" 2>/dev/null || true
+              for _ in $(seq 1 20); do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 0.1
+              done
+              if kill -0 "$pid" 2>/dev/null; then
+                echo "Force-stopping $name process $pid"
+                kill -9 "$pid" 2>/dev/null || true
+              fi
+            fi
+            rm -f "$pidfile"
+          done
+
+  security:
+    name: Security scanning
+    runs-on: ubuntu-latest
+    needs: [go, web]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan Go dependencies for vulnerabilities
+        uses: gauravnm/go-vuln-check-action@master
+        with:
+          go-version-input: '1.27'
+          fail-on: 'critical,high'
+          working-directory: apps/api
+
+      - name: Scan Node.js dependencies for vulnerabilities
+        working-directory: apps/web
+        run: |
+          npm audit --audit-level=critical || exit 1
+          npm audit --audit-level=high || exit 1

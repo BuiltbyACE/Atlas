@@ -23,12 +23,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/safaristack/atlas/apps/api/internal/adapters/email"
 	"github.com/safaristack/atlas/apps/api/internal/approvals"
 	"github.com/safaristack/atlas/apps/api/internal/audit"
 	"github.com/safaristack/atlas/apps/api/internal/auth"
+	"github.com/safaristack/atlas/apps/api/internal/contracts"
+	"github.com/safaristack/atlas/apps/api/internal/crm"
 	"github.com/safaristack/atlas/apps/api/internal/dashboard"
+	"github.com/safaristack/atlas/apps/api/internal/chat"
+	"github.com/safaristack/atlas/apps/api/internal/documents"
+	emailapi "github.com/safaristack/atlas/apps/api/internal/email"
 	"github.com/safaristack/atlas/apps/api/internal/files"
+	"github.com/safaristack/atlas/apps/api/internal/finance"
 	"github.com/safaristack/atlas/apps/api/internal/integrations"
+	"github.com/safaristack/atlas/apps/api/internal/intel"
 	"github.com/safaristack/atlas/apps/api/internal/notifications"
 	"github.com/safaristack/atlas/apps/api/internal/people"
 	"github.com/safaristack/atlas/apps/api/internal/platform/config"
@@ -37,7 +45,10 @@ import (
 	"github.com/safaristack/atlas/apps/api/internal/platform/httpserver"
 	"github.com/safaristack/atlas/apps/api/internal/platform/logging"
 	"github.com/safaristack/atlas/apps/api/internal/platform/telemetry"
+	"github.com/safaristack/atlas/apps/api/internal/scorecard"
 	"github.com/safaristack/atlas/apps/api/internal/settings"
+	"github.com/safaristack/atlas/apps/api/internal/systems"
+	"github.com/safaristack/atlas/apps/api/internal/units"
 	"github.com/safaristack/atlas/apps/api/internal/work"
 )
 
@@ -151,7 +162,8 @@ func run() error {
 		gitHubWork{service: workService},
 		logger,
 	)
-	integrationHandler := integrations.NewHandler(integrationService, cfg.GitHubWebhookSecret, logger)
+	integrationHandler := integrations.NewHandler(integrationService, cfg.GitHubWebhookSecret, cfg.GitHubAppSlug, cfg.PublicBaseURL, logger)
+	integrationService.SetAudit(auditWriter)
 
 	// People & accountability (Phase 2): daily reports and leave. These belong
 	// to the people module (§8.5, §10.1) and emit people.* outbox events for the
@@ -162,6 +174,76 @@ func run() error {
 	// the day boundary follow the company timezone, so a report filed at 01:00
 	// local lands on the day the worker's sweep will look for (§8.5, ADR-017).
 	peopleService.SetPolicy(people.NewSettingsPolicy(settingsService))
+
+	// CRM & sales (Phase 3, §8.1): organizations, contacts, leads,
+	// opportunities, interactions, follow-ups and proposals. Go is the authority;
+	// state changes emit crm.* outbox events for the orchestrator to react to
+	// (ADR-009). The WhatsApp and telephony providers are deferred (ADR-011,
+	// ADR-012), so interactions are recorded manually. The public website-form
+	// webhook authenticates the website with a shared secret.
+	crmService := crm.NewService(crm.NewPGStore(pool), auditWriter, logger)
+	crmHandler := crm.NewHandler(crmService, cfg.WebsiteFormWebhookSecret, logger)
+
+	// Contracts & commitments (Phase 3, §8.3): the contract lifecycle, its
+	// milestones, deliverables, obligations and SLA terms, and the change
+	// requests that amend a signed agreement. Contracts are drafted from an
+	// accepted proposal; signing emits contracts.contract.signed.v1, which
+	// unlocks handover and the financial schedule in later phases.
+	contractsService := contracts.NewService(contracts.NewPGStore(pool), auditWriter, logger)
+	contractsHandler := contracts.NewHandler(contractsService, logger)
+
+	// Finance & commercial control (Phase 4, §8.4): cash, receivables, project
+	// profitability, budgets and spending, plus the write lifecycle that moves
+	// an expense through approval to settlement, an invoice from draft to
+	// issued and paid, a payment onto the invoices it settles, and a budget
+	// through approval to close. Go owns every rule and is the sole writer
+	// (ADR-002); the amount-visibility decision stays at the HTTP edge. The
+	// audit writer is what makes it safe for both CEOs to carry the module:
+	// who moved the money is always on the record (§6.6).
+	financeService := finance.NewService(finance.NewPGStore(pool), logger)
+	financeService.SetAudit(auditWriter)
+	financeService.SetSettings(settingsService)
+	financeHandler := finance.NewHandler(financeService, logger)
+
+	// Systems is the Phase 5 register of everything we run and its health
+	// (§8.6). Go owns the register and the incident lifecycle; the monitoring
+	// probes live in atlas-worker and write the results this surface reads.
+	systemsService := systems.NewService(systems.NewPGStore(pool), logger)
+	systemsService.SetAudit(auditWriter)
+	systemsHandler := systems.NewHandler(systemsService, logger)
+
+	// Units is the Phase 5 business-unit oversight surface (§8.7): units,
+	// integrations, indicator definitions and snapshots. Go owns every rule.
+	unitsService := units.NewService(units.NewPGStore(pool), logger)
+	unitsService.SetAudit(auditWriter)
+	unitsHandler := units.NewHandler(unitsService, logger)
+
+	// Intel is the Phase 6 executive intelligence surface (§8.8): decisions,
+	// risks, briefs and metric snapshots. Go owns every rule.
+	intelService := intel.NewService(intel.NewPGStore(pool), logger)
+	intelService.SetAudit(auditWriter)
+	intelHandler := intel.NewHandler(intelService, logger)
+
+	// Email is the Phase 6 two-way surface: outbound through the SMTP adapter
+	// already used for invitations, inbound through a provider webhook.
+	// Outbound mail goes out over the same SMTP provider as invitations, with the
+	// sender chosen per message from the caller's verified addresses.
+	emailService := emailapi.NewService(emailapi.NewPGStore(pool), logger).WithMailer(newSMTPSender(cfg))
+	emailHandler := emailapi.NewHandler(emailService, logger).WithInboundSecret(cfg.EmailInboundSecret)
+	// Resend's SMTP password is an API key, which also reads received mail.
+	if cfg.SMTPUsername == "resend" {
+		if f := emailapi.NewResendFetcher(cfg.SMTPPassword); f != nil {
+			emailHandler = emailHandler.WithBodyFetcher(f)
+		}
+	}
+
+	// Chat is the Phase 6 messaging surface.
+	chatService := chat.NewService(chat.NewPGStore(pool), logger)
+	chatHandler := chat.NewHandler(chatService, logger)
+
+	// Documents is the Phase 6 document storage surface.
+	documentsService := documents.NewService(documents.NewPGStore(pool), nil, logger)
+	documentsHandler := documents.NewHandler(documentsService, logger)
 
 	router := httpserver.NewRouter(httpserver.Deps{
 		Cfg:           cfg,
@@ -175,10 +257,21 @@ func run() error {
 		Audit:         audit.NewHandler(auditService, logger),
 		Dashboard: dashboard.NewHandler(
 			dashboard.NewService(dashboard.NewPGStore(pool), audit.NewPGStore(pool), logger), logger),
+		Scorecard: scorecard.NewHandler(
+			scorecard.NewService(scorecard.NewPGStore(pool), logger), logger),
 		Files:        filesHandler,
 		Work:         work.NewHandler(workService, logger),
 		People:       people.NewHandler(peopleService, logger),
 		Integrations: integrationHandler,
+		CRM:          crmHandler,
+		Contracts:    contractsHandler,
+		Finance:      financeHandler,
+		Systems:      systemsHandler,
+		Units:        unitsHandler,
+		Intel:        intelHandler,
+		Email:        emailHandler,
+		Chat:         chatHandler,
+		Documents:    documentsHandler,
 	})
 
 	srv := &http.Server{
@@ -233,6 +326,8 @@ func newAuthService(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool)
 		return nil, err
 	}
 
+	emailSender := newSMTPSender(cfg)
+
 	return auth.NewService(auth.NewPGStore(pool), sealer, key, auth.ServiceConfig{
 		SessionCookieName:    cfg.SessionCookieName,
 		SessionIdleTimeout:   cfg.SessionIdleTimeout,
@@ -247,7 +342,20 @@ func newAuthService(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool)
 		ServiceTokenTTL:      cfg.ServiceTokenTTL,
 		LoginMaxFailures:     5,
 		LoginWindow:          15 * time.Minute,
-	}, logger), nil
+		PublicBaseURL:        cfg.PublicBaseURL,
+	}, logger, emailSender), nil
+}
+
+// newSMTPSender builds the SMTP adapter from configuration.
+func newSMTPSender(cfg *config.Config) *email.Sender {
+	return email.New(email.Config{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		From:     cfg.SMTPFrom,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword,
+		TLS:      cfg.SMTPTLS,
+	})
 }
 
 // signingKey parses the configured Ed25519 key, or generates an ephemeral one

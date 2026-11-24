@@ -209,6 +209,17 @@ var definitions = []Definition{
 		Min:         floatPtr(0),
 		Default:     50000000.0, // KES 500,000
 	},
+	// Finance [CONFIG] thresholds (§8.4). An expense above this amount must
+	// carry a receipt (and a tax-compliant invoice reference where applicable);
+	// the finance service reads it on every claim, falling back to the code
+	// default when the operator has not set it.
+	{
+		Key:         "finance.expense.receipt_min_minor",
+		Kind:        KindInt,
+		Description: "Expense amount (minor units) above which a receipt is required.",
+		Min:         floatPtr(0),
+		Default:     100000.0, // KES 1,000
+	},
 	// Decision D4 (docs/adr/ADR-016): the escalation ladder's timing windows,
 	// read by the overdue-task sweep on every pass (§5.8).
 	{

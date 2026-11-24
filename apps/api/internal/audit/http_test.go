@@ -165,7 +165,7 @@ func TestListPassesFilters(t *testing.T) {
 	entityID := uuid.New()
 	store := &fakeStore{}
 	url := "/api/v1/audit?entity_type=person&entity_id=" + entityID.String() +
-		"&actor_type=user&actor_id=abc&action=person.updated" +
+		"&actor_type=user&actor_id=abc&action=person.updated&module=people" +
 		"&since=2020-01-01T00:00:00Z&until=2030-01-01T00:00:00Z"
 	rec := httptest.NewRecorder()
 	newTestRouter(store).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, url, nil))
@@ -179,6 +179,9 @@ func TestListPassesFilters(t *testing.T) {
 	}
 	if q.ActorType != "user" || q.ActorID != "abc" || q.Action != "person.updated" {
 		t.Fatalf("actor/action filter = %+v", q)
+	}
+	if q.Module != "people" {
+		t.Fatalf("module filter = %q, want people", q.Module)
 	}
 	if q.Since == nil || q.Until == nil {
 		t.Fatalf("time filter not applied: %+v", q)

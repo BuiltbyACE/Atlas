@@ -24,6 +24,8 @@ const (
 // Aggregate types (the "aggregate" part of an event type, §7.2).
 const (
 	AggregateSystem = "system"
+	AggregateUnit   = "unit"
+	AggregateIntel  = "intel"
 )
 
 // Event is a row in outbox.events. It mirrors the table exactly so the writer

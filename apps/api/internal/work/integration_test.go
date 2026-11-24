@@ -169,6 +169,12 @@ func TestServiceLifecycle(t *testing.T) {
 	if prog.StartedAt == nil {
 		t.Fatal("in_progress task should have started_at")
 	}
+	if _, err := svc.UpdateTask(ctx, actor, taskA.ID, prog.Version, TaskInput{Title: "Design", Status: TaskDone}); !errors.Is(err, ErrEvidenceRequired) {
+		t.Fatalf("done without evidence: err=%v, want ErrEvidenceRequired", err)
+	}
+	if _, err := svc.AttachEvidence(ctx, actor, EvidenceInput{TaskID: &taskA.ID, EvidenceType: EvidenceTypeURL, Reference: "https://example.test/design"}); err != nil {
+		t.Fatalf("attach evidence: %v", err)
+	}
 	done, err := svc.UpdateTask(ctx, actor, taskA.ID, prog.Version, TaskInput{Title: "Design", Status: TaskDone})
 	if err != nil {
 		t.Fatalf("update to done: %v", err)
@@ -684,6 +690,9 @@ func TestEscalationResolvesWhenTaskCompletes(t *testing.T) {
 	progress, err := svc.GetTask(ctx, task.ID)
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
+	}
+	if _, err := svc.AttachEvidence(ctx, owner, EvidenceInput{TaskID: &task.ID, EvidenceType: EvidenceTypeURL, Reference: "https://example.test/late"}); err != nil {
+		t.Fatalf("attach evidence: %v", err)
 	}
 	if _, err := svc.UpdateTask(ctx, owner, task.ID, progress.Version, TaskInput{Title: "Late", Status: TaskDone}); err != nil {
 		t.Fatalf("UpdateTask done: %v", err)

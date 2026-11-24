@@ -10,3 +10,53 @@ html,
 body {
   height: 100%;
 }
+
+@layer base {
+  /* Workspace focus ring (prototype: 2px action blue, offset 2px). The navy
+     sidebar swaps it for sky so it stays visible on the dark ground. */
+  .app-shell :is(a, button, select, input, textarea, summary):focus-visible {
+    outline: 2px solid theme("colors.atlas.DEFAULT");
+    outline-offset: 2px;
+  }
+  .app-shell .on-navy :is(a, button):focus-visible {
+    outline-color: theme("colors.sky");
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Thin, quiet scrollbars for the board and side panels. */
+  .scroll-quiet {
+    scrollbar-width: thin;
+    scrollbar-color: #c7cfdd transparent;
+  }
+}
+
+/* Printing an Atlas page prints the page. The navy sidebar and the sticky top
+   bar are screen chrome (ADR-007) and mean nothing on paper, so Ctrl+P drops
+   them and the content takes the whole sheet - which is what makes the
+   printable invoice at /finance/invoices/{id}/print usable straight off the
+   printer. Regions are marked in the app shell layout. */
+@media print {
+  .app-shell {
+    display: block;
+    min-height: 0;
+    background: #fff;
+  }
+
+  .app-shell [data-atlas-region="sidebar"],
+  .app-shell [data-atlas-region="content"] > header {
+    display: none !important;
+  }
+
+  .app-shell main {
+    max-width: none;
+    padding: 0;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

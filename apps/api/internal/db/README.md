@@ -3,10 +3,9 @@
 Typed Go generated from `db/queries/*.sql` by [sqlc](https://sqlc.dev), using
 `schema: db/migrations` and `sql_package: pgx/v5` (see `../../sqlc.yaml`).
 
-**This directory is intentionally empty of Go code in Phase 0.** Phase 0's only
-database access is the hand-written outbox writer in `internal/outbox`, which
-keeps the hello-event demo free of a code-generation step. Generated code lands
-in Phase 1 alongside the first real module queries.
+The Go files here (`db.go`, `models.go`, `outbox.sql.go`, `querier.go`) are
+generated output. Do not edit them by hand: change the query or schema under
+`db/` and regenerate. sqlc owns their contents.
 
 Generate with:
 

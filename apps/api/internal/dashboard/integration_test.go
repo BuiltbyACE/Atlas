@@ -144,3 +144,13 @@ func TestSummaryReadsRealAggregates(t *testing.T) {
 		t.Fatalf("recent_audit = %d entries, want at most %d", len(after.RecentAudit), defaultAuditHighlights)
 	}
 }
+
+// TestDailyBriefRunsAgainstTheRealSchema guards the production failure of the
+// executive daily brief (SQLSTATE 42703, 8–19 Nov): it filtered
+// crm.opportunities on a "status" column that does not exist (stage_key does).
+func TestDailyBriefRunsAgainstTheRealSchema(t *testing.T) {
+	pool := testPool(t)
+	if _, err := NewPGStore(pool).DailyBrief(context.Background(), time.Now().UTC()); err != nil {
+		t.Fatalf("DailyBrief: %v", err)
+	}
+}

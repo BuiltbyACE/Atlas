@@ -185,6 +185,129 @@ defmodule AtlasOrchestrator.Outbox.HandlersTest do
     assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
   end
 
+  test "a crm event is routed to the crm handler" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "crm:sales")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "crm.opportunity.stage_changed.v1",
+      seq: 8,
+      payload: %{
+        "opportunity_id" => Ecto.UUID.generate(),
+        "from" => "discovery",
+        "to" => "negotiation"
+      },
+      occurred_at: ~U[2026-10-19 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "crm:sales",
+      event: "opportunity.changed"
+    }
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
+  test "a contracts event is routed to the contracts handler" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "contracts:board")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "contracts.contract.signed.v1",
+      seq: 9,
+      payload: %{"contract_id" => Ecto.UUID.generate(), "ref" => "CTR-2026-0001"},
+      occurred_at: ~U[2026-10-19 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "contracts:board", event: "contract.changed"}
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
+  test "a finance event is routed to the finance handler" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "finance:board")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "finance.expense.submitted.v1",
+      seq: 10,
+      payload: %{
+        "expense_id" => Ecto.UUID.generate(),
+        "ref" => "EXP-2026-0001",
+        "currency" => "KES",
+        "status" => "submitted"
+      },
+      occurred_at: ~U[2026-10-19 11:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "finance:board", event: "expense.changed"}
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
+  test "a units event is routed to the units handler" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "units:board")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "units.unit.created.v1",
+      seq: 11,
+      payload: %{
+        "unit_id" => Ecto.UUID.generate(),
+        "ref" => "UNI-2026-0001",
+        "name" => "Test Unit",
+        "kind" => "school",
+        "status" => "active"
+      },
+      occurred_at: ~U[2026-10-31 10:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "units:board",
+      event: "unit.changed",
+      payload: payload
+    }
+
+    assert payload["type"] == "unit.changed"
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
+  test "an intel event is routed to the intel handler" do
+    Phoenix.PubSub.subscribe(AtlasOrchestrator.PubSub, "intel:board")
+
+    event = %Event{
+      id: Ecto.UUID.generate(),
+      type: "intel.decision.created.v1",
+      seq: 12,
+      payload: %{
+        "decision_id" => Ecto.UUID.generate(),
+        "ref" => "DEC-2026-0001",
+        "question" => "Should we migrate?",
+        "outcome" => "open"
+      },
+      occurred_at: ~U[2026-10-31 11:00:00.000000Z]
+    }
+
+    assert :ok = Handlers.dispatch(event)
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "intel:board",
+      event: "decision.changed",
+      payload: payload
+    }
+
+    assert payload["type"] == "decision.changed"
+
+    assert_receive %Phoenix.Socket.Broadcast{topic: "exec:dashboard", event: "dashboard.changed"}
+  end
+
   test "an unknown event type is ignored, not failed" do
     assert :ok =
              Handlers.dispatch(%Event{id: Ecto.UUID.generate(), type: "x.y.z.v1", payload: %{}})

@@ -31,6 +31,9 @@ out/
 *.tsbuildinfo
 npm-debug.log*
 yarn-error.log*
+test-results/
+playwright-report/
+blob-report/
 
 # ── Elixir (apps/orchestrator) ───────────────────────────────
 /apps/orchestrator/_build/
@@ -51,6 +54,10 @@ erl_crash.dump
 # ── Local runtime data / volumes ─────────────────────────────
 /data/
 /infra/compose/data/
+
+# Local dev launchers (developer-machine specific, never deployed)
+/start_all.bat
+/start_web.bat
 
 # ── Misc ─────────────────────────────────────────────────────
 *.log

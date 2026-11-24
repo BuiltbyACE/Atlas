@@ -290,6 +290,17 @@ func (s *Service) Cancel(ctx context.Context, in Cancel) error {
 	if in.ApprovalID == uuid.Nil || in.ActorID == uuid.Nil {
 		return fmt.Errorf("%w: approval and actor required", ErrInvalid)
 	}
+	// Only the requester, or someone who may decide approvals, can withdraw one.
+	a, err := s.store.Get(ctx, in.ApprovalID)
+	if err != nil {
+		return err
+	}
+	if a == nil {
+		return ErrNotFound
+	}
+	if a.RequestedBy != in.ActorID && !in.Privileged {
+		return fmt.Errorf("%w: only the requester can cancel this approval", ErrForbidden)
+	}
 	ev, err := outbox.NewApprovalCancelled(&in.ActorID, in.ApprovalID, "", in.Reason, in.ActorID)
 	if err != nil {
 		return err

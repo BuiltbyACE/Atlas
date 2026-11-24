@@ -19,9 +19,22 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
       dashboard (task/board and overdue-work tiles);
     * `people.*.v1` — push `<entity>.changed` to any named person plus
       `dashboard.changed` to the dashboard (daily-report and leave tiles);
+    * `crm.*.v1` — push `<entity>.changed` to the commercial board (`crm:sales`),
+      any named owner, plus `dashboard.changed` to the dashboard (commercial
+      tiles);
+    * `contracts.*.v1` — push `<entity>.changed` to the contracts board
+      (`contracts:board`) plus `dashboard.changed` to the dashboard;
+    * `finance.*.v1` — push `<entity>.changed` to the finance board
+      (`finance:board`) plus `dashboard.changed` to the dashboard;
+    * `systems.*.v1` — push `incident.changed` to the systems board
+      (`systems:board`) plus `dashboard.changed` to the dashboard;
     * `integrations.git.pull_request.merged.v1` — a merged pull request the
       integration linked to a task (`work` entity): the same project board and
-      dashboard nudges as `work.evidence.added.v1`.
+      dashboard nudges as `work.evidence.added.v1`;
+    * `integrations.github.*.v1` — GitHub engineering intelligence events
+      (push, pull_request, check_run, deployment_status, installation): push
+      `github.changed` to the project board and `dashboard.changed` to the
+      executive dashboard.
 
   Reacting means *signalling*, never writing business data (ADR-009): Go remains
   the authority, the orchestrator nudges.
@@ -29,10 +42,16 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
   require Logger
 
   alias AtlasOrchestrator.Approvals.Handler, as: ApprovalsHandler
+  alias AtlasOrchestrator.Contracts.Handler, as: ContractsHandler
+  alias AtlasOrchestrator.Crm.Handler, as: CrmHandler
   alias AtlasOrchestrator.Dashboard.Handler, as: DashboardHandler
+  alias AtlasOrchestrator.Finance.Handler, as: FinanceHandler
+  alias AtlasOrchestrator.Intel.Handler, as: IntelHandler
   alias AtlasOrchestrator.Notifications.Handler, as: NotificationsHandler
   alias AtlasOrchestrator.Outbox.Event
   alias AtlasOrchestrator.People.Handler, as: PeopleHandler
+  alias AtlasOrchestrator.Systems.Handler, as: SystemsHandler
+  alias AtlasOrchestrator.Units.Handler, as: UnitsHandler
   alias AtlasOrchestrator.Work.Handler, as: WorkHandler
 
   @doc "Handles one event. Unknown types are logged and ignored, not failed."
@@ -70,8 +89,50 @@ defmodule AtlasOrchestrator.Outbox.Handlers do
     WorkHandler.handle_event(event)
   end
 
+  # GitHub engineering intelligence events (push, PR, CI, deployment,
+  # installation): nudge the project board and executive dashboard.
+  def dispatch(%Event{type: "integrations.github." <> _} = event) do
+    WorkHandler.handle_event(event)
+  end
+
   def dispatch(%Event{type: "people." <> _} = event) do
     PeopleHandler.handle_event(event)
+  end
+
+  # CRM & sales (§8.1): nudge the commercial board, any named owner and the
+  # dashboard. The handler reads the payload keys Go wrote (internal/outbox/crm.go).
+  def dispatch(%Event{type: "crm." <> _} = event) do
+    CrmHandler.handle_event(event)
+  end
+
+  # Contracts & commitments (§8.3): nudge the contracts board and the dashboard.
+  def dispatch(%Event{type: "contracts." <> _} = event) do
+    ContractsHandler.handle_event(event)
+  end
+
+  # Finance & commercial control (§8.4): nudge the finance board and the
+  # dashboard. The handler reads the payload keys Go wrote
+  # (internal/outbox/finance.go).
+  def dispatch(%Event{type: "finance." <> _} = event) do
+    FinanceHandler.handle_event(event)
+  end
+
+  # Systems observability (§8.6): nudge the systems board and the dashboard. The
+  # handler reads the payload keys Go wrote (internal/outbox/systems.go).
+  def dispatch(%Event{type: "systems." <> _} = event) do
+    SystemsHandler.handle_event(event)
+  end
+
+  # Units oversight (§8.7): nudge the units board and the dashboard. The handler
+  # reads the payload keys Go wrote (internal/outbox/units.go).
+  def dispatch(%Event{type: "units." <> _} = event) do
+    UnitsHandler.handle_event(event)
+  end
+
+  # Executive intelligence (§8.8): nudge the intel board and the dashboard. The
+  # handler reads the payload keys Go wrote (internal/outbox/intel.go).
+  def dispatch(%Event{type: "intel." <> _} = event) do
+    IntelHandler.handle_event(event)
   end
 
   def dispatch(%Event{type: "core.escalation." <> _} = event) do

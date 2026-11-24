@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://atlas.safaristack.co.ke/schemas/events/core.approval.declined.v1.schema.json",
+  "$id": "https://atlas.safaristacksolutions.co.ke/schemas/events/core.approval.declined.v1.schema.json",
   "title": "core.approval.declined.v1",
   "description": "An approval was declined (docs/ATLAS.md §6.3, §7.4).",
   "type": "object",

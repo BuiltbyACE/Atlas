@@ -1231,6 +1231,9 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpx.WriteProblem(w, r, httpx.BadRequest(err.Error()))
 	case errors.Is(err, ErrForbidden):
 		httpx.WriteProblem(w, r, httpx.Forbidden(err.Error()))
+	case errors.Is(err, ErrEvidenceRequired):
+		httpx.WriteProblem(w, r, httpx.New(http.StatusConflict, httpx.CodeTaskEvidenceRequired,
+			"Attach evidence — a merged pull request, a document, a test result or a client approval — before moving this task to Done."))
 	case errors.Is(err, ErrConflict):
 		httpx.WriteProblem(w, r, httpx.PreconditionFailed(err.Error()))
 	default:

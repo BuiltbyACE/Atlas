@@ -53,12 +53,25 @@ func (s *Sender) Channel() notifications.Channel { return notifications.ChannelE
 // Provider names the adapter for attempt records and metrics.
 func (s *Sender) Provider() string { return "smtp" }
 
-// Send delivers one message. The deadline comes from the dispatcher's context;
-// the connection deadline is set from it so a stalled server cannot pin a slot.
+// Send delivers one notification message from the configured sender address.
 func (s *Sender) Send(ctx context.Context, msg notifications.Message) (string, error) {
 	to := strings.TrimSpace(msg.To)
 	if to == "" {
 		return "", fmt.Errorf("email: no recipient address")
+	}
+	if err := s.SendRaw(ctx, s.cfg.From, []string{to}, buildMessage(s.cfg.From, msg)); err != nil {
+		return "", err
+	}
+	return messageID(msg.IdempotencyKey), nil
+}
+
+// SendRaw hands a fully formed RFC 5322 message to the SMTP server. from is the
+// envelope sender and rcpts every envelope recipient (To, Cc and Bcc alike; Bcc
+// appears only here, never in the headers). The deadline comes from ctx, or ten
+// seconds, so a stalled server cannot pin a worker.
+func (s *Sender) SendRaw(ctx context.Context, from string, rcpts []string, data []byte) error {
+	if len(rcpts) == 0 {
+		return fmt.Errorf("email: no recipient address")
 	}
 
 	deadline := time.Now().Add(10 * time.Second)
@@ -69,50 +82,51 @@ func (s *Sender) Send(ctx context.Context, msg notifications.Message) (string, e
 	addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(s.cfg.Port))
 	conn, err := net.DialTimeout("tcp", addr, time.Until(deadline))
 	if err != nil {
-		return "", fmt.Errorf("email: dial %s: %w", addr, err)
+		return fmt.Errorf("email: dial %s: %w", addr, err)
 	}
 	_ = conn.SetDeadline(deadline)
 
 	client, err := smtp.NewClient(conn, s.cfg.Host)
 	if err != nil {
 		_ = conn.Close()
-		return "", fmt.Errorf("email: smtp handshake: %w", err)
+		return fmt.Errorf("email: smtp handshake: %w", err)
 	}
 	defer func() { _ = client.Quit() }()
 
 	if s.cfg.TLS {
 		if ok, _ := client.Extension("STARTTLS"); ok {
 			if err := client.StartTLS(&tls.Config{ServerName: s.cfg.Host, MinVersion: tls.VersionTLS12}); err != nil {
-				return "", fmt.Errorf("email: starttls: %w", err)
+				return fmt.Errorf("email: starttls: %w", err)
 			}
 		}
 	}
 	if s.cfg.Username != "" {
 		auth := smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
 		if err := client.Auth(auth); err != nil {
-			return "", fmt.Errorf("email: auth: %w", err)
+			return fmt.Errorf("email: auth: %w", err)
 		}
 	}
-	if err := client.Mail(s.cfg.From); err != nil {
-		return "", fmt.Errorf("email: mail from: %w", err)
+	if err := client.Mail(from); err != nil {
+		return fmt.Errorf("email: mail from: %w", err)
 	}
-	if err := client.Rcpt(to); err != nil {
-		return "", fmt.Errorf("email: rcpt to: %w", err)
+	for _, rcpt := range rcpts {
+		if err := client.Rcpt(rcpt); err != nil {
+			return fmt.Errorf("email: rcpt to %s: %w", rcpt, err)
+		}
 	}
 
 	w, err := client.Data()
 	if err != nil {
-		return "", fmt.Errorf("email: data: %w", err)
+		return fmt.Errorf("email: data: %w", err)
 	}
-	if _, err := w.Write(buildMessage(s.cfg.From, msg)); err != nil {
+	if _, err := w.Write(data); err != nil {
 		_ = w.Close()
-		return "", fmt.Errorf("email: write body: %w", err)
+		return fmt.Errorf("email: write body: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		return "", fmt.Errorf("email: close body: %w", err)
+		return fmt.Errorf("email: close body: %w", err)
 	}
-
-	return messageID(msg.IdempotencyKey), nil
+	return nil
 }
 
 func buildMessage(from string, msg notifications.Message) []byte {

@@ -1,0 +1,30 @@
+# Railway upload filter (`railway up`).
+# Mirrors .dockerignore: the CLI tars the working tree and sends it, so local
+# build output and secrets must not travel.
+
+.git
+.github
+images
+
+**/node_modules
+**/.next
+**/out
+**/_build
+**/deps
+**/cover
+
+**/*.exe
+**/*.test
+**/*.out
+**/coverage.out
+**/*.tsbuildinfo
+**/test-results
+**/playwright-report
+
+.env
+.env.*
+!.env.example
+
+**/.env
+**/.env.*
+!**/.env.example
