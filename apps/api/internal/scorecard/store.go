@@ -215,7 +215,7 @@ func (s *PGStore) Scorecard(ctx context.Context, now time.Time) (Scorecard, erro
 	// Pipeline value and open opportunities (crm.opportunities).
 	err = s.db.QueryRow(ctx, `
 		SELECT
-			COALESCE((SELECT sum(estimated_value_minor) FROM crm.opportunities
+			COALESCE((SELECT sum(value_minor) FROM crm.opportunities
 			          WHERE stage_key NOT IN ('won','lost','rejected')), 0) AS pipe,
 			(SELECT count(*) FROM crm.opportunities
 			 WHERE stage_key NOT IN ('won','lost','rejected')) AS open_opp`).
@@ -254,14 +254,22 @@ func (s *PGStore) Scorecard(ctx context.Context, now time.Time) (Scorecard, erro
 	// Register totals (systems systems + checks).
 	err = s.db.QueryRow(ctx, `
 		SELECT
-			(SELECT count(*) FROM systems.systems) AS total,
-			(SELECT count(*) FROM systems.systems WHERE tier = 1) AS t1,
-			(SELECT count(*) FROM systems.systems WHERE tier = 2) AS t2,
-			(SELECT count(*) FROM systems.systems WHERE tier = 3) AS t3,
-			(SELECT count(*) FROM systems.checks) AS checks,
-			(SELECT count(*) FROM systems.checks WHERE status = 'failing') AS failing,
-			(SELECT count(*) FROM systems.checks WHERE status = 'warning') AS warning,
-			(SELECT count(*) FROM systems.checks WHERE status = 'unprobed') AS unprobed`,
+			(SELECT count(*) FROM systems.systems WHERE status = 'active') AS total,
+			(SELECT count(*) FROM systems.systems WHERE status = 'active' AND criticality = 'tier1') AS t1,
+			(SELECT count(*) FROM systems.systems WHERE status = 'active' AND criticality = 'tier2') AS t2,
+			(SELECT count(*) FROM systems.systems WHERE status = 'active' AND criticality = 'tier3') AS t3,
+			(SELECT count(*) FROM systems.checks WHERE active) AS checks,
+			(SELECT count(*) FROM systems.checks ck
+			   JOIN LATERAL (SELECT status FROM systems.check_results r
+			                 WHERE r.check_id = ck.id ORDER BY r.at DESC LIMIT 1) lr ON true
+			  WHERE ck.active AND lr.status = 'fail') AS failing,
+			(SELECT count(*) FROM systems.checks ck
+			   JOIN LATERAL (SELECT status FROM systems.check_results r
+			                 WHERE r.check_id = ck.id ORDER BY r.at DESC LIMIT 1) lr ON true
+			  WHERE ck.active AND lr.status = 'warn') AS warning,
+			(SELECT count(*) FROM systems.checks ck
+			  WHERE ck.active
+			    AND NOT EXISTS (SELECT 1 FROM systems.check_results r WHERE r.check_id = ck.id)) AS unprobed`,
 	).Scan(
 		&sc.Systems.SystemsTotal,
 		&sc.Systems.SystemsTier1,
@@ -279,9 +287,9 @@ func (s *PGStore) Scorecard(ctx context.Context, now time.Time) (Scorecard, erro
 	// Incident metrics.
 	err = s.db.QueryRow(ctx, `
 		SELECT
-			(SELECT count(*) FROM systems.incidents WHERE resolved_at IS NULL AND severity = 1) AS sev1,
-			(SELECT count(*) FROM systems.incidents WHERE resolved_at IS NULL AND severity = 2) AS sev2,
-			(SELECT count(*) FROM systems.incidents WHERE resolved_at IS NULL) AS open,
+			(SELECT count(*) FROM systems.incidents WHERE status NOT IN ('resolved','closed') AND severity = 'sev1') AS sev1,
+			(SELECT count(*) FROM systems.incidents WHERE status NOT IN ('resolved','closed') AND severity = 'sev2') AS sev2,
+			(SELECT count(*) FROM systems.incidents WHERE status NOT IN ('resolved','closed')) AS open,
 			(SELECT count(*) FROM systems.incidents WHERE detected_at >= $1) AS last30d`,
 		now.AddDate(0, -30, 0),
 	).Scan(&sc.Systems.OpenSev1, &sc.Systems.OpenSev2, &sc.Systems.OpenIncidents, &sc.Systems.Incidents30D)

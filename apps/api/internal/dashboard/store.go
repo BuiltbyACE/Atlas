@@ -300,9 +300,9 @@ func (s *PGStore) DailyBrief(ctx context.Context, date time.Time) (DailyBrief, e
 	err := s.db.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM crm.opportunities
-			 WHERE status = 'won' AND updated_at >= $1 AND updated_at < $2) AS won,
+			 WHERE stage_key = 'won' AND updated_at >= $1 AND updated_at < $2) AS won,
 			(SELECT count(*) FROM crm.opportunities
-			 WHERE status = 'lost' AND updated_at >= $1 AND updated_at < $2) AS lost`,
+			 WHERE stage_key = 'lost' AND updated_at >= $1 AND updated_at < $2) AS lost`,
 		yesterdayStart, yesterdayEnd,
 	).Scan(&d.Yesterday.DealsWon, &d.Yesterday.DealsLost)
 	if err != nil {
@@ -313,7 +313,7 @@ func (s *PGStore) DailyBrief(ctx context.Context, date time.Time) (DailyBrief, e
 	err = s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount_minor), 0)
 		FROM finance.payments
-		WHERE received_at >= $1 AND received_at < $2`,
+		WHERE received_on >= $1::date AND received_on < $2::date`,
 		yesterdayStart, yesterdayEnd,
 	).Scan(&d.Yesterday.PaymentsReceived)
 	if err != nil {
@@ -358,13 +358,21 @@ func (s *PGStore) DailyBrief(ctx context.Context, date time.Time) (DailyBrief, e
 		return DailyBrief{}, fmt.Errorf("dashboard: daily brief overdue tasks: %w", err)
 	}
 
-	// Overdue invoices (finance.invoices status = overdue).
+	// Overdue invoices: issued, still owing, and past their due date. Overdue is
+	// computed rather than stored (§8.4), so a status of 'issued' counts once the
+	// due date has passed; the value is what is still outstanding after payments.
 	err = s.db.QueryRow(ctx, `
-		SELECT
-			count(*),
-			COALESCE(SUM(amount_minor), 0)
-		FROM finance.invoices
-		WHERE status = 'overdue'`,
+		SELECT count(*), COALESCE(SUM(outstanding), 0)
+		FROM (
+			SELECT COALESCE(i.total_minor, 0) - COALESCE(SUM(pa.amount_minor), 0) AS outstanding
+			FROM finance.invoices i
+			LEFT JOIN finance.payment_allocations pa ON pa.invoice_id = i.id
+			WHERE i.status IN ('issued','partially_paid','overdue')
+			  AND i.due_date IS NOT NULL AND i.due_date < $1::date
+			GROUP BY i.id, i.total_minor
+			HAVING COALESCE(i.total_minor, 0) - COALESCE(SUM(pa.amount_minor), 0) > 0
+		) owing`,
+		now,
 	).Scan(&d.NeedsAttention.OverdueInvoices, &d.NeedsAttention.OverdueInvoicesValue)
 	if err != nil {
 		return DailyBrief{}, fmt.Errorf("dashboard: daily brief overdue invoices: %w", err)
@@ -386,7 +394,7 @@ func (s *PGStore) DailyBrief(ctx context.Context, date time.Time) (DailyBrief, e
 		SELECT count(*)
 		FROM systems.certificates
 		WHERE expires_on IS NOT NULL
-		  AND expires_at >= $1 AND expires_at <= $2`,
+		  AND expires_on >= $1::date AND expires_on <= $2::date`,
 		now, now.AddDate(0, 30, 0),
 	).Scan(&d.NeedsAttention.ExpiringCertificates)
 	if err != nil {
@@ -398,7 +406,7 @@ func (s *PGStore) DailyBrief(ctx context.Context, date time.Time) (DailyBrief, e
 		SELECT count(*)
 		FROM systems.domains
 		WHERE expires_on IS NOT NULL
-		  AND expires_on >= $1 AND expires_on <= $2`,
+		  AND expires_on >= $1::date AND expires_on <= $2::date`,
 		now, now.AddDate(0, 30, 0),
 	).Scan(&d.NeedsAttention.ExpiringDomains)
 	if err != nil {
