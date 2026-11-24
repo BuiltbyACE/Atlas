@@ -64,50 +64,87 @@ type SendMessageOptions struct {
 	ToAddresses    []string
 	CCAddresses    []string
 	BCCAddresses   []string
-	InReplyTo     string
-	MsgReferences string
-	Attachments   []AttachmentInput
+	InReplyTo      string
+	MsgReferences  string
+	Attachments    []AttachmentInput
 	IdempotencyKey string
 }
 
 // AttachmentInput describes a file to attach to an outgoing email.
 type AttachmentInput struct {
-	Filename     string
-	ContentType  string
-	SizeBytes    int64
-	StorageKey   string
+	Filename    string
+	ContentType string
+	SizeBytes   int64
+	StorageKey  string
 }
 
-// RegisterAddress records a verified "send as" identity for a user.
-func (s *Service) RegisterAddress(ctx context.Context, opts SendAddressOptions) (*Address, error) {
-	if opts.Address == "" {
-		return nil, ErrInvalid
+// Actor is the signed-in person an email operation runs as. Every read and
+// write is scoped to them: Go is the authority on who may see which mail.
+type Actor struct {
+	UserID uuid.UUID
+	Email  string
+}
+
+func (a Actor) valid() bool { return a.UserID != uuid.Nil }
+
+// prepare makes sure the actor's login email exists as a verified address.
+func (s *Service) prepare(ctx context.Context, a Actor) error {
+	if !a.valid() {
+		return ErrForbidden
 	}
-	addr, err := s.store.CreateAddress(ctx, s.store.DB(), opts.UserID, opts.Address, opts.IsPrimary)
+	return s.store.EnsureLoginAddress(ctx, a.UserID, a.Email)
+}
+
+// RegisterAddress records a send-as address for the actor. The actor's own login
+// email is verified already; any other address is stored unverified and cannot
+// be used to send or to read mail until an administrator verifies it, because
+// otherwise anyone could claim a shared mailbox and read it.
+func (s *Service) RegisterAddress(ctx context.Context, a Actor, address string, isPrimary bool) (*Address, error) {
+	if err := s.prepare(ctx, a); err != nil {
+		return nil, err
+	}
+	bare, err := normalizeAddress(address)
 	if err != nil {
 		return nil, err
 	}
-	if opts.IsPrimary {
-		if err := s.store.SetPrimaryAddress(ctx, s.store.DB(), opts.UserID, addr.ID); err != nil {
-			return nil, err
+	addrs, err := s.store.ListAddresses(ctx, a.UserID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range addrs {
+		if addrs[i].Address == bare {
+			return &addrs[i], nil // already registered to this user
 		}
 	}
-	return addr, nil
+	created, err := s.store.CreateAddress(ctx, s.store.DB(), a.UserID, bare, false)
+	if err != nil {
+		return nil, err
+	}
+	return created, nil
 }
 
-// ListAddresses returns a user's send-as addresses.
-func (s *Service) ListAddresses(ctx context.Context, userID uuid.UUID) ([]Address, error) {
-	return s.store.ListAddresses(ctx, userID)
+// ListAddresses returns the actor's send-as addresses.
+func (s *Service) ListAddresses(ctx context.Context, a Actor) ([]Address, error) {
+	if err := s.prepare(ctx, a); err != nil {
+		return nil, err
+	}
+	return s.store.ListAddresses(ctx, a.UserID)
 }
 
-// ListThreads returns the caller's threads (inbox).
-func (s *Service) ListThreads(ctx context.Context, limit int, before *uuid.UUID) ([]ThreadListItem, error) {
-	return s.store.ListThreads(ctx, limit, before)
+// ListThreads returns the actor's threads (inbox).
+func (s *Service) ListThreads(ctx context.Context, a Actor, limit int, before *uuid.UUID) ([]ThreadListItem, error) {
+	if err := s.prepare(ctx, a); err != nil {
+		return nil, err
+	}
+	return s.store.ListThreads(ctx, a.UserID, limit, before)
 }
 
-// GetThreadWithMessages returns a thread with its messages for the conversation view.
-func (s *Service) GetThreadWithMessages(ctx context.Context, id uuid.UUID, limit int, before *uuid.UUID) (*Thread, []MessageView, error) {
-	return s.store.GetThreadWithMessages(ctx, id, limit, before)
+// GetThreadWithMessages returns a thread with its messages, if the actor may see it.
+func (s *Service) GetThreadWithMessages(ctx context.Context, a Actor, id uuid.UUID, limit int, before *uuid.UUID) (*Thread, []MessageView, error) {
+	if err := s.prepare(ctx, a); err != nil {
+		return nil, nil, err
+	}
+	return s.store.GetThreadWithMessages(ctx, a.UserID, id, limit, before)
 }
 
 // Send sends an outbound email. It creates the thread/message records and
@@ -138,22 +175,22 @@ func (s *Service) Send(ctx context.Context, opts SendMessageOptions) (*Message, 
 
 	now := s.now()
 	msg := &Message{
-		ID:           messageID,
-		ThreadID:     threadID,
-		Direction:    DirectionOutbound,
-		FromAddress:  opts.FromAddress,
-		ToAddresses:  opts.ToAddresses,
-		CCAddresses:  opts.CCAddresses,
-		BCCAddresses: opts.BCCAddresses,
-		Subject:      opts.Subject,
-		BodyText:     opts.BodyText,
-		BodyHTML:     opts.BodyHTML,
-		MessageID:    messageID.String(),
-		InReplyTo:    opts.InReplyTo,
+		ID:            messageID,
+		ThreadID:      threadID,
+		Direction:     DirectionOutbound,
+		FromAddress:   opts.FromAddress,
+		ToAddresses:   opts.ToAddresses,
+		CCAddresses:   opts.CCAddresses,
+		BCCAddresses:  opts.BCCAddresses,
+		Subject:       opts.Subject,
+		BodyText:      opts.BodyText,
+		BodyHTML:      opts.BodyHTML,
+		MessageID:     messageID.String(),
+		InReplyTo:     opts.InReplyTo,
 		MsgReferences: opts.MsgReferences,
-		SentAt:       &now,
-		Status:       StatusSent,
-		CreatedAt:    now,
+		SentAt:        &now,
+		Status:        StatusSent,
+		CreatedAt:     now,
 	}
 
 	// Begin a transaction so thread + message + attachments commit together.
@@ -205,17 +242,17 @@ func (s *Service) Send(ctx context.Context, opts SendMessageOptions) (*Message, 
 
 // InboundMessage is a parsed inbound email from the provider webhook.
 type InboundMessage struct {
-	MessageID   string
-	InReplyTo   string
+	MessageID     string
+	InReplyTo     string
 	MsgReferences string
-	FromAddress string
-	ToAddresses []string
-	CCAddresses []string
-	Subject     string
-	BodyText    string
-	BodyHTML    string
-	ReceivedAt  time.Time
-	Attachments []InboundAttachment
+	FromAddress   string
+	ToAddresses   []string
+	CCAddresses   []string
+	Subject       string
+	BodyText      string
+	BodyHTML      string
+	ReceivedAt    time.Time
+	Attachments   []InboundAttachment
 }
 
 // InboundAttachment is an attachment from an inbound email.
@@ -256,21 +293,21 @@ func (s *Service) Receive(ctx context.Context, m InboundMessage) (*Message, erro
 
 	now := s.now()
 	msg := &Message{
-		ID:           uuid.Nil,
-		ThreadID:     threadID,
-		Direction:    DirectionInbound,
-		FromAddress:  m.FromAddress,
-		ToAddresses:  m.ToAddresses,
-		CCAddresses:  m.CCAddresses,
-		Subject:      m.Subject,
-		BodyText:     m.BodyText,
-		BodyHTML:     m.BodyHTML,
-		MessageID:    m.MessageID,
-		InReplyTo:    m.InReplyTo,
+		ID:            uuid.Nil,
+		ThreadID:      threadID,
+		Direction:     DirectionInbound,
+		FromAddress:   m.FromAddress,
+		ToAddresses:   m.ToAddresses,
+		CCAddresses:   m.CCAddresses,
+		Subject:       m.Subject,
+		BodyText:      m.BodyText,
+		BodyHTML:      m.BodyHTML,
+		MessageID:     m.MessageID,
+		InReplyTo:     m.InReplyTo,
 		MsgReferences: m.MsgReferences,
-		ReceivedAt:   &now,
-		Status:       StatusReceived,
-		CreatedAt:    now,
+		ReceivedAt:    &now,
+		Status:        StatusReceived,
+		CreatedAt:     now,
 	}
 	msg.ID, _ = uuid.NewV7()
 

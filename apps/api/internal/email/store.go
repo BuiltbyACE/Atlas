@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,25 +54,25 @@ type Thread struct {
 
 // Message is one email message, inbound or outbound.
 type Message struct {
-	ID           uuid.UUID        `json:"id"`
-	ThreadID     uuid.UUID        `json:"thread_id"`
-	Direction    MessageDirection `json:"direction"`
-	FromAddress  string           `json:"from_address"`
-	ToAddresses  []string         `json:"to_addresses"`
-	CCAddresses  []string         `json:"cc_addresses"`
-	BCCAddresses []string         `json:"bcc_addresses"`
-	Subject      string           `json:"subject"`
-	BodyText     string           `json:"body_text"`
-	BodyHTML     string           `json:"body_html"`
-	MessageID    string           `json:"message_id"`
-	InReplyTo    string           `json:"in_reply_to,omitempty"`
-	MsgReferences string          `json:"msg_references,omitempty"`
-	ReceivedAt   *time.Time       `json:"received_at,omitempty"`
-	SentAt       *time.Time       `json:"sent_at,omitempty"`
-	Status       MessageStatus    `json:"status"`
-	ProviderRef  string           `json:"provider_ref,omitempty"`
-	ErrorMessage string           `json:"error_message,omitempty"`
-	CreatedAt    time.Time        `json:"created_at"`
+	ID            uuid.UUID        `json:"id"`
+	ThreadID      uuid.UUID        `json:"thread_id"`
+	Direction     MessageDirection `json:"direction"`
+	FromAddress   string           `json:"from_address"`
+	ToAddresses   []string         `json:"to_addresses"`
+	CCAddresses   []string         `json:"cc_addresses"`
+	BCCAddresses  []string         `json:"bcc_addresses"`
+	Subject       string           `json:"subject"`
+	BodyText      string           `json:"body_text"`
+	BodyHTML      string           `json:"body_html"`
+	MessageID     string           `json:"message_id"`
+	InReplyTo     string           `json:"in_reply_to,omitempty"`
+	MsgReferences string           `json:"msg_references,omitempty"`
+	ReceivedAt    *time.Time       `json:"received_at,omitempty"`
+	SentAt        *time.Time       `json:"sent_at,omitempty"`
+	Status        MessageStatus    `json:"status"`
+	ProviderRef   string           `json:"provider_ref,omitempty"`
+	ErrorMessage  string           `json:"error_message,omitempty"`
+	CreatedAt     time.Time        `json:"created_at"`
 }
 
 // Attachment is a file attached to an email message.
@@ -107,20 +108,20 @@ type ThreadListItem struct {
 
 // MessageView is a message shaped for the conversation view.
 type MessageView struct {
-	ID            uuid.UUID        `json:"id"`
-	ThreadID      uuid.UUID        `json:"thread_id"`
-	Direction     MessageDirection `json:"direction"`
-	FromAddress   string           `json:"from_address"`
-	ToAddresses   []string         `json:"to_addresses"`
-	CCAddresses   []string         `json:"cc_addresses"`
-	Subject       string           `json:"subject"`
-	BodyText      string           `json:"body_text"`
-	BodyHTML      string           `json:"body_html"`
-	SentAt        *time.Time       `json:"sent_at,omitempty"`
-	ReceivedAt    *time.Time       `json:"received_at,omitempty"`
-	Status        MessageStatus    `json:"status"`
-	Attachments   []Attachment     `json:"attachments"`
-	CreatedAt     time.Time        `json:"created_at"`
+	ID          uuid.UUID        `json:"id"`
+	ThreadID    uuid.UUID        `json:"thread_id"`
+	Direction   MessageDirection `json:"direction"`
+	FromAddress string           `json:"from_address"`
+	ToAddresses []string         `json:"to_addresses"`
+	CCAddresses []string         `json:"cc_addresses"`
+	Subject     string           `json:"subject"`
+	BodyText    string           `json:"body_text"`
+	BodyHTML    string           `json:"body_html"`
+	SentAt      *time.Time       `json:"sent_at,omitempty"`
+	ReceivedAt  *time.Time       `json:"received_at,omitempty"`
+	Status      MessageStatus    `json:"status"`
+	Attachments []Attachment     `json:"attachments"`
+	CreatedAt   time.Time        `json:"created_at"`
 }
 
 // Store is the persistence interface for email.
@@ -131,8 +132,8 @@ type Store interface {
 
 	// Threads.
 	GetThread(ctx context.Context, id uuid.UUID) (*Thread, error)
-	ListThreads(ctx context.Context, limit int, before *uuid.UUID) ([]ThreadListItem, error)
-	GetThreadWithMessages(ctx context.Context, id uuid.UUID, limit int, before *uuid.UUID) (*Thread, []MessageView, error)
+	ListThreads(ctx context.Context, userID uuid.UUID, limit int, before *uuid.UUID) ([]ThreadListItem, error)
+	GetThreadWithMessages(ctx context.Context, userID, id uuid.UUID, limit int, before *uuid.UUID) (*Thread, []MessageView, error)
 
 	// Messages.
 	CreateThread(ctx context.Context, subject string) (uuid.UUID, error)
@@ -147,6 +148,9 @@ type Store interface {
 	ListAddresses(ctx context.Context, userID uuid.UUID) ([]Address, error)
 	GetAddress(ctx context.Context, id uuid.UUID) (*Address, error)
 	CreateAddress(ctx context.Context, ex Execer, userID uuid.UUID, address string, isPrimary bool) (*Address, error)
+	// EnsureLoginAddress makes the account holder's login email a verified
+	// send-as address, so every user can read and send mail from day one.
+	EnsureLoginAddress(ctx context.Context, userID uuid.UUID, loginEmail string) error
 	SetPrimaryAddress(ctx context.Context, ex Execer, userID uuid.UUID, addressID uuid.UUID) error
 
 	// Attachments.
@@ -188,116 +192,6 @@ func (s *PGStore) GetThread(ctx context.Context, id uuid.UUID) (*Thread, error) 
 		return nil, fmt.Errorf("email: get thread: %w", err)
 	}
 	return &t, nil
-}
-
-// ListThreads returns threads newest first, paginated by cursor.
-func (s *PGStore) ListThreads(ctx context.Context, limit int, before *uuid.UUID) ([]ThreadListItem, error) {
-	args := []any{}
-	where := "TRUE"
-	if before != nil {
-		args = append(args, *before)
-		where += fmt.Sprintf(" AND t.updated_at < (SELECT updated_at FROM core.email_threads WHERE id = $%d)", len(args))
-	}
-	args = append(args, limit)
-	rows, err := s.db.Query(ctx, `
-		SELECT t.id, t.subject, t.updated_at,
-		       COALESCE(mc.message_count, 0) AS message_count,
-		       COALESCE(mc.unread_count, 0) AS unread_count
-		FROM core.email_threads t
-		JOIN LATERAL (
-			SELECT COUNT(*) AS message_count,
-			       COUNT(*) FILTER (WHERE status = 'received' AND received_at IS NOT NULL) AS unread_count
-			FROM core.email_messages m WHERE m.thread_id = t.id
-		) mc ON TRUE
-		WHERE ` + where + `
-		ORDER BY t.updated_at DESC
-		LIMIT $%d`, args...)
-	if err != nil {
-		return nil, fmt.Errorf("email: list threads: %w", err)
-	}
-	defer rows.Close()
-
-	var threads []ThreadListItem
-	for rows.Next() {
-		var t ThreadListItem
-		if err := rows.Scan(
-			&t.ID, &t.Subject, &t.UpdatedAt,
-			&t.MessageCount, &t.UnreadCount,
-		); err != nil {
-			return nil, fmt.Errorf("email: scan thread: %w", err)
-		}
-		threads = append(threads, t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("email: threads: %w", err)
-	}
-	return threads, nil
-}
-
-// GetThreadWithMessages loads a thread with its messages for the conversation view.
-func (s *PGStore) GetThreadWithMessages(ctx context.Context, id uuid.UUID, limit int, before *uuid.UUID) (*Thread, []MessageView, error) {
-	t, err := s.GetThread(ctx, id)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	args := []any{id}
-	where := "m.thread_id = $1"
-	if before != nil {
-		args = append(args, *before)
-		where += fmt.Sprintf(" AND m.created_at < $%d", len(args))
-	}
-	args = append(args, limit)
-	rows, err := s.db.Query(ctx, `
-		SELECT m.id, m.direction, m.from_address, m.to_addresses, m.cc_addresses,
-		       m.subject, m.body_text, m.body_html, m.sent_at, m.received_at,
-		       m.status, m.created_at,
-		       a.id, a.filename, a.content_type, a.size_bytes, a.storage_key
-		FROM core.email_messages m
-		LEFT JOIN LATERAL (
-			SELECT id, message_id, filename, content_type, size_bytes, storage_key
-			FROM core.email_attachments WHERE message_id = m.id
-		) a ON TRUE
-		WHERE ` + where + `
-		ORDER BY m.created_at DESC
-		LIMIT $%d`, args...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("email: get thread messages: %w", err)
-	}
-	defer rows.Close()
-
-	var messages []MessageView
-	for rows.Next() {
-		var m MessageView
-		var attID *uuid.UUID
-		var attFilename, attContentType *string
-		var attSize *int64
-		var attStorageKey *string
-		if err := rows.Scan(
-			&m.ID, &m.Direction, &m.FromAddress, &m.ToAddresses, &m.CCAddresses,
-			&m.Subject, &m.BodyText, &m.BodyHTML, &m.SentAt, &m.ReceivedAt,
-			&m.Status, &m.CreatedAt,
-			&attID, &attFilename, &attContentType, &attSize, &attStorageKey,
-		); err != nil {
-			return nil, nil, fmt.Errorf("email: scan message: %w", err)
-		}
-		m.ThreadID = id
-		if attID != nil {
-			m.Attachments = append(m.Attachments, Attachment{
-				ID:          *attID,
-				MessageID:   m.ID,
-				Filename:    *attFilename,
-				ContentType: *attContentType,
-				SizeBytes:   *attSize,
-				StorageKey:  *attStorageKey,
-			})
-		}
-		messages = append(messages, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("email: messages: %w", err)
-	}
-	return t, messages, nil
 }
 
 // ── messages ───────────────────────────────────────────────────────────────
@@ -470,10 +364,14 @@ func (s *PGStore) CreateAddress(ctx context.Context, ex Execer, userID uuid.UUID
 	if err != nil {
 		return nil, fmt.Errorf("email: address id: %w", err)
 	}
-	a := &Address{ID: id, UserID: userID, Address: address, Verified: false, IsPrimary: isPrimary, CreatedAt: time.Now().UTC()}
+	a := &Address{ID: id, UserID: userID, Address: strings.ToLower(strings.TrimSpace(address)), Verified: false, IsPrimary: isPrimary, CreatedAt: time.Now().UTC()}
 	if _, err := ex.Exec(ctx, `
 		INSERT INTO core.email_addresses (id, user_id, address, verified, is_primary, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6)`, a.ID, a.UserID, a.Address, a.Verified, a.IsPrimary, a.CreatedAt); err != nil {
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) && pg.Code == "23505" {
+			return nil, errDuplicateAddress
+		}
 		return nil, fmt.Errorf("email: create address: %w", err)
 	}
 	return a, nil

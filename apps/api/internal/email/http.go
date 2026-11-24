@@ -11,11 +11,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/safaristack/atlas/apps/api/internal/authz"
 	"github.com/safaristack/atlas/apps/api/internal/platform/httpx"
 	"github.com/safaristack/atlas/apps/api/internal/platform/routing"
 )
@@ -53,17 +55,17 @@ func (h *Handler) Routes(reg *routing.Registry) {
 // ── request and response shapes ──────────────────────────────
 
 type composeRequest struct {
-	ThreadID      *uuid.UUID `json:"thread_id,omitempty"`
-	Subject       string     `json:"subject"`
-	BodyText      string     `json:"body_text,omitempty"`
-	BodyHTML      string     `json:"body_html,omitempty"`
-	FromAddress   string     `json:"from_address"`
-	ToAddresses   []string   `json:"to_addresses"`
-	CCAddresses   []string   `json:"cc_addresses,omitempty"`
-	BCCAddresses  []string   `json:"bcc_addresses,omitempty"`
-	InReplyTo     string     `json:"in_reply_to,omitempty"`
-	MsgReferences string     `json:"msg_references,omitempty"`
-	IdempotencyKey string    `json:"idempotency_key,omitempty"`
+	ThreadID       *uuid.UUID `json:"thread_id,omitempty"`
+	Subject        string     `json:"subject"`
+	BodyText       string     `json:"body_text,omitempty"`
+	BodyHTML       string     `json:"body_html,omitempty"`
+	FromAddress    string     `json:"from_address"`
+	ToAddresses    []string   `json:"to_addresses"`
+	CCAddresses    []string   `json:"cc_addresses,omitempty"`
+	BCCAddresses   []string   `json:"bcc_addresses,omitempty"`
+	InReplyTo      string     `json:"in_reply_to,omitempty"`
+	MsgReferences  string     `json:"msg_references,omitempty"`
+	IdempotencyKey string     `json:"idempotency_key,omitempty"`
 }
 
 type composeResponse struct {
@@ -123,10 +125,14 @@ func (h *Handler) Compose(w http.ResponseWriter, r *http.Request) {
 
 // ListThreads handles GET /api/v1/email/threads.
 func (h *Handler) ListThreads(w http.ResponseWriter, r *http.Request) {
-	threads, err := h.service.ListThreads(r.Context(), 50, nil)
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	threads, err := h.service.ListThreads(r.Context(), actor, 50, nil)
 	if err != nil {
 		h.logger.Error("email: list threads failed", slog.String("error", fmt.Sprintf("%+v", err)))
-		httpx.WriteError(w, r, h.logger, err)
+		h.writeError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, threads)
@@ -141,13 +147,13 @@ func (h *Handler) GetThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, messages, err := h.service.GetThreadWithMessages(r.Context(), id, 100, nil)
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	_, messages, err := h.service.GetThreadWithMessages(r.Context(), actor, id, 100, nil)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			httpx.WriteError(w, r, h.logger, httpx.NotFound("Thread not found."))
-			return
-		}
-		httpx.WriteError(w, r, h.logger, err)
+		h.writeError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, messages)
@@ -189,16 +195,16 @@ func (h *Handler) ReceiveInbound(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msg, err := h.service.Receive(r.Context(), InboundMessage{
-		MessageID:   payload.MessageID,
-		InReplyTo:   payload.InReplyTo,
+		MessageID:     payload.MessageID,
+		InReplyTo:     payload.InReplyTo,
 		MsgReferences: payload.References,
-		FromAddress: payload.From,
-		ToAddresses: payload.To,
-		CCAddresses: payload.Cc,
-		Subject:     payload.Subject,
-		BodyText:    payload.Text,
-		BodyHTML:    payload.Html,
-		Attachments: attachments,
+		FromAddress:   payload.From,
+		ToAddresses:   payload.To,
+		CCAddresses:   payload.Cc,
+		Subject:       payload.Subject,
+		BodyText:      payload.Text,
+		BodyHTML:      payload.Html,
+		Attachments:   attachments,
 	})
 	if err != nil {
 		if errors.Is(err, ErrInvalid) {
@@ -219,15 +225,19 @@ func (h *Handler) ReceiveInbound(w http.ResponseWriter, r *http.Request) {
 		"id":        msg.ID.String(),
 		"thread_id": msg.ThreadID.String(),
 		"status":    string(msg.Status),
-		})
+	})
 }
 
 // ListAddresses handles GET /api/v1/email/addresses.
 func (h *Handler) ListAddresses(w http.ResponseWriter, r *http.Request) {
-	addresses, err := h.service.ListAddresses(r.Context(), uuid.Nil)
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	addresses, err := h.service.ListAddresses(r.Context(), actor)
 	if err != nil {
 		h.logger.Error("email: list addresses failed", slog.String("error", err.Error()))
-		httpx.WriteError(w, r, h.logger, err)
+		h.writeError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, addresses)
@@ -241,14 +251,13 @@ func (h *Handler) RegisterAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	addr, err := h.service.RegisterAddress(r.Context(), SendAddressOptions{
-		UserID:    uuid.Nil,
-		Address:   req.Address,
-		IsPrimary: req.IsPrimary,
-	})
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	addr, err := h.service.RegisterAddress(r.Context(), actor, req.Address, req.IsPrimary)
 	if err != nil {
-		h.logger.Error("email: register address failed", slog.String("error", err.Error()))
-		httpx.WriteError(w, r, h.logger, err)
+		h.writeError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, registerAddressResponse{
@@ -257,4 +266,32 @@ func (h *Handler) RegisterAddress(w http.ResponseWriter, r *http.Request) {
 		Verified:  addr.Verified,
 		IsPrimary: addr.IsPrimary,
 	})
+}
+
+// actor is the signed-in person the request runs as. The route gate has already
+// required a principal, but a service identity has no mailbox, so only users pass.
+func (h *Handler) actor(w http.ResponseWriter, r *http.Request) (Actor, bool) {
+	p, ok := authz.PrincipalFrom(r.Context())
+	if !ok || !p.IsUser() {
+		httpx.WriteProblem(w, r, httpx.Unauthenticated("Authentication is required."))
+		return Actor{}, false
+	}
+	return Actor{UserID: p.UserID, Email: p.Email}, true
+}
+
+// writeError maps the package's sentinel errors onto problem responses; anything
+// else is an internal error whose detail stays in the log.
+func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, ErrInvalid):
+		httpx.WriteProblem(w, r, httpx.BadRequest(strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": ")))
+	case errors.Is(err, ErrNotFound):
+		httpx.WriteProblem(w, r, httpx.NotFound("Not found."))
+	case errors.Is(err, ErrForbidden):
+		httpx.WriteProblem(w, r, httpx.Forbidden("You do not have access to this mailbox."))
+	case errors.Is(err, errDuplicateAddress):
+		httpx.WriteProblem(w, r, httpx.Conflict("That address is already registered."))
+	default:
+		httpx.WriteError(w, r, h.logger, err)
+	}
 }
