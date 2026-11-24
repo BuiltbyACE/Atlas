@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 
 import { heartbeat } from "@/lib/api/atlas";
+import { isSessionEnded } from "@/lib/api/client";
 
 /** How often an open client refreshes its session activity. */
 const HEARTBEAT_INTERVAL_MS = 60_000;
@@ -24,7 +25,7 @@ export function PresenceHeartbeat() {
     let disposed = false;
 
     const ping = () => {
-      if (disposed) return;
+      if (disposed || isSessionEnded()) return;
       // The response is irrelevant; the request itself refreshes last_seen_at.
       void heartbeat().catch(() => undefined);
     };

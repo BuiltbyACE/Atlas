@@ -25,6 +25,8 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Socket, type Channel } from "phoenix";
 
+import { isSessionEnded } from "@/lib/api/client";
+
 import { EXEC_DASHBOARD_TOPIC, userTopic } from "@/lib/realtime/topics";
 
 /** Event name the orchestrator pushes signals on for every topic. */
@@ -136,6 +138,7 @@ let tokenFetchedAt = 0;
 let refreshTimer: number | undefined;
 
 async function refreshToken(): Promise<void> {
+  if (isSessionEnded()) return;
   if (Date.now() - tokenFetchedAt < TOKEN_RETRY_MIN_MS) return;
   tokenFetchedAt = Date.now();
   try {

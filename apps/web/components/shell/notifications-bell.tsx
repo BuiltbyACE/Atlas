@@ -12,7 +12,7 @@ import {
   unreadNotificationCount,
   type AtlasNotification,
 } from "@/lib/api/atlas";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, isSessionEnded } from "@/lib/api/client";
 import { timeAgo } from "@/lib/format";
 import { useRealtimeSignals } from "@/lib/realtime/socket";
 import { userTopic } from "@/lib/realtime/topics";
@@ -47,6 +47,7 @@ export function NotificationsBell({ userId }: { userId: string }) {
   const root = useRef<HTMLDivElement>(null);
 
   const refreshCount = useCallback(async () => {
+    if (isSessionEnded()) return;
     try {
       setCount(await unreadNotificationCount());
     } catch (error) {

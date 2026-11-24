@@ -168,6 +168,34 @@ async function toApiError(response: Response): Promise<ApiError> {
  * @example
  * const me = await apiFetch<CurrentUser>("/api/v1/auth/me", { cache: "no-store" });
  */
+/** Set once a 401 has sent this tab to sign-in, so background pollers stop. */
+let sessionEnded = false;
+
+/** True once the browser session has ended. Pollers check it and stop. */
+export function isSessionEnded(): boolean {
+  return sessionEnded;
+}
+
+/**
+ * A 401 on a signed-in page means the session ended (idle timeout, sign-out in
+ * another tab, revoked). Without this a left-open tab kept polling forever: one
+ * week of production logs held hundreds of 401s each from the heartbeat, the
+ * notification count and the realtime token. Send the tab to sign-in once; the
+ * sign-in calls themselves (wrong password, bad code) are expected to 401 and
+ * must not redirect.
+ */
+function endSessionInBrowser(path: string): void {
+  if (typeof window === "undefined" || sessionEnded) return;
+  const here = window.location.pathname;
+  if (here.startsWith("/login") || here.startsWith("/invite")) return;
+  if (path.startsWith("/api/v1/auth/login")) return;
+  if (path.startsWith("/api/v1/auth/mfa")) return;
+  if (path.startsWith("/api/v1/auth/invites")) return;
+  sessionEnded = true;
+  const next = encodeURIComponent(here + window.location.search);
+  window.location.assign(`/login?next=${next}`);
+}
+
 export async function apiFetch<T = unknown>(
   path: string,
   options: ApiFetchOptions = {},
@@ -201,6 +229,7 @@ export async function apiFetch<T = unknown>(
   });
 
   if (!response.ok) {
+    if (response.status === 401) endSessionInBrowser(path);
     throw await toApiError(response);
   }
 
