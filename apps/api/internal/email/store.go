@@ -218,6 +218,11 @@ func (s *PGStore) CreateThread(ctx context.Context, subject string) (uuid.UUID, 
 
 // CreateMessage inserts a new message inside a transaction.
 func (s *PGStore) CreateMessage(ctx context.Context, ex Execer, m *Message) error {
+	// The recipient columns are NOT NULL arrays; a nil slice would be sent as NULL.
+	// Inbound mail never has a Bcc, so without this every inbound insert failed.
+	m.ToAddresses = nonNil(m.ToAddresses)
+	m.CCAddresses = nonNil(m.CCAddresses)
+	m.BCCAddresses = nonNil(m.BCCAddresses)
 	if _, err := ex.Exec(ctx, `
 		INSERT INTO core.email_messages
 		(id, thread_id, direction, from_address, to_addresses, cc_addresses, bcc_addresses,
@@ -409,3 +414,10 @@ func (s *PGStore) CreateAttachment(ctx context.Context, ex Execer, a *Attachment
 
 // Compile-time check that PGStore implements Store.
 var _ Store = (*PGStore)(nil)
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
