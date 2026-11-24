@@ -25,6 +25,9 @@ export default function ComposePage() {
 
   const [addresses, setAddresses] = useState<EmailAddress[]>([]);
   const [loading, setLoading] = useState(true);
+  // loadError: the address list failed. error: sending failed. They are kept apart
+  // so a failed send keeps the form (and the user's text) on screen.
+  const [loadError, setLoadError] = useState<ApiError | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -37,10 +40,25 @@ export default function ComposePage() {
     let cancelled = false;
     listEmailAddresses()
       .then((items) => {
-        if (!cancelled) setAddresses(items);
+        if (cancelled) return;
+        // Only verified addresses may send; default to the primary one.
+        const usable = items.filter((a) => a.verified);
+        setAddresses(usable);
+        const preferred = usable.find((a) => a.is_primary) ?? usable[0];
+        if (preferred) setFromAddress(preferred.address);
       })
-      .catch(() => {
-        if (!cancelled) setLoading(false);
+      .catch((caught) => {
+        // Never swallow this: an empty From list with no explanation is what
+        // made compose look broken.
+        if (cancelled) return;
+        setLoadError(
+          caught instanceof ApiError
+            ? caught
+            : new ApiError(500, {
+                title: "Unexpected error",
+                detail: "Your send-as addresses could not be loaded.",
+              }),
+        );
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -59,12 +77,12 @@ export default function ComposePage() {
     );
   }
 
-  if (error) {
+  if (loadError) {
     return (
       <div className="space-y-6">
         <PageHeader title="Compose" description="Write a new email." />
         <ProblemNotice
-          error={error}
+          error={loadError}
           title="Your send-as addresses could not be loaded"
         />
       </div>
@@ -115,6 +133,17 @@ export default function ComposePage() {
       <form onSubmit={onSubmit} className="space-y-4">
         {error && (
           <ProblemNotice error={error} title="Your message couldn't be sent" />
+        )}
+
+        {addresses.length === 0 && (
+          <div
+            role="status"
+            className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12.5px] text-amber-900"
+          >
+            You have no verified send-as address yet, so you cannot send mail.
+            Your sign-in email becomes available automatically; any other
+            address must be verified by an administrator.
+          </div>
         )}
 
         <Field label="From" htmlFor="compose-from">
@@ -177,7 +206,11 @@ export default function ComposePage() {
           >
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={busy}>
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={busy || addresses.length === 0}
+          >
             {busy ? "Sending…" : "Send"}
           </Button>
         </div>
