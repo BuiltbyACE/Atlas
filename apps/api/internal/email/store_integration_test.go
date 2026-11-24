@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -290,5 +291,41 @@ func TestSetPrimaryAndDeleteAddress(t *testing.T) {
 	}
 	if err := svc.DeleteAddress(ctx, ada, a.ID); err != nil {
 		t.Errorf("deleting an own extra address: %v", err)
+	}
+}
+
+// TestAdminAssignsVerifiedSharedAddress: an unverified claim is taken over by the
+// administrator's assignment, the assignee then sees that mailbox, and an address
+// already verified for someone else is a conflict.
+func TestAdminAssignsVerifiedSharedAddress(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	st := NewPGStore(pool)
+	svc := NewService(st, nil)
+	ada := newUser(t, pool, "ada")
+	bob := newUser(t, pool, "bob")
+
+	shared := "support-" + uuid.NewString()[:8] + "@mail.safaristacksolutions.co.ke"
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM core.email_addresses WHERE address = $1`, shared) })
+
+	if _, err := svc.RegisterAddress(ctx, bob, shared, false); err != nil { // unverified claim
+		t.Fatal(err)
+	}
+	a, err := svc.AssignAddress(ctx, ada.UserID, " "+strings.ToUpper(shared)+" ")
+	if err != nil || !a.Verified || a.UserID != ada.UserID || a.Address != shared {
+		t.Fatalf("assign: %+v err=%v", a, err)
+	}
+	thread := addThread(t, pool, st, "client@example.com", []string{shared}, nil, nil)
+	if _, _, err := svc.GetThreadWithMessages(ctx, ada, thread, 100, nil); err != nil {
+		t.Errorf("assignee should see mail to the shared address: %v", err)
+	}
+	if _, _, err := svc.GetThreadWithMessages(ctx, bob, thread, 100, nil); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the former claimant must not: %v", err)
+	}
+	if _, err := svc.AssignAddress(ctx, bob.UserID, shared); !errors.Is(err, errDuplicateAddress) {
+		t.Errorf("an address verified for someone else must conflict: %v", err)
+	}
+	if again, err := svc.AssignAddress(ctx, ada.UserID, shared); err != nil || again.ID != a.ID {
+		t.Errorf("assigning again to the owner is idempotent: %+v %v", again, err)
 	}
 }

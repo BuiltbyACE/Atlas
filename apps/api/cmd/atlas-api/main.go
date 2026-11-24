@@ -230,6 +230,12 @@ func run() error {
 	// sender chosen per message from the caller's verified addresses.
 	emailService := emailapi.NewService(emailapi.NewPGStore(pool), logger).WithMailer(newSMTPSender(cfg))
 	emailHandler := emailapi.NewHandler(emailService, logger).WithInboundSecret(cfg.EmailInboundSecret)
+	// Resend's SMTP password is an API key, which also reads received mail.
+	if cfg.SMTPUsername == "resend" {
+		if f := emailapi.NewResendFetcher(cfg.SMTPPassword); f != nil {
+			emailHandler = emailHandler.WithBodyFetcher(f)
+		}
+	}
 
 	// Chat is the Phase 6 messaging surface.
 	chatService := chat.NewService(chat.NewPGStore(pool), logger)

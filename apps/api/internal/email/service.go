@@ -503,3 +503,13 @@ func outboxEvent(messageID, threadID uuid.UUID, fromAddress string, toAddresses 
 		Payload:       b,
 	}, nil
 }
+
+// AssignAddress is the administrator's route to a verified address for a user.
+// Permission is checked at the route; this only validates the address.
+func (s *Service) AssignAddress(ctx context.Context, userID uuid.UUID, address string) (*Address, error) {
+	bare, err := normalizeAddress(address)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.AssignVerifiedAddress(ctx, userID, bare)
+}

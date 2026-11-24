@@ -27,6 +27,7 @@ import (
 type Handler struct {
 	service       *Service
 	inboundSecret string
+	fetcher       BodyFetcher
 	logger        *slog.Logger
 }
 
@@ -54,6 +55,8 @@ func (h *Handler) Routes(reg *routing.Registry) {
 		"Remove one of your send-as addresses", h.DeleteAddress)
 	reg.Authenticated(http.MethodPost, "/api/v1/email/addresses/{id}/primary",
 		"Make one of your verified addresses the default From", h.SetPrimaryAddress)
+	reg.Gated("core.settings.manage", http.MethodPost, "/api/v1/email/admin/addresses",
+		"Give a user a verified send-as address", h.AssignAddress)
 	reg.Public(http.MethodPost, "/internal/v1/email/inbound",
 		"Inbound email webhook from Resend", h.ReceiveInbound)
 }
@@ -173,6 +176,14 @@ func (h *Handler) GetThread(w http.ResponseWriter, r *http.Request) {
 // legitimate payload is small.
 const maxInboundBytes = 2 << 20
 
+// WithBodyFetcher sets how inbound bodies are read from the provider.
+func (h *Handler) WithBodyFetcher(f BodyFetcher) *Handler {
+	if f != nil {
+		h.fetcher = f
+	}
+	return h
+}
+
 // WithInboundSecret sets the signing secret the inbound provider uses. Until it
 // is set the inbound route answers 503 and stores nothing: an endpoint anyone
 // can post to must never be open by default.
@@ -212,6 +223,24 @@ func (h *Handler) ReceiveInbound(w http.ResponseWriter, r *http.Request) {
 	if ignored {
 		w.WriteHeader(http.StatusOK)
 		return
+	}
+
+	// The webhook carries metadata only: read the body from the provider. A
+	// failure answers 502 so the provider retries; the message id dedupes.
+	if id := inboundEmailID(body); h.fetcher != nil && id != "" && msg.BodyText == "" && msg.BodyHTML == "" {
+		c, err := h.fetcher.FetchReceived(r.Context(), id)
+		if err != nil {
+			h.logger.Error("email: fetching inbound body failed", slog.String("error", err.Error()))
+			httpx.WriteProblem(w, r, httpx.Unavailable("The message body could not be fetched."))
+			return
+		}
+		msg.BodyText, msg.BodyHTML = c.Text, c.HTML
+		if msg.InReplyTo == "" {
+			msg.InReplyTo = c.InReplyTo
+		}
+		if msg.MsgReferences == "" {
+			msg.MsgReferences = c.References
+		}
 	}
 
 	stored, err := h.service.Receive(r.Context(), *msg)
@@ -339,4 +368,32 @@ func (h *Handler) SetPrimaryAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, addr)
+}
+
+type assignAddressRequest struct {
+	UserID  uuid.UUID `json:"user_id"`
+	Address string    `json:"address"`
+}
+
+// AssignAddress handles POST /api/v1/email/admin/addresses: an administrator
+// gives a user a verified address, which is what lets that user send from it
+// and see mail addressed to it.
+func (h *Handler) AssignAddress(w http.ResponseWriter, r *http.Request) {
+	var req assignAddressRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	if req.UserID == uuid.Nil {
+		httpx.WriteProblem(w, r, httpx.BadRequest("user_id is required."))
+		return
+	}
+	addr, err := h.service.AssignAddress(r.Context(), req.UserID, req.Address)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, registerAddressResponse{
+		ID: addr.ID.String(), Address: addr.Address, Verified: addr.Verified, IsPrimary: addr.IsPrimary,
+	})
 }

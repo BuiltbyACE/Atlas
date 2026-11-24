@@ -161,6 +161,7 @@ type Store interface {
 	// a row was removed.
 	DeleteAddress(ctx context.Context, userID, id uuid.UUID) (bool, error)
 	SetPrimaryAddress(ctx context.Context, ex Execer, userID uuid.UUID, addressID uuid.UUID) error
+	AssignVerifiedAddress(ctx context.Context, userID uuid.UUID, address string) (*Address, error)
 
 	// Attachments.
 	CreateAttachment(ctx context.Context, ex Execer, a *Attachment) error
@@ -432,4 +433,34 @@ func (s *PGStore) DeleteAddress(ctx context.Context, userID, id uuid.UUID) (bool
 		return false, fmt.Errorf("email: delete address: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// AssignVerifiedAddress gives a user a verified address on an administrator's
+// say-so (a shared mailbox such as info@, or an address on the receiving
+// domain). An address already verified for someone else is a conflict; an
+// unverified claim by someone else is taken over.
+func (s *PGStore) AssignVerifiedAddress(ctx context.Context, userID uuid.UUID, address string) (*Address, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, fmt.Errorf("email: address id: %w", err)
+	}
+	address = strings.ToLower(strings.TrimSpace(address))
+	var a Address
+	err = s.db.QueryRow(ctx, `
+		INSERT INTO core.email_addresses (id, user_id, address, verified, is_primary)
+		VALUES ($1, $2, $3, true,
+		        NOT EXISTS (SELECT 1 FROM core.email_addresses WHERE user_id = $2 AND is_primary))
+		ON CONFLICT (address) DO UPDATE
+		   SET user_id = EXCLUDED.user_id, verified = true
+		 WHERE core.email_addresses.user_id = EXCLUDED.user_id
+		    OR core.email_addresses.verified = false
+		RETURNING id, user_id, address, verified, is_primary, created_at`, id, userID, address,
+	).Scan(&a.ID, &a.UserID, &a.Address, &a.Verified, &a.IsPrimary, &a.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errDuplicateAddress
+		}
+		return nil, fmt.Errorf("email: assign address: %w", err)
+	}
+	return &a, nil
 }
