@@ -125,6 +125,64 @@ func (s *Service) RegisterAddress(ctx context.Context, a Actor, address string, 
 	return created, nil
 }
 
+// DeleteAddress removes one of the actor's own addresses. The sign-in address is
+// not removable: it is the identity the account itself proves.
+func (s *Service) DeleteAddress(ctx context.Context, a Actor, id uuid.UUID) error {
+	if err := s.prepare(ctx, a); err != nil {
+		return err
+	}
+	addrs, err := s.store.ListAddresses(ctx, a.UserID)
+	if err != nil {
+		return err
+	}
+	for _, addr := range addrs {
+		if addr.ID != id {
+			continue
+		}
+		if addr.Address == strings.ToLower(strings.TrimSpace(a.Email)) {
+			return fmt.Errorf("%w: your sign-in address cannot be removed", ErrInvalid)
+		}
+		if _, err := s.store.DeleteAddress(ctx, a.UserID, id); err != nil {
+			return err
+		}
+		return nil
+	}
+	return ErrNotFound
+}
+
+// SetPrimaryAddress makes one of the actor's verified addresses the default From.
+func (s *Service) SetPrimaryAddress(ctx context.Context, a Actor, id uuid.UUID) (*Address, error) {
+	if err := s.prepare(ctx, a); err != nil {
+		return nil, err
+	}
+	addrs, err := s.store.ListAddresses(ctx, a.UserID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range addrs {
+		if addrs[i].ID != id {
+			continue
+		}
+		if !addrs[i].Verified {
+			return nil, fmt.Errorf("%w: only a verified address can be the default", ErrInvalid)
+		}
+		tx, err := s.store.DB().Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("email: begin tx: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := s.store.SetPrimaryAddress(ctx, tx, a.UserID, id); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("email: commit tx: %w", err)
+		}
+		addrs[i].IsPrimary = true
+		return &addrs[i], nil
+	}
+	return nil, ErrNotFound
+}
+
 // ListAddresses returns the actor's send-as addresses.
 func (s *Service) ListAddresses(ctx context.Context, a Actor) ([]Address, error) {
 	if err := s.prepare(ctx, a); err != nil {

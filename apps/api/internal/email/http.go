@@ -50,6 +50,10 @@ func (h *Handler) Routes(reg *routing.Registry) {
 		"List the caller's verified send-as addresses", h.ListAddresses)
 	reg.Authenticated(http.MethodPost, "/api/v1/email/addresses",
 		"Register a send-as email address", h.RegisterAddress)
+	reg.Authenticated(http.MethodDelete, "/api/v1/email/addresses/{id}",
+		"Remove one of your send-as addresses", h.DeleteAddress)
+	reg.Authenticated(http.MethodPost, "/api/v1/email/addresses/{id}/primary",
+		"Make one of your verified addresses the default From", h.SetPrimaryAddress)
 	reg.Public(http.MethodPost, "/internal/v1/email/inbound",
 		"Inbound email webhook from Resend", h.ReceiveInbound)
 }
@@ -298,4 +302,41 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 	default:
 		httpx.WriteError(w, r, h.logger, err)
 	}
+}
+
+// DeleteAddress handles DELETE /api/v1/email/addresses/{id}.
+func (h *Handler) DeleteAddress(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteProblem(w, r, httpx.BadRequest("Invalid address ID."))
+		return
+	}
+	if err := h.service.DeleteAddress(r.Context(), actor, id); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// SetPrimaryAddress handles POST /api/v1/email/addresses/{id}/primary.
+func (h *Handler) SetPrimaryAddress(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteProblem(w, r, httpx.BadRequest("Invalid address ID."))
+		return
+	}
+	addr, err := h.service.SetPrimaryAddress(r.Context(), actor, id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, addr)
 }

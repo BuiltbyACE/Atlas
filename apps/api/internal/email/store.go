@@ -157,6 +157,9 @@ type Store interface {
 	// EnsureLoginAddress makes the account holder's login email a verified
 	// send-as address, so every user can read and send mail from day one.
 	EnsureLoginAddress(ctx context.Context, userID uuid.UUID, loginEmail string) error
+	// DeleteAddress removes one of the user's own addresses and reports whether
+	// a row was removed.
+	DeleteAddress(ctx context.Context, userID, id uuid.UUID) (bool, error)
 	SetPrimaryAddress(ctx context.Context, ex Execer, userID uuid.UUID, addressID uuid.UUID) error
 
 	// Attachments.
@@ -420,4 +423,13 @@ func nonNil(s []string) []string {
 		return []string{}
 	}
 	return s
+}
+
+// DeleteAddress removes one of the user's own addresses.
+func (s *PGStore) DeleteAddress(ctx context.Context, userID, id uuid.UUID) (bool, error) {
+	tag, err := s.db.Exec(ctx, `DELETE FROM core.email_addresses WHERE id = $1 AND user_id = $2`, id, userID)
+	if err != nil {
+		return false, fmt.Errorf("email: delete address: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
 }

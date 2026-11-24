@@ -253,3 +253,42 @@ func TestInboundMessageIsStoredThreadedAndDeduplicated(t *testing.T) {
 		t.Error("the recipient should see the inbound thread in their inbox")
 	}
 }
+
+func TestSetPrimaryAndDeleteAddress(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	st := NewPGStore(pool)
+	svc := NewService(st, nil)
+	ada := newUser(t, pool, "ada")
+	bob := newUser(t, pool, "bob")
+
+	list, err := svc.ListAddresses(ctx, ada)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list: %+v err=%v", list, err)
+	}
+	login := list[0]
+
+	// The sign-in address cannot be removed; someone else's address is not found.
+	if err := svc.DeleteAddress(ctx, ada, login.ID); !errors.Is(err, ErrInvalid) {
+		t.Errorf("deleting the login address: err = %v, want ErrInvalid", err)
+	}
+	if err := svc.DeleteAddress(ctx, bob, login.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("deleting another user's address: err = %v, want ErrNotFound", err)
+	}
+
+	// An unverified address cannot become the default; removing it works.
+	extra := "extra-" + uuid.NewString()[:8] + "@safaristacksolutions.co.ke"
+	a, err := svc.RegisterAddress(ctx, ada, extra, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetPrimaryAddress(ctx, ada, a.ID); !errors.Is(err, ErrInvalid) {
+		t.Errorf("unverified default: err = %v, want ErrInvalid", err)
+	}
+	if got, err := svc.SetPrimaryAddress(ctx, ada, login.ID); err != nil || !got.IsPrimary {
+		t.Errorf("setting the verified login address primary: %+v err=%v", got, err)
+	}
+	if err := svc.DeleteAddress(ctx, ada, a.ID); err != nil {
+		t.Errorf("deleting an own extra address: %v", err)
+	}
+}
