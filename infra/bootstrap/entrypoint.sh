@@ -38,6 +38,14 @@ wait_for_db() {
 
 mode="${1:-migrate}"
 
+# The Railway service is pinned to "account". Once the first account exists its
+# password variable is removed on purpose, so "account" with no password means
+# there is nothing to create: run the idempotent migrate instead of failing.
+if [ "$mode" = "account" ] && [ -z "${ATLAS_BOOTSTRAP_PASSWORD:-}" ]; then
+    log "account: no ATLAS_BOOTSTRAP_PASSWORD (account already created); running migrate instead"
+    mode=migrate
+fi
+
 case "$mode" in
 migrate)
     require ATLAS_ADMIN_DATABASE_URL
