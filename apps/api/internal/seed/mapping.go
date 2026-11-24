@@ -224,3 +224,14 @@ func concat(groups ...[]string) []string {
 	}
 	return out
 }
+
+// Everyone who works in Atlas may send email; only the read-only auditor may not.
+// Compose is gated on this permission, and until it was granted nobody could send.
+func init() {
+	for role := range RolePermissions {
+		if role == "auditor" {
+			continue
+		}
+		RolePermissions[role] = concat(RolePermissions[role], []string{"core.email.send"})
+	}
+}
