@@ -5045,6 +5045,18 @@ export function registerEmailAddress(
   });
 }
 
+/** Give a user a verified send-as address (`POST /api/v1/email/admin/addresses`, needs core.settings.manage). */
+export function assignEmailAddress(body: {
+  user_email: string;
+  address: string;
+  make_primary?: boolean;
+}): Promise<EmailAddress> {
+  return apiFetch<EmailAddress>("/api/v1/email/admin/addresses", {
+    method: "POST",
+    body,
+  });
+}
+
 /** Delete a send-as email address (`DELETE /api/v1/email/addresses/{id}`, authenticated). */
 export function deleteEmailAddress(id: string): Promise<{ status: string }> {
   return apiFetch<{ status: string }>(`/api/v1/email/addresses/${id}`, {

@@ -311,8 +311,8 @@ func TestAdminAssignsVerifiedSharedAddress(t *testing.T) {
 	if _, err := svc.RegisterAddress(ctx, bob, shared, false); err != nil { // unverified claim
 		t.Fatal(err)
 	}
-	a, err := svc.AssignAddress(ctx, ada.UserID, " "+strings.ToUpper(shared)+" ")
-	if err != nil || !a.Verified || a.UserID != ada.UserID || a.Address != shared {
+	a, err := svc.AssignAddress(ctx, uuid.Nil, ada.Email, " "+strings.ToUpper(shared)+" ", true)
+	if err != nil || !a.Verified || !a.IsPrimary || a.UserID != ada.UserID || a.Address != shared {
 		t.Fatalf("assign: %+v err=%v", a, err)
 	}
 	thread := addThread(t, pool, st, "client@example.com", []string{shared}, nil, nil)
@@ -322,10 +322,10 @@ func TestAdminAssignsVerifiedSharedAddress(t *testing.T) {
 	if _, _, err := svc.GetThreadWithMessages(ctx, bob, thread, 100, nil); !errors.Is(err, ErrNotFound) {
 		t.Errorf("the former claimant must not: %v", err)
 	}
-	if _, err := svc.AssignAddress(ctx, bob.UserID, shared); !errors.Is(err, errDuplicateAddress) {
+	if _, err := svc.AssignAddress(ctx, bob.UserID, "", shared, false); !errors.Is(err, errDuplicateAddress) {
 		t.Errorf("an address verified for someone else must conflict: %v", err)
 	}
-	if again, err := svc.AssignAddress(ctx, ada.UserID, shared); err != nil || again.ID != a.ID {
+	if again, err := svc.AssignAddress(ctx, ada.UserID, "", shared, false); err != nil || again.ID != a.ID {
 		t.Errorf("assigning again to the owner is idempotent: %+v %v", again, err)
 	}
 }

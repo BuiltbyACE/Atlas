@@ -504,12 +504,31 @@ func outboxEvent(messageID, threadID uuid.UUID, fromAddress string, toAddresses 
 	}, nil
 }
 
-// AssignAddress is the administrator's route to a verified address for a user.
-// Permission is checked at the route; this only validates the address.
-func (s *Service) AssignAddress(ctx context.Context, userID uuid.UUID, address string) (*Address, error) {
+// AssignAddress is the administrator's route to a verified address for a user,
+// named by id or by sign-in email. Permission is checked at the route; this only
+// validates the address. makePrimary also makes it that user's default From.
+func (s *Service) AssignAddress(ctx context.Context, userID uuid.UUID, userEmail, address string, makePrimary bool) (*Address, error) {
 	bare, err := normalizeAddress(address)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.AssignVerifiedAddress(ctx, userID, bare)
+	if userID == uuid.Nil {
+		if strings.TrimSpace(userEmail) == "" {
+			return nil, fmt.Errorf("%w: name the user by user_id or user_email", ErrInvalid)
+		}
+		if userID, err = s.store.UserIDByEmail(ctx, userEmail); err != nil {
+			return nil, err
+		}
+	}
+	addr, err := s.store.AssignVerifiedAddress(ctx, userID, bare)
+	if err != nil {
+		return nil, err
+	}
+	if makePrimary && !addr.IsPrimary {
+		if err := s.store.SetPrimaryAddress(ctx, s.store.DB(), userID, addr.ID); err != nil {
+			return nil, err
+		}
+		addr.IsPrimary = true
+	}
+	return addr, nil
 }

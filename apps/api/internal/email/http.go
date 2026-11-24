@@ -371,8 +371,10 @@ func (h *Handler) SetPrimaryAddress(w http.ResponseWriter, r *http.Request) {
 }
 
 type assignAddressRequest struct {
-	UserID  uuid.UUID `json:"user_id"`
-	Address string    `json:"address"`
+	UserID      uuid.UUID `json:"user_id,omitempty"`
+	UserEmail   string    `json:"user_email,omitempty"`
+	Address     string    `json:"address"`
+	MakePrimary bool      `json:"make_primary,omitempty"`
 }
 
 // AssignAddress handles POST /api/v1/email/admin/addresses: an administrator
@@ -384,11 +386,7 @@ func (h *Handler) AssignAddress(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, h.logger, err)
 		return
 	}
-	if req.UserID == uuid.Nil {
-		httpx.WriteProblem(w, r, httpx.BadRequest("user_id is required."))
-		return
-	}
-	addr, err := h.service.AssignAddress(r.Context(), req.UserID, req.Address)
+	addr, err := h.service.AssignAddress(r.Context(), req.UserID, req.UserEmail, req.Address, req.MakePrimary)
 	if err != nil {
 		h.writeError(w, r, err)
 		return

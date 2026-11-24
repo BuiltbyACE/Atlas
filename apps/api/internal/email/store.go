@@ -162,6 +162,7 @@ type Store interface {
 	DeleteAddress(ctx context.Context, userID, id uuid.UUID) (bool, error)
 	SetPrimaryAddress(ctx context.Context, ex Execer, userID uuid.UUID, addressID uuid.UUID) error
 	AssignVerifiedAddress(ctx context.Context, userID uuid.UUID, address string) (*Address, error)
+	UserIDByEmail(ctx context.Context, email string) (uuid.UUID, error)
 
 	// Attachments.
 	CreateAttachment(ctx context.Context, ex Execer, a *Attachment) error
@@ -463,4 +464,19 @@ func (s *PGStore) AssignVerifiedAddress(ctx context.Context, userID uuid.UUID, a
 		return nil, fmt.Errorf("email: assign address: %w", err)
 	}
 	return &a, nil
+}
+
+// UserIDByEmail finds an active account by its sign-in email.
+func (s *PGStore) UserIDByEmail(ctx context.Context, email string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := s.db.QueryRow(ctx,
+		`SELECT id FROM core.user_accounts WHERE lower(email) = lower($1) AND status = 'active'`,
+		strings.TrimSpace(email)).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("email: find user: %w", err)
+	}
+	return id, nil
 }
