@@ -315,9 +315,13 @@ func registerApprovals(reg *routing.Registry, h *approvals.Handler) {
 	reg.Gated("core.approval.read", http.MethodGet, "/api/v1/approvals/pending",
 		"List pending approvals for a role", h.PendingForRole)
 	reg.Authenticated(http.MethodGet, "/api/v1/approvals/mine", "List approvals requested by you", h.MyRequested)
-	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/approve", "Approve an approval", h.Approve)
-	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/decline", "Decline an approval", h.Decline)
-	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/escalate", "Escalate an approval", h.Escalate)
+	// Deciding and escalating need core.approval.decide: without it any signed-in
+	// person could approve someone else's request (§3.3, §6.2).
+	reg.Gated("core.approval.decide", http.MethodPost, "/api/v1/approvals/{id}/approve", "Approve an approval", h.Approve)
+	reg.Gated("core.approval.decide", http.MethodPost, "/api/v1/approvals/{id}/decline", "Decline an approval", h.Decline)
+	reg.Gated("core.approval.decide", http.MethodPost, "/api/v1/approvals/{id}/escalate", "Escalate an approval", h.Escalate)
+	// Cancel stays authenticated: a requester may withdraw their own request.
+	// The service lets anyone else cancel only with core.approval.decide.
 	reg.Authenticated(http.MethodPost, "/api/v1/approvals/{id}/cancel", "Cancel an approval", h.Cancel)
 	reg.Gated("core.approval_policy.read", http.MethodGet, "/api/v1/approval-policies",
 		"List approval policies", h.ListPolicies)

@@ -373,7 +373,7 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err)
 		return
 	}
-	if err := h.service.Cancel(r.Context(), Cancel{ApprovalID: id, ActorID: principal.PersonID, Reason: req.Reason}); err != nil {
+	if err := h.service.Cancel(r.Context(), Cancel{ApprovalID: id, ActorID: principal.PersonID, Reason: req.Reason, Privileged: principal.Can("core.approval.decide")}); err != nil {
 		h.writeError(w, r, err)
 		return
 	}
