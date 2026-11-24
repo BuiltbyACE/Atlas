@@ -136,6 +136,11 @@ type Config struct {
 	// unconfigured inbound receipt is never trusted.
 	WebsiteFormWebhookSecret string
 
+	// EmailInboundSecret is the signing secret (Resend shows it as whsec_...) the
+	// inbound email webhook verifies. When empty the inbound route refuses every
+	// request (503) rather than accept unsigned mail.
+	EmailInboundSecret string
+
 	// ── Files / object storage (§6.5) ────────────────────────────
 	// Evidence and documents live in an S3-compatible bucket (Cloudflare R2 in
 	// staging and production; SeaweedFS or R2 locally). Go issues pre-signed
@@ -212,6 +217,7 @@ func Load() (*Config, error) {
 		GitHubAppPrivateKey: get("ATLAS_GITHUB_APP_PRIVATE_KEY", ""),
 
 		WebsiteFormWebhookSecret: get("ATLAS_WEBSITE_FORM_WEBHOOK_SECRET", ""),
+		EmailInboundSecret:       get("ATLAS_EMAIL_INBOUND_SECRET", ""),
 
 		S3Endpoint:      get("S3_ENDPOINT", ""),
 		S3Region:        get("S3_REGION", "auto"),

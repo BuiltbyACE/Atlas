@@ -227,7 +227,7 @@ func run() error {
 	// Email is the Phase 6 two-way surface: outbound through the SMTP adapter
 	// already used for invitations, inbound through a provider webhook.
 	emailService := emailapi.NewService(emailapi.NewPGStore(pool), logger)
-	emailHandler := emailapi.NewHandler(emailService, logger)
+	emailHandler := emailapi.NewHandler(emailService, logger).WithInboundSecret(cfg.EmailInboundSecret)
 
 	// Chat is the Phase 6 messaging surface.
 	chatService := chat.NewService(chat.NewPGStore(pool), logger)

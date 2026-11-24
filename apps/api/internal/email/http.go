@@ -9,6 +9,7 @@ package email
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -24,8 +25,9 @@ import (
 
 // Handler serves the email surface.
 type Handler struct {
-	service *Service
-	logger  *slog.Logger
+	service       *Service
+	inboundSecret string
+	logger        *slog.Logger
 }
 
 // NewHandler builds the email HTTP handler.
@@ -159,72 +161,65 @@ func (h *Handler) GetThread(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, messages)
 }
 
-// ReceiveInbound handles POST /internal/v1/email/inbound from Resend.
+// maxInboundBytes bounds a webhook body. Attachments travel as references, so a
+// legitimate payload is small.
+const maxInboundBytes = 2 << 20
+
+// WithInboundSecret sets the signing secret the inbound provider uses. Until it
+// is set the inbound route answers 503 and stores nothing: an endpoint anyone
+// can post to must never be open by default.
+func (h *Handler) WithInboundSecret(secret string) *Handler {
+	h.inboundSecret = secret
+	return h
+}
+
+// ReceiveInbound handles POST /internal/v1/email/inbound from the mail provider.
+// The route is public at the edge, so the signature is the only gate: the body is
+// parsed only after it verifies, and a delivery older than five minutes is refused
+// so it cannot be replayed.
 func (h *Handler) ReceiveInbound(w http.ResponseWriter, r *http.Request) {
-	var payload struct {
-		From        string   `json:"from"`
-		To          []string `json:"to"`
-		Cc          []string `json:"cc,omitempty"`
-		Bcc         []string `json:"bcc,omitempty"`
-		Subject     string   `json:"subject"`
-		Text        string   `json:"text"`
-		Html        string   `json:"html"`
-		MessageID   string   `json:"message_id"`
-		InReplyTo   string   `json:"in_reply_to,omitempty"`
-		References  string   `json:"references,omitempty"`
-		Attachments []struct {
-			Filename    string `json:"filename"`
-			ContentType string `json:"content_type"`
-			Size        int64  `json:"size"`
-			URL         string `json:"url"`
-		} `json:"attachments,omitempty"`
-	}
-	if err := httpx.DecodeJSON(w, r, &payload); err != nil {
-		httpx.WriteError(w, r, h.logger, err)
+	if strings.TrimSpace(h.inboundSecret) == "" {
+		h.logger.Warn("email: inbound webhook refused: ATLAS_EMAIL_INBOUND_SECRET is not set")
+		httpx.WriteProblem(w, r, httpx.Unavailable("Inbound email is not configured."))
 		return
 	}
-
-	attachments := make([]InboundAttachment, 0, len(payload.Attachments))
-	for _, a := range payload.Attachments {
-		attachments = append(attachments, InboundAttachment{
-			Filename:    a.Filename,
-			ContentType: a.ContentType,
-			SizeBytes:   a.Size,
-			StorageKey:  a.URL, // Resend stores the attachment; we keep the URL as reference
-		})
-	}
-
-	msg, err := h.service.Receive(r.Context(), InboundMessage{
-		MessageID:     payload.MessageID,
-		InReplyTo:     payload.InReplyTo,
-		MsgReferences: payload.References,
-		FromAddress:   payload.From,
-		ToAddresses:   payload.To,
-		CCAddresses:   payload.Cc,
-		Subject:       payload.Subject,
-		BodyText:      payload.Text,
-		BodyHTML:      payload.Html,
-		Attachments:   attachments,
-	})
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxInboundBytes))
 	if err != nil {
-		if errors.Is(err, ErrInvalid) {
-			httpx.WriteError(w, r, h.logger, httpx.BadRequest(err.Error()))
-			return
-		}
-		httpx.WriteError(w, r, h.logger, err)
+		httpx.WriteProblem(w, r, httpx.BadRequest("The request body could not be read."))
+		return
+	}
+	if err := verifyWebhook(h.inboundSecret,
+		r.Header.Get(headerSvixID), r.Header.Get(headerSvixTimestamp), r.Header.Get(headerSvixSignature),
+		body, time.Now()); err != nil {
+		h.logger.Warn("email: inbound webhook signature rejected", slog.String("reason", err.Error()))
+		httpx.WriteProblem(w, r, httpx.Unauthenticated("Invalid webhook signature."))
 		return
 	}
 
-	// Duplicate message (already received) is not an error.
-	if msg == nil {
+	msg, ignored, err := parseInbound(body)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if ignored {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
+	stored, err := h.service.Receive(r.Context(), *msg)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	// A duplicate delivery (already received) is not an error: acknowledge it.
+	if stored == nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]string{
-		"id":        msg.ID.String(),
-		"thread_id": msg.ThreadID.String(),
-		"status":    string(msg.Status),
+		"id":        stored.ID.String(),
+		"thread_id": stored.ThreadID.String(),
+		"status":    string(stored.Status),
 	})
 }
 
