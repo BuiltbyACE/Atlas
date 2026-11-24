@@ -99,7 +99,11 @@ func (h *Handler) Compose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, err := h.service.Send(r.Context(), SendMessageOptions{
+	actor, ok := h.actor(w, r)
+	if !ok {
+		return
+	}
+	msg, err := h.service.Send(r.Context(), actor, SendMessageOptions{
 		ThreadID:       req.ThreadID,
 		Subject:        req.Subject,
 		BodyText:       req.BodyText,
@@ -113,7 +117,7 @@ func (h *Handler) Compose(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey: req.IdempotencyKey,
 	})
 	if err != nil {
-		httpx.WriteError(w, r, h.logger, err)
+		h.writeError(w, r, err)
 		return
 	}
 
@@ -284,6 +288,11 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpx.WriteProblem(w, r, httpx.NotFound("Not found."))
 	case errors.Is(err, ErrForbidden):
 		httpx.WriteProblem(w, r, httpx.Forbidden("You do not have access to this mailbox."))
+	case errors.Is(err, ErrNotConfigured):
+		httpx.WriteProblem(w, r, httpx.Unavailable("Outbound email is not configured on this server."))
+	case errors.Is(err, ErrDelivery):
+		httpx.WriteProblem(w, r, httpx.New(http.StatusBadGateway, httpx.CodeUnavailable,
+			strings.TrimPrefix(err.Error(), ErrDelivery.Error()+": ")))
 	case errors.Is(err, errDuplicateAddress):
 		httpx.WriteProblem(w, r, httpx.Conflict("That address is already registered."))
 	default:

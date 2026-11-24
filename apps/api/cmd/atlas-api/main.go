@@ -226,7 +226,9 @@ func run() error {
 
 	// Email is the Phase 6 two-way surface: outbound through the SMTP adapter
 	// already used for invitations, inbound through a provider webhook.
-	emailService := emailapi.NewService(emailapi.NewPGStore(pool), logger)
+	// Outbound mail goes out over the same SMTP provider as invitations, with the
+	// sender chosen per message from the caller's verified addresses.
+	emailService := emailapi.NewService(emailapi.NewPGStore(pool), logger).WithMailer(newSMTPSender(cfg))
 	emailHandler := emailapi.NewHandler(emailService, logger).WithInboundSecret(cfg.EmailInboundSecret)
 
 	// Chat is the Phase 6 messaging surface.
@@ -318,14 +320,7 @@ func newAuthService(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool)
 		return nil, err
 	}
 
-	emailSender := email.New(email.Config{
-		Host:     cfg.SMTPHost,
-		Port:     cfg.SMTPPort,
-		From:     cfg.SMTPFrom,
-		Username: cfg.SMTPUsername,
-		Password: cfg.SMTPPassword,
-		TLS:      cfg.SMTPTLS,
-	})
+	emailSender := newSMTPSender(cfg)
 
 	return auth.NewService(auth.NewPGStore(pool), sealer, key, auth.ServiceConfig{
 		SessionCookieName:    cfg.SessionCookieName,
@@ -343,6 +338,18 @@ func newAuthService(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool)
 		LoginWindow:          15 * time.Minute,
 		PublicBaseURL:        cfg.PublicBaseURL,
 	}, logger, emailSender), nil
+}
+
+// newSMTPSender builds the SMTP adapter from configuration.
+func newSMTPSender(cfg *config.Config) *email.Sender {
+	return email.New(email.Config{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		From:     cfg.SMTPFrom,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword,
+		TLS:      cfg.SMTPTLS,
+	})
 }
 
 // signingKey parses the configured Ed25519 key, or generates an ephemeral one

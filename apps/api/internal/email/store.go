@@ -24,6 +24,11 @@ var (
 	ErrNotFound  = errors.New("email: not found")
 	ErrInvalid   = errors.New("email: invalid")
 	ErrForbidden = errors.New("email: forbidden")
+	// ErrNotConfigured means outbound mail has no SMTP delivery wired.
+	ErrNotConfigured = errors.New("email: outbound mail is not configured")
+	// ErrDelivery means the mail server did not accept (or the system could not
+	// record) a message.
+	ErrDelivery = errors.New("email: delivery failed")
 )
 
 // MessageDirection is the direction of an email message.
@@ -145,6 +150,7 @@ type Store interface {
 	GetMessageAttachments(ctx context.Context, messageID uuid.UUID) ([]Attachment, error)
 
 	// Addresses.
+	ThreadVisibleTo(ctx context.Context, userID, threadID uuid.UUID) (bool, error)
 	ListAddresses(ctx context.Context, userID uuid.UUID) ([]Address, error)
 	GetAddress(ctx context.Context, id uuid.UUID) (*Address, error)
 	CreateAddress(ctx context.Context, ex Execer, userID uuid.UUID, address string, isPrimary bool) (*Address, error)

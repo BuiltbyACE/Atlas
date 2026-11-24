@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +24,7 @@ type Service struct {
 	store  Store
 	logger *slog.Logger
 	now    func() time.Time
+	mailer Mailer
 
 	// outbox is optional; when present, every email write also emits an
 	// outbox event so the Elixir consumer can push realtime updates.
@@ -147,97 +149,168 @@ func (s *Service) GetThreadWithMessages(ctx context.Context, a Actor, id uuid.UU
 	return s.store.GetThreadWithMessages(ctx, a.UserID, id, limit, before)
 }
 
-// Send sends an outbound email. It creates the thread/message records and
-// returns the message. The caller is responsible for SMTP delivery.
-func (s *Service) Send(ctx context.Context, opts SendMessageOptions) (*Message, error) {
-	if opts.FromAddress == "" {
-		return nil, ErrInvalid
+// Mailer hands a finished RFC 5322 message to a mail server. from is the envelope
+// sender and rcpts every envelope recipient, blind copies included.
+type Mailer interface {
+	SendRaw(ctx context.Context, from string, rcpts []string, data []byte) error
+}
+
+// WithMailer wires the SMTP delivery. Without it Send refuses to run: a message
+// that cannot leave must never be recorded as sent.
+func (s *Service) WithMailer(m Mailer) *Service {
+	s.mailer = m
+	return s
+}
+
+const (
+	maxRecipients = 50
+	maxBodyBytes  = 1 << 20
+	deliverTimout = 20 * time.Second
+)
+
+// Send delivers an outbound email and records the outcome.
+//
+// The message goes out over SMTP first; only then is it stored, as "sent" with
+// its Message-ID when the server accepted it, or as "failed" with the reason when
+// it did not. The caller is told which, so the interface can never claim a
+// delivery that did not happen. The From address must be one of the actor's own
+// verified addresses, so nobody can send as a colleague or a shared mailbox.
+func (s *Service) Send(ctx context.Context, actor Actor, opts SendMessageOptions) (*Message, error) {
+	if err := s.prepare(ctx, actor); err != nil {
+		return nil, err
 	}
-	if len(opts.ToAddresses) == 0 {
-		return nil, ErrInvalid
+	if s.mailer == nil {
+		return nil, ErrNotConfigured
 	}
 
-	threadID := uuid.Nil
+	from, err := normalizeAddress(opts.FromAddress)
+	if err != nil {
+		return nil, err
+	}
+	owned, err := s.store.ListAddresses(ctx, actor.UserID)
+	if err != nil {
+		return nil, err
+	}
+	verified := false
+	for _, a := range owned {
+		if a.Verified && a.Address == from {
+			verified = true
+			break
+		}
+	}
+	if !verified {
+		return nil, fmt.Errorf("%w: %s is not one of your verified send-as addresses", ErrInvalid, from)
+	}
+
+	to, err := normalizeAddressList(opts.ToAddresses, maxRecipients)
+	if err != nil {
+		return nil, err
+	}
+	cc, err := normalizeAddressList(opts.CCAddresses, maxRecipients)
+	if err != nil {
+		return nil, err
+	}
+	bcc, err := normalizeAddressList(opts.BCCAddresses, maxRecipients)
+	if err != nil {
+		return nil, err
+	}
+	if len(to) == 0 {
+		return nil, fmt.Errorf("%w: at least one recipient is required", ErrInvalid)
+	}
+	if len(to)+len(cc)+len(bcc) > maxRecipients {
+		return nil, fmt.Errorf("%w: at most %d recipients are allowed", ErrInvalid, maxRecipients)
+	}
+	subject := headerValue(opts.Subject)
+	if subject == "" {
+		return nil, fmt.Errorf("%w: a subject is required", ErrInvalid)
+	}
+	if len(subject) > 500 {
+		return nil, fmt.Errorf("%w: the subject is too long", ErrInvalid)
+	}
+	if strings.TrimSpace(opts.BodyText) == "" && strings.TrimSpace(opts.BodyHTML) == "" {
+		return nil, fmt.Errorf("%w: the message has no body", ErrInvalid)
+	}
+	if len(opts.BodyText)+len(opts.BodyHTML) > maxBodyBytes {
+		return nil, fmt.Errorf("%w: the message is too large", ErrInvalid)
+	}
+
+	// Replying into an existing thread needs the right to see it.
+	var threadID uuid.UUID
 	if opts.ThreadID != nil {
-		threadID = *opts.ThreadID
-	} else {
-		var err error
-		threadID, err = s.store.CreateThread(ctx, opts.Subject)
+		ok, err := s.store.ThreadVisibleTo(ctx, actor.UserID, *opts.ThreadID)
 		if err != nil {
 			return nil, err
 		}
+		if !ok {
+			return nil, ErrNotFound
+		}
+		threadID = *opts.ThreadID
 	}
 
-	messageID, err := uuid.NewV7()
+	messageUUID, err := uuid.NewV7()
 	if err != nil {
 		return nil, fmt.Errorf("email: message id: %w", err)
 	}
-
 	now := s.now()
-	msg := &Message{
-		ID:            messageID,
-		ThreadID:      threadID,
-		Direction:     DirectionOutbound,
-		FromAddress:   opts.FromAddress,
-		ToAddresses:   opts.ToAddresses,
-		CCAddresses:   opts.CCAddresses,
-		BCCAddresses:  opts.BCCAddresses,
-		Subject:       opts.Subject,
-		BodyText:      opts.BodyText,
-		BodyHTML:      opts.BodyHTML,
-		MessageID:     messageID.String(),
-		InReplyTo:     opts.InReplyTo,
-		MsgReferences: opts.MsgReferences,
-		SentAt:        &now,
-		Status:        StatusSent,
-		CreatedAt:     now,
-	}
+	messageID := "<" + messageUUID.String() + "@" + domainOf(from) + ">"
 
-	// Begin a transaction so thread + message + attachments commit together.
-	tx, err := s.store.DB().Begin(ctx)
+	raw, err := buildMIME(outboundMail{
+		From: from, To: to, Cc: cc, Subject: subject,
+		Text: opts.BodyText, HTML: opts.BodyHTML,
+		MessageID: messageID, InReplyTo: headerValue(opts.InReplyTo), References: headerValue(opts.MsgReferences),
+		Date: now,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("email: begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	if err := s.store.CreateMessage(ctx, tx, msg); err != nil {
 		return nil, err
 	}
-	for _, att := range opts.Attachments {
-		a := &Attachment{
-			ID:          uuid.Nil,
-			MessageID:   messageID,
-			Filename:    att.Filename,
-			ContentType: att.ContentType,
-			SizeBytes:   att.SizeBytes,
-			StorageKey:  att.StorageKey,
-			CreatedAt:   now,
-		}
-		a.ID, err = uuid.NewV7()
+
+	rcpts := append(append(append([]string{}, to...), cc...), bcc...)
+	sendCtx, cancel := context.WithTimeout(ctx, deliverTimout)
+	defer cancel()
+	sendErr := s.mailer.SendRaw(sendCtx, from, rcpts, raw)
+
+	msg := &Message{
+		ID: messageUUID, Direction: DirectionOutbound,
+		FromAddress: from, ToAddresses: to, CCAddresses: cc, BCCAddresses: bcc,
+		Subject: subject, BodyText: opts.BodyText, BodyHTML: opts.BodyHTML,
+		MessageID: messageID, InReplyTo: headerValue(opts.InReplyTo), MsgReferences: headerValue(opts.MsgReferences),
+		CreatedAt: now,
+	}
+	if sendErr != nil {
+		msg.Status = StatusFailed
+		msg.ErrorMessage = truncate(sendErr.Error(), 300)
+		s.logger.Error("email: delivery failed", slog.String("message_id", messageID), slog.String("error", sendErr.Error()))
+	} else {
+		msg.Status = StatusSent
+		msg.SentAt = &now
+		msg.ProviderRef = messageID
+	}
+
+	if threadID == uuid.Nil {
+		threadID, err = s.store.CreateThread(ctx, subject)
 		if err != nil {
-			return nil, fmt.Errorf("email: attachment id: %w", err)
-		}
-		if err := s.store.CreateAttachment(ctx, tx, a); err != nil {
-			return nil, err
+			return nil, s.afterSend(sendErr, err, messageID)
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("email: commit tx: %w", err)
+	msg.ThreadID = threadID
+	if err := s.store.CreateMessage(ctx, s.store.DB(), msg); err != nil {
+		return nil, s.afterSend(sendErr, err, messageID)
 	}
 
-	// Emit an outbox event so realtime subscribers learn about the new email.
-	if s.outbox != nil {
-		ev, err := outboxEvent(messageID, threadID, opts.FromAddress, opts.ToAddresses, opts.Subject)
-		if err == nil {
-			if err := s.outbox(ctx, ev); err != nil {
-				s.logger.Warn("email: outbox event failed", slog.String("error", err.Error()))
-			}
-		} else {
-			s.logger.Warn("email: build outbox event failed", slog.String("error", err.Error()))
-		}
+	if sendErr != nil {
+		return msg, fmt.Errorf("%w: the mail server did not accept the message; check the recipient addresses and try again", ErrDelivery)
 	}
-
 	return msg, nil
+}
+
+// afterSend reports a failure to record the message. When the mail was already
+// accepted the user must hear that it went out even though history was not saved.
+func (s *Service) afterSend(sendErr, storeErr error, messageID string) error {
+	s.logger.Error("email: could not record message", slog.String("message_id", messageID), slog.String("error", storeErr.Error()))
+	if sendErr == nil {
+		return fmt.Errorf("%w: the message was sent but could not be saved to your mailbox; do not send it again", ErrDelivery)
+	}
+	return fmt.Errorf("%w: the mail server did not accept the message; check the recipient addresses and try again", ErrDelivery)
 }
 
 // InboundMessage is a parsed inbound email from the provider webhook.
