@@ -636,7 +636,7 @@ func (s *Service) Invite(ctx context.Context, email, fullName, employment string
 			sendCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			inviteURL := s.cfg.PublicBaseURL + "/invite?token=" + raw
-			_, _ = s.emailSender.Send(sendCtx, notifications.Message{
+			if _, err := s.emailSender.Send(sendCtx, notifications.Message{
 				To:             trimmed,
 				Subject:        "You're invited to join Atlas",
 				Body: fmt.Sprintf(
@@ -647,7 +647,12 @@ func (s *Service) Invite(ctx context.Context, email, fullName, employment string
 					ttl,
 				),
 				IdempotencyKey: "invite:" + id.String(),
-			})
+			}); err != nil {
+				// The invite exists and its token was returned, so this is not fatal,
+				// but an undelivered invitation must be visible to an operator.
+				s.logger.Error("auth: invitation email was not delivered",
+					slog.String("invite_id", id.String()), slog.String("error", err.Error()))
+			}
 		}()
 	}
 
