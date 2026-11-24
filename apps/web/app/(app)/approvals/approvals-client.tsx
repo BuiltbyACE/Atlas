@@ -36,6 +36,7 @@ export function ApprovalsClient({
   requested,
   policies,
   canReadQueue,
+  canDecide,
 }: {
   me: string;
   pending: Approval[];
@@ -43,6 +44,8 @@ export function ApprovalsClient({
   policies: ApprovalPolicy[];
   /** False when Go refused the queue read because core.approval.read is absent. */
   canReadQueue: boolean;
+  /** Holds core.approval.decide. Go refuses decisions without it, so the controls are not offered. */
+  canDecide: boolean;
 }) {
   const notify = useToast();
   const { busy, problem, run, reset } = useMutation();
@@ -158,7 +161,11 @@ export function ApprovalsClient({
                   {a.due_at ? formatDay(a.due_at) : "—"}
                 </Td>
                 <Td>
-                  {activeTab === "pending" ? (
+                  {activeTab === "pending" && !canDecide ? (
+                    <span className="text-[12px] text-muted">
+                      You can view this queue but not decide it.
+                    </span>
+                  ) : activeTab === "pending" ? (
                     <div className="flex flex-col gap-2">
                       <Button
                         type="button"

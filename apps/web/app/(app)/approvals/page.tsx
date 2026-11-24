@@ -81,6 +81,7 @@ export default async function ApprovalsPage() {
         requested={requested}
         policies={policies}
         canReadQueue={canReadQueue}
+        canDecide={user.permissions.includes("core.approval.decide")}
       />
     </div>
   );
